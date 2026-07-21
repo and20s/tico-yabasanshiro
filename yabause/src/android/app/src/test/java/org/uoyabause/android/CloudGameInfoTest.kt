@@ -7,20 +7,20 @@ import org.uoyabause.android.backup.GameBackupManager.BackupGameInfo
 import java.util.Date
 
 class CloudGameInfoTest {
-
     @Test
     fun testToGameInfo() {
         // Create a BackupGameInfo
-        val backupInfo = BackupGameInfo(
-            id = "test-id",
-            filename = "test-game.iso",
-            hash = "test-hash",
-            uploadedAt = Date(),
-            size = 1024L,
-            gameTitle = "Test Game",
-            productNumber = "T-12345",
-            downloadUrl = "https://example.com/test-game.iso"
-        )
+        val backupInfo =
+            BackupGameInfo(
+                id = "test-id",
+                filename = "test-game.iso",
+                hash = "test-hash",
+                uploadedAt = Date(),
+                size = 1024L,
+                gameTitle = "Test Game",
+                productNumber = "T-12345",
+                downloadUrl = "https://example.com/test-game.iso",
+            )
 
         // Create a CloudGameInfo
         val cloudGameInfo = CloudGameInfo(backupInfo)

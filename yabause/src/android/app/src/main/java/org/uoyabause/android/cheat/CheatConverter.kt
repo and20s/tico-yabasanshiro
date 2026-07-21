@@ -19,51 +19,51 @@
 package org.uoyabause.android.cheat
 
 import android.util.Log
-import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.DatabaseReference
 import com.google.firebase.database.FirebaseDatabase
 import org.uoyabause.android.YabauseStorage
+import org.uoyabause.android.auth.AuthState
 import java.lang.Exception
 
 class CheatConverter {
     fun hasOldVersion(): Boolean {
-        val Cheats: List<Cheat>?
-        Cheats = try {
-            YabauseStorage.cheatDao.getAll()
-            //Select().from(Cheat::class.java).execute()
-        } catch (e: Exception) {
-            return false
-        }
-        if (Cheats == null) {
-            return false
-        }
-        return if (Cheats.size == 0) {
-            false
-        } else true
+        val cheats: List<Cheat> =
+            try {
+                YabauseStorage.cheatDao.getAll()
+            } catch (e: Exception) {
+                return false
+            }
+        return cheats.isNotEmpty()
     }
 
     fun execute(): Int {
-        val Cheats: List<Cheat>?
-        val database_: DatabaseReference
-        val auth = FirebaseAuth.getInstance()
-        if (auth.currentUser == null) {
+        val database: DatabaseReference
+        if (AuthState.realUser() == null) {
             return -1
         }
-        Cheats = YabauseStorage.cheatDao.getAll()
-        if (Cheats == null || Cheats.isEmpty()) {
+        val cheats = YabauseStorage.cheatDao.getAll()
+        if (cheats.isEmpty()) {
             return -1
         }
         val baseref = FirebaseDatabase.getInstance().reference
-        val baseurl = "/user-posts/" + auth.currentUser!!.uid + "/cheat/"
-        database_ = baseref.child(baseurl)
-        for (cheat in Cheats) {
-            val key = database_.child(cheat.gameid!!).push().key
-            database_.child(cheat.gameid!!).child(key!!).child("description")
+        val baseurl = "/user-posts/" + AuthState.realUser()!!.uid + "/cheat/"
+        database = baseref.child(baseurl)
+        for (cheat in cheats) {
+            val key = database.child(cheat.gameid!!).push().key
+            database
+                .child(cheat.gameid!!)
+                .child(key!!)
+                .child("description")
                 .setValue(cheat.description)
-            database_.child(cheat.gameid!!).child(key).child("cheat_code")
+            database
+                .child(cheat.gameid!!)
+                .child(key)
+                .child("cheat_code")
                 .setValue(cheat.cheat_code)
-            Log.d("CheatConverter",
-                "game:" + cheat.gameid + " desc:" + cheat.description + " code:" + cheat.cheat_code)
+            Log.d(
+                "CheatConverter",
+                "game:" + cheat.gameid + " desc:" + cheat.description + " code:" + cheat.cheat_code,
+            )
         }
         YabauseStorage.cheatDao.deleteAll()
         return 0

@@ -10,8 +10,10 @@
  * is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
  * or implied. See the License for the specific language governing permissions and limitations under
  * the License.
- */
-/*  Copyright 2019 devMiyax(smiyaxdev@gmail.com)
+
+
+    ============================================================================
+  Copyright 2019 devMiyax(smiyaxdev@gmail.com)
 
     This file is part of YabaSanshiro.
 
@@ -38,6 +40,7 @@ import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
+import androidx.core.content.ContextCompat
 import androidx.leanback.widget.ImageCardView
 import androidx.leanback.widget.Presenter
 import com.bumptech.glide.Glide
@@ -49,23 +52,24 @@ import org.uoyabause.android.GameInfo
 import java.io.File
 
 /*
- * A CardPresenter is used to generate Views and bind Objects to them on demand. 
+ * A CardPresenter is used to generate Views and bind Objects to them on demand.
  * It contains an Image CardView
  */
 class CardPresenter : Presenter() {
     private var mDefaultCardImage: Drawable? = null
 
     override fun onCreateViewHolder(parent: ViewGroup): ViewHolder {
-        sDefaultBackgroundColor = parent.resources.getColor(R.color.default_background)
-        sSelectedBackgroundColor = parent.resources.getColor(R.color.selected_background)
-        mDefaultCardImage = parent.resources.getDrawable(R.drawable.missing)
+        sDefaultBackgroundColor = ContextCompat.getColor(parent.context, R.color.default_background)
+        sSelectedBackgroundColor = ContextCompat.getColor(parent.context, R.color.selected_background)
+        mDefaultCardImage = ContextCompat.getDrawable(parent.context, R.drawable.missing)
 
-        val cardView: ImageCardView = object : ImageCardView(parent.context) {
-            override fun setSelected(selected: Boolean) {
-                updateCardBackgroundColor(this, selected)
-                super.setSelected(selected)
+        val cardView: ImageCardView =
+            object : ImageCardView(parent.context) {
+                override fun setSelected(selected: Boolean) {
+                    updateCardBackgroundColor(this, selected)
+                    super.setSelected(selected)
+                }
             }
-        }
 
         cardView.isFocusable = true
         cardView.isFocusableInTouchMode = true
@@ -73,7 +77,10 @@ class CardPresenter : Presenter() {
         return ViewHolder(cardView)
     }
 
-    override fun onBindViewHolder(viewHolder: ViewHolder, item: Any?) {
+    override fun onBindViewHolder(
+        viewHolder: ViewHolder,
+        item: Any?,
+    ) {
         val game = item as GameInfo?
         val cardView = viewHolder.view as ImageCardView
         cardView.titleText = game!!.game_title
@@ -94,36 +101,37 @@ class CardPresenter : Presenter() {
         }
         if (game.image_url != "") {
             if (game.image_url!!.startsWith("http")) {
-                Glide.with(viewHolder.view.context)
+                Glide
+                    .with(viewHolder.view.context)
                     .asBitmap()
-                    .load(game.image_url) //.centerCrop()
-                    //.centerInside()
-                    .placeholder(mDefaultCardImage) //.apply(new RequestOptions().transforms(new CenterCrop() )
+                    .load(game.image_url) // .centerCrop()
+                    // .centerInside()
+                    .placeholder(mDefaultCardImage) // .apply(new RequestOptions().transforms(new CenterCrop() )
                     //       .error(mDefaultCardImage))
-                    //.into(cardView.getMainImageView());
-                    .into(object : CustomTarget<Bitmap>() {
+                    // .into(cardView.getMainImageView());
+                    .into(
+                        object : CustomTarget<Bitmap>() {
+                            override fun onResourceReady(
+                                resource: Bitmap,
+                                transition: Transition<in Bitmap>?,
+                            ) {
+                                val bmp = resource as Bitmap
+                                val w = bmp.width
+                                val h = bmp.height
 
-                        override fun onResourceReady(
-                            resource: Bitmap,
-                            transition: Transition<in Bitmap>?,
-                        ) {
-                            val bmp = resource as Bitmap
-                            val w = bmp.width
-                            val h = bmp.height
-
-                            if (w < h) {
-                                cardView.setMainImageDimensions(
-                                    (CARD_HEIGHT * w.toFloat() / h.toFloat()).toInt(),
-                                    CARD_HEIGHT
-                                )
-                            } else {
-                                cardView.setMainImageDimensions(
-                                    CARD_WIDTH,
-                                    (CARD_WIDTH * h.toFloat() / w.toFloat()).toInt()
-                                )
+                                if (w < h) {
+                                    cardView.setMainImageDimensions(
+                                        (CARD_HEIGHT * w.toFloat() / h.toFloat()).toInt(),
+                                        CARD_HEIGHT,
+                                    )
+                                } else {
+                                    cardView.setMainImageDimensions(
+                                        CARD_WIDTH,
+                                        (CARD_WIDTH * h.toFloat() / w.toFloat()).toInt(),
+                                    )
+                                }
+                                cardView.mainImageView!!.setImageBitmap(bmp)
                             }
-                            cardView.mainImageView!!.setImageBitmap(bmp)
-                        }
 
                         /*
                         override fun onResourceReady(resource: Any, transition: Transition<*>?) {
@@ -145,28 +153,31 @@ class CardPresenter : Presenter() {
 
                             cardView.mainImageView!!.setImageBitmap(bmp)
                         }
-                        */
+                         */
 
-                        override fun onLoadCleared(placeholder: Drawable?) {
-                        }
+                            override fun onLoadCleared(placeholder: Drawable?) {
+                            }
 
-                        override fun onLoadFailed(placeholder: Drawable?) {
-                            val mFirebaseAnalytics =
-                                FirebaseAnalytics.getInstance(viewHolder.view.context)
-                            val bundle = Bundle()
-                            bundle.putString(FirebaseAnalytics.Param.ITEM_ID, game.product_number)
-                            bundle.putString(FirebaseAnalytics.Param.ITEM_NAME, game.image_url)
-                            mFirebaseAnalytics.logEvent(
-                                "yab_fail_load_image", bundle
-                            )
-                        }
-
-
-                    })
+                            override fun onLoadFailed(placeholder: Drawable?) {
+                                val mFirebaseAnalytics =
+                                    FirebaseAnalytics.getInstance(viewHolder.view.context)
+                                val bundle = Bundle()
+                                bundle.putString(FirebaseAnalytics.Param.ITEM_ID, game.product_number)
+                                bundle.putString(FirebaseAnalytics.Param.ITEM_NAME, game.image_url)
+                                mFirebaseAnalytics.logEvent(
+                                    "yab_fail_load_image",
+                                    bundle,
+                                )
+                            }
+                        },
+                    )
             } else {
-                Glide.with(viewHolder.view.context)
-                    .load(File(game.image_url)) //.centerCrop()
-                    .placeholder(mDefaultCardImage) //.apply(  new RequestOptions().transforms(new CenterCrop() ).error(mDefaultCardImage)  )
+                Glide
+                    .with(viewHolder.view.context)
+                    .load(File(game.image_url!!)) // .centerCrop()
+                    .placeholder(
+                        mDefaultCardImage,
+                    ) // .apply(  new RequestOptions().transforms(new CenterCrop() ).error(mDefaultCardImage)  )
                     .into(cardView.mainImageView!!)
             }
         } else {
@@ -188,7 +199,11 @@ class CardPresenter : Presenter() {
         private const val CARD_HEIGHT = (CARD_WIDTH * 12.5 / 14.0).toInt()
         private var sSelectedBackgroundColor = 0
         private var sDefaultBackgroundColor = 0
-        private fun updateCardBackgroundColor(view: ImageCardView, selected: Boolean) {
+
+        private fun updateCardBackgroundColor(
+            view: ImageCardView,
+            selected: Boolean,
+        ) {
             val color = if (selected) sSelectedBackgroundColor else sDefaultBackgroundColor
             // Both background colors should be set because the view's background is temporarily visible
             // during animations.

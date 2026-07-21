@@ -107,6 +107,9 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 #include <stdarg.h>
 #include <math.h>
 #include <limits.h>
+#ifdef _MSC_VER
+#include <intrin.h>  // _BitScanForward (MSVC has no __builtin_ctz)
+#endif
 
 #include "c68k/c68k.h"
 #include "cs2.h"
@@ -118,6 +121,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 #include "yabause.h"
 #include "scsp.h"
 #include "scspdsp.h"
+#include "sh2cache.h"
 #include "threads.h"
 #include <atomic>
 
@@ -169,6 +173,23 @@ static int g_scsp_main_mode = 0;
 #include "sh2core.h"
 
 std::atomic<u32> m68kcycle = 0;
+
+// scsp_main_mode==0 (CPU-time synced) runs the M68K on the SCSP thread in
+// 256-cycle chunks while the SH2 runs concurrently on the emulation thread.
+// Without ordering, a M68K store issued at an EARLIER emulated time can land
+// in host memory AFTER a LATER SH2 store to the same sound RAM address,
+// corrupting mailbox handshakes (e.g. Techno Motor request flag at 0x4E0).
+// m68k_done_upto publishes, in current-frame m68k cycles, how far the SCSP
+// thread has FULLY executed the M68K. Before the SH2 touches sound RAM it
+// waits until this reaches the current m68k counter, so host memory order
+// matches emulated order. Both values reset each frame; the comparison is
+// race-free because the waiting thread (emulation thread) is the only
+// writer of the counter.
+std::atomic<u64> m68k_done_upto(0);
+// set while the mode-0 thread is parked at the frame-boundary handshake;
+// the SH2 drain must not wait in that state (the SCSP thread cannot run
+// until the emulation thread reaches SyncCPUtoSCSP)
+std::atomic<int> m68k_at_frame_boundary(0);
 
 extern "C" {
   extern volatile u64 saved_m68k_cycles;
@@ -298,6 +319,7 @@ struct SlotRegs
    u8 oct;
    u8 unknown4;
    u16 fns;
+   u8 shortwave; // register $08 bit15: short-wave wrap for small loops (scsp3 ShortWave)
    u8 re;
    u8 lfof;
    u8 plfows;
@@ -327,7 +349,28 @@ struct SlotState
    s32 sample_offset;
    u32 address_pointer;
    u32 lfo_counter;
-   u32 lfo_pos;
+   u32 lfo_pos;          // doubles as the 8-bit LFOCounter for the scsp3-style LFO
+
+   // 6-bit sub-sample fraction (sia) captured in op2 for linear interpolation in op3
+   u32 sample_frac;
+
+   // Down-counter that paces LFOCounter advance (scsp3 LFOTimeCounter)
+   u32 lfo_time_counter;
+
+   // Playback has reached the loop start (scsp3 InLoop); used for LPSLNK attack->decay link
+   int in_loop;
+
+   // Set on key-on so op4 skips the envelope step for the key-on sample: scsp3 runs RunEG before
+   // executing the key-on, so the key-on sample itself never advances the attack (else the
+   // envelope runs one step ahead of scsp3 from the very first sample of every note).
+   int eg_keyon_skip;
+
+   // Phase fraction captured BEFORE op1 adds this sample's increment. scsp3 reads the waveform with
+   // the pre-increment phase, so op2 uses this (not the post-increment fraction) for interpolation.
+   u32 read_phase_frac;
+
+   // Raw sample index (sample_offset + FM offset) before ShortWaveMask, used by op3
+   s32 wave_index;
 
    int num;
    int is_muted;
@@ -344,11 +387,26 @@ struct Slot
 
 struct Scsp
 {
+   // scsp3 modulation ring (SoundStack[64]): op7 commits each slot's output here through the
+   // 4-sample delay line below; op2 reads the FM modulator taps from it.
    u16 sound_stack[64];
    struct Slot slots[32];
 
    int debug_mode;
+
+   // scsp3 SoundStackDelayer[4]: 4-sample delay line for the modulation ring.
+   s16 sound_stack_delayer[4];
+   // Free-running counter incremented once per op7, tracking scsp3's GlobalCounter
+   // (GC == 32*sample + slot). op7 writes/inhibits via GC; op2 reads via (GC + 5) to absorb the
+   // 5-stage op2->op7 pipeline gap.
+   // NOTE: a residual parity-phase skew in this ring leaves FM cross-modulation with a Nyquist
+   // buzz; resolving it (correcting the delayer's parity placement) is tracked as a follow-up.
+   u32 global_counter;
+   u32 frame;
 }new_scsp;
+
+// 17-bit Galois LFSR shared by all slots for noise source and noise LFO (scsp3 RunSample).
+static u32 new_scsp_lfsr = 1;
 
 //samples per step through a 256 entry lfo table
 const int lfo_step_table[0x20] = {
@@ -485,46 +543,141 @@ void fill_alfo_tables()
    }
 }
 
+// Forward declaration for debug sample recording (Issue #73)
+void scsp_debug_record_sample(int slot, s16 sample);
+
+// Pitch LFO: waveform derived directly from the 8-bit LFOCounter, scaled relative to
+// the slot frequency (scsp3 GetPLFO).
+static int new_scsp_get_plfo(struct Slot * slot)
+{
+   u8 c = (u8)slot->state.lfo_pos;
+   int ret;
+
+   switch (slot->regs.plfows)
+   {
+   default:
+   case 0: // saw
+      ret = (s8)(c & ~1);
+      break;
+   case 1: // square
+      ret = (s8)((c & 0x80) ? 0x80 : 0x7E);
+      break;
+   case 2: // triangle
+      ret = (s8)(((c & 0x3F) ^ ((c & 0x40) ? 0x3F : 0x00) ^ ((c & 0x80) ? 0x7F : 0x00)) << 1);
+      break;
+   case 3: // noise
+      ret = (s8)(new_scsp_lfsr & ~1);
+      break;
+   }
+
+   ret >>= (7 - slot->regs.plfos);
+   if (!slot->regs.plfos)
+      ret = 0;
+
+   ret = ((0x40 ^ (slot->regs.fns >> 4)) * ret) >> 6;
+   return ret;
+}
+
+// Amplitude LFO: returns an attenuation increment (scsp3 GetALFO).
+static u8 new_scsp_get_alfo(struct Slot * slot)
+{
+   u8 c = (u8)slot->state.lfo_pos;
+   u8 ret;
+
+   switch (slot->regs.alfows)
+   {
+   default:
+   case 0: // saw
+      ret = c & ~1;
+      break;
+   case 1: // square
+      ret = ((s8)c >> 7) & ~1;
+      break;
+   case 2: // triangle
+      ret = (u8)((unsigned)(c ^ ((s8)c >> 7)) << 1);
+      break;
+   case 3: // noise
+      ret = new_scsp_lfsr & ~1;
+      break;
+   }
+
+   ret >>= (7 - slot->regs.alfos);
+   if (!slot->regs.alfos)
+      ret = 0;
+
+   return ret;
+}
+
+// Advance the LFOCounter at the rate set by LFOF, with optional reset (scsp3 RunLFO).
+static void new_scsp_run_lfo(struct Slot * slot)
+{
+   slot->state.lfo_time_counter--;
+   if (!slot->state.lfo_time_counter)
+   {
+      slot->state.lfo_pos = (slot->state.lfo_pos + 1) & 0xFF;
+      slot->state.lfo_time_counter =
+         (((8 - (slot->regs.lfof & 0x3)) << 7) >> (slot->regs.lfof >> 2)) - 4;
+   }
+
+   if (slot->regs.re)
+      slot->state.lfo_pos = 0;
+}
+
 //pg, plfo
 void op1(struct Slot * slot)
 {
    u32 oct = slot->regs.oct ^ 8;
-   u32 fns = 0x400 ^ slot->regs.fns;
-   u32 phase_increment = fns << oct;
-   int plfo_val = 0;
-   int plfo_shifted = 0;
+   s32 base;
 
    if (slot->state.attenuation >= 0x3bf)
       return;
 
-   if (slot->state.lfo_counter % lfo_step_table[slot->regs.lfof] == 0)
-   {
-      slot->state.lfo_counter = 0;
-      slot->state.lfo_pos++;
-
-      if (slot->state.lfo_pos > 0xff)
-         slot->state.lfo_pos = 0;
-   }
-
-   if (slot->regs.plfows == 0)
-      plfo_val = plfo.saw_table[slot->state.lfo_pos];
-   else if (slot->regs.plfows == 1)
-      plfo_val = plfo.square_table[slot->state.lfo_pos];
-   else if (slot->regs.plfows == 2)
-      plfo_val = plfo.tri_table[slot->state.lfo_pos];
-   else if (slot->regs.plfows == 3)
-      plfo_val = plfo.noise_table[slot->state.lfo_pos];
-
-   plfo_shifted = (plfo_val << slot->regs.plfos) >> 2;
+   // Frequency increment with pitch LFO folded in (scsp3 RunSample). The new pipeline keeps
+   // 18 fractional bits, which already absorbs scsp3's trailing >>4 on its 14-bit phase.
+   base = (s32)(0x400 ^ slot->regs.fns) + new_scsp_get_plfo(slot);
 
    slot->state.waveform_phase_value &= (1 << 18) - 1;//18 fractional bits
-   slot->state.waveform_phase_value += (phase_increment + plfo_shifted);
+   // Capture the pre-increment phase fraction for op2's interpolation (scsp3 reads before incrementing).
+   slot->state.read_phase_frac = (slot->state.waveform_phase_value >> 12) & 0x3F;
+   // scsp3 truncates the low 4 bits of the increment (it adds (incr >> 4) to a
+   // 14-bit phase). The new pipeline keeps 18 fractional bits, so to stay
+   // bit-aligned with scsp3 the same low 4 bits must be discarded here, else the
+   // phase drifts ahead by the accumulated remainder.
+   slot->state.waveform_phase_value += (base << oct) & ~0xF;
+
+   // Advance the LFO between PLFO use (here) and ALFO use (op5).
+   new_scsp_run_lfo(slot);
 }
 
 int get_slot(struct Slot * slot, int mdsl)
 {
    return (mdsl + slot->state.num) & 0x1f;
 }
+
+// Count trailing zeros, portable across GCC/Clang and MSVC.
+static inline unsigned new_scsp_ctz32(unsigned x)
+{
+#ifdef _MSC_VER
+   unsigned long idx;
+   _BitScanForward(&idx, x);
+   return (unsigned)idx;
+#else
+   return (unsigned)__builtin_ctz(x);
+#endif
+}
+
+// Short-wave wrap mask for small loops (scsp3 RecalcShortWaveMask). Returns all-ones (no wrap)
+// unless the ShortWave bit is set and the loop end selects a short region.
+static u32 new_scsp_shortwave_mask(struct Slot * slot)
+{
+   unsigned lev = slot->regs.lea & 0x780;
+
+   if (slot->regs.shortwave && lev)
+      return (1u << new_scsp_ctz32(lev)) - 1;
+
+   return 0xFFFFFFFF;
+}
+
 
 //address pointer calculation
 //modulation data read
@@ -536,24 +689,40 @@ void op2(struct Slot * slot, struct Scsp * s)
    if (slot->state.attenuation >= 0x3bf)
       return;
 
+   // Use the pre-increment phase fraction (captured in op1) for interpolation, matching scsp3.
+   slot->state.sample_frac = slot->state.read_phase_frac;
+
    if (slot->regs.mdl)
    {
-      //averaging operation
-      u32 x_sel = get_slot(slot, slot->regs.mdxsl);
-      u32 y_sel = get_slot(slot, slot->regs.mdysl);
-      s16 xd = s->sound_stack[x_sel];
-      s16 yd = s->sound_stack[y_sel];
+      // FM modulation (scsp3 RunSample): read the two modulator taps from SoundStack at
+      // gc + ModInputX/Y. gc must equal scsp3's GlobalCounter at this slot's read; the harness
+      // (tools/scsp3) showed the read index was +6 vs scsp3 with the old +5, so the correct
+      // offset relative to the op7-advanced global_counter is -1.
+      u32 gc = s->global_counter - 1;
+      u32 px = (gc + slot->regs.mdxsl) & 0x3F;
+      u32 py = (gc + slot->regs.mdysl) & 0x3F;
+      s32 xd = (s16)s->sound_stack[px];
+      s32 yd = (s16)s->sound_stack[py];
+      s32 sum = xd + yd;
+      s32 modalizer = ((sum << 6) >> (0x10 - slot->regs.mdl)) & ~1;
+      s32 sia;
 
-      s32 zd = (xd + yd) / 2;
+      if (slot->regs.mdl <= 4)
+         modalizer = 0;
 
-      //modulation operation
-      u16 shift = 0xf - (slot->regs.mdl);
-      zd >>= shift;
+      sia = modalizer + (s32)slot->state.sample_frac;
+      // Sign-extend the integer part to 11 bits and keep the low 6 bits as the interpolation fraction.
+      md_out = ((s32)((u32)(sia >> 6) << 21)) >> 21;
+      slot->state.sample_frac = sia & 0x3F;
 
-      md_out = zd;
    }
 
    //address pointer
+
+   // scsp3 reads the waveform at the CURRENT address, then advances; the new pipeline advanced the
+   // address before reading, leaving every voice one sample ahead of scsp3. Capture the pre-advance
+   // address here and use it for wave_index below.
+   s32 read_offset = slot->state.sample_offset;
 
    if (slot->regs.lpctl == 0)//no loop
    {
@@ -566,8 +735,10 @@ void op2(struct Slot * slot, struct Scsp * s)
    {
       slot->state.sample_offset += sample_delta;
 
+      // scsp3 wraps by subtracting the loop length (CurrentAddr += LoopStart - LoopEnd), preserving
+      // the overshoot past LoopEnd, rather than snapping back to LoopStart and losing it.
       if (slot->state.sample_offset >= slot->regs.lea)
-         slot->state.sample_offset = slot->regs.lsa;
+         slot->state.sample_offset -= (s32)(slot->regs.lea - slot->regs.lsa);
    }
    else if (slot->regs.lpctl == 2)//reverse
    {
@@ -616,27 +787,80 @@ void op2(struct Slot * slot, struct Scsp * s)
       }
    }
 
-   if (!slot->regs.pcm8b)
-      slot->state.address_pointer = (s32)slot->regs.sa + (slot->state.sample_offset + md_out) * 2;
-   else
-      slot->state.address_pointer = (s32)slot->regs.sa + (slot->state.sample_offset + md_out);
+   // Track loop-start crossing for the LPSLNK attack->decay link (scsp3 InLoop).
+   if (slot->state.sample_offset >= (s32)slot->regs.lsa)
+      slot->state.in_loop = 1;
+
+   // Raw sample index; op3 applies the ShortWaveMask and computes the interpolation pair.
+   // Use the pre-advance address (scsp3 reads before incrementing CurrentAddr).
+   slot->state.wave_index = read_offset + md_out;
+
+   {
+      u32 mask = new_scsp_shortwave_mask(slot);
+      u32 i0 = ((u32)slot->state.wave_index) & mask;
+
+      if (!slot->regs.pcm8b)
+         slot->state.address_pointer = (s32)slot->regs.sa + i0 * 2;
+      else
+         slot->state.address_pointer = (s32)slot->regs.sa + i0;
+   }
 }
 
 
 //waveform dram read
 void op3(struct Slot * slot)
 {
-   u32 addr = (slot->state.address_pointer) & 0x7FFFF;
+   // SBCTL XOR masks: 0=none, 1=invert lower 15 bits, 2=invert sign, 3=invert all (scsp3 SB_XOR_Table).
+   static const u16 sb_xor_table[4] = { 0x0000, 0x7FFF, 0x8000, 0xFFFF };
+   u16 sbxor = sb_xor_table[slot->regs.sbctl & 3];
+   s32 sample;
 
-   if (slot->state.attenuation >= 0x3bf)
-      return;
+   if (slot->state.attenuation < 0x3bf)
+   {
+      if (slot->regs.ssctl == 0)
+      {
+         // Memory waveform with linear interpolation (scsp3 RunSample). The two sample indices
+         // are wrapped independently by the ShortWaveMask so short loops stay in range.
+         u32 mask = new_scsp_shortwave_mask(slot);
+         u32 i0 = ((u32)slot->state.wave_index) & mask;
+         u32 i1 = ((u32)(slot->state.wave_index + 1)) & mask;
+         u32 sia = slot->state.sample_frac & 0x3F;
+         u32 addr0, addr1;
+         s32 s0, s1;
 
-   if (!slot->regs.pcm8b)
-     slot->state.wave = T2ReadWord(SoundRam, addr); //SoundRamReadWord(addr);
-   else
-     slot->state.wave = T2ReadByte(SoundRam, addr) << 8; //SoundRamReadByte(addr) << 8;
+         if (!slot->regs.pcm8b)
+         {
+            addr0 = ((u32)slot->regs.sa + i0 * 2) & 0x7FFFF;
+            addr1 = ((u32)slot->regs.sa + i1 * 2) & 0x7FFFF;
+            s0 = (s16)(T2ReadWord(SoundRam, addr0) ^ sbxor);
+            s1 = (s16)(T2ReadWord(SoundRam, addr1) ^ sbxor);
+         }
+         else
+         {
+            addr0 = ((u32)slot->regs.sa + i0) & 0x7FFFF;
+            addr1 = ((u32)slot->regs.sa + i1) & 0x7FFFF;
+            s0 = (s16)((T2ReadByte(SoundRam, addr0) << 8) ^ sbxor);
+            s1 = (s16)((T2ReadByte(SoundRam, addr1) << 8) ^ sbxor);
+         }
 
-   slot->state.output = slot->state.wave;
+         sample = ((s0 * (0x40 - (s32)sia)) + (s1 * (s32)sia)) >> 6;
+         slot->state.wave = (u16)s0;
+      }
+      else
+      {
+         // Source select 1 = LFSR noise, 2/3 = zero. SBXOR applies after.
+         u16 raw = (slot->regs.ssctl == 1) ? (u16)(new_scsp_lfsr << 8) : 0;
+         sample = (s16)(raw ^ sbxor);
+         slot->state.wave = (u16)sample;
+      }
+
+      slot->state.output = (s16)sample;
+   }
+
+   // Clock the 17-bit LFSR ONCE per slot, unconditionally, exactly like scsp3 (which clocks it
+   // every slot regardless of activity). Gating it behind the active-slot early return slowed the
+   // LFSR and changed the noise-source timbre.
+   new_scsp_lfsr = (new_scsp_lfsr >> 1) | (((new_scsp_lfsr >> 5) ^ new_scsp_lfsr) & 1) << 16;
 }
 
 void change_envelope_state(struct Slot * slot, enum EnvelopeStates new_state)
@@ -728,45 +952,84 @@ void do_decay(struct Slot * slot, int rate_in)
 }
 
 //interpolation
-//eg
+//eg (scsp3 RunEG: exponential attack via ~EnvLevel, SampleCounter/XC bit-trick clocking)
 void op4(struct Slot * slot)
 {
-   int sample_mod_4 = slot->state.envelope_steps_taken & 3;
-
    if (slot->state.attenuation >= 0x3bf)
       return;
 
-   if (slot->state.envelope == ATTACK)
+   // SampleCounter is the per-sample tick (scsp3 GlobalCounter>>5). scsp3 evaluates it at the START
+   // of RunSample, before the counter advances for this sample; the new pipeline increments
+   // new_scsp.frame at the top of generate_sample, so subtract 1 to align the EG clock phase (else
+   // the envelope advances one sample ahead of scsp3, e.g. an extra attack step on the key-on sample).
+   const u32 sc = new_scsp.frame - 1;
+   const u32 scxc = (sc ^ (sc - 1)) & (sc ^ 1);
+   const u32 env_level_cache = slot->state.attenuation;
+
+   unsigned erate_noscale;
+   switch (slot->state.envelope)
    {
-      int rate = get_rate(slot, slot->regs.ar);
-      int need_step = need_envelope_step(rate, slot->state.sample_counter, slot);
-
-      if (need_step)
-      {
-         int attack_rate = 0;
-
-         if (rate <= 0x30)
-            attack_rate = attack_rate_table[0][sample_mod_4];
-         else
-            attack_rate = attack_rate_table[rate - 0x30][sample_mod_4];
-
-         slot->state.attenuation -= ((slot->state.attenuation >> attack_rate)) + 1;
-
-         if (slot->state.attenuation == 0)
-            change_envelope_state(slot, DECAY1);
-      }
+   case ATTACK:  erate_noscale = slot->regs.ar;  break;
+   case DECAY1:  erate_noscale = slot->regs.d1r; break;
+   case DECAY2:  erate_noscale = slot->regs.d2r; break;
+   default:      erate_noscale = slot->regs.rr;  break; // RELEASE
    }
-   else if (slot->state.envelope == DECAY1)
-   {
-      do_decay(slot,slot->regs.d1r);
 
-      if ((slot->state.attenuation >> 5) >= slot->regs.dl) 
+   // key_eg_scale: KRS plus signed octave, clamped to 0..0xF (scsp3 RunSample).
+   unsigned key_eg_scale;
+   if (slot->regs.krs == 0xf)
+      key_eg_scale = 0;
+   else
+   {
+      int v = (int)slot->regs.krs + (int)(slot->regs.oct ^ 8) - 8;
+      key_eg_scale = (v < 0) ? 0 : (v > 0xf ? 0xf : (unsigned)v);
+   }
+
+   const unsigned erate = (key_eg_scale + erate_noscale < 0x1f) ? (key_eg_scale + erate_noscale) : 0x1f;
+   const unsigned erate_wbt = (0x18 - (erate < 0x18 ? erate : 0x18)) >> 1;
+   // ShiftAdj = (ERate < 0x18) & ERate  -> 0/1 (low bit of ERate only while below 0x18).
+   const unsigned shift_adj = (erate < 0x18) ? (erate & 1u) : 0u;
+   int clock_eg = (int)(((scxc | (scxc >> shift_adj)) >> (erate_wbt + shift_adj)) & (erate_noscale ? 1u : 0u));
+
+   // Maximum attack rate keeps the level stuck at the key-on value (scsp3 RunEG guard).
+   if (slot->state.envelope == ATTACK && (erate_noscale + key_eg_scale) >= 0x20)
+      clock_eg = 0;
+
+   // scsp3 executes RunEG before the key-on, so the key-on sample never advances the envelope.
+   if (slot->state.eg_keyon_skip)
+   {
+      slot->state.eg_keyon_skip = 0;
+      clock_eg = 0;
+   }
+
+   if (clock_eg)
+   {
+      const s32 inc_base = (slot->state.envelope == ATTACK) ? ~(s32)env_level_cache : 16;
+      unsigned ermaxo = erate;
+      if (ermaxo < 0x18) ermaxo = 0x18;
+      if (ermaxo > 0x1e) ermaxo = 0x1e;
+      const u32 srac = ((0x20 - ermaxo) >> 1) + (ermaxo & 1u & (sc >> (erate_wbt + 1)));
+      s32 new_env = (s32)env_level_cache + (inc_base >> srac);
+
+      if (new_env > 0x3ff) new_env = 0x3ff;
+      if (new_env < 0) new_env = 0;
+      slot->state.attenuation = (u16)new_env;
+   }
+
+   // Phase transitions use the pre-update level (scsp3 RunEG, EnvLevelCache).
+   if (slot->state.envelope == DECAY1)
+   {
+      if ((env_level_cache >> 5) == slot->regs.dl)
          change_envelope_state(slot, DECAY2);
    }
-   else if (slot->state.envelope == DECAY2)
-      do_decay(slot, slot->regs.d2r);
-   else if (slot->state.envelope == RELEASE)
-      do_decay(slot, slot->regs.rr);
+   else if (slot->state.envelope == ATTACK)
+   {
+      // LPSLNK holds attack at full volume until the loop start is reached; otherwise the
+      // attack ends when the level reaches maximum volume (EnvLevelCache == 0).
+      if ((slot->regs.ls && slot->state.in_loop) ||
+          (!slot->regs.ls && env_level_cache == 0))
+         change_envelope_state(slot, DECAY1);
+   }
 }
 
 s16 apply_volume(u16 tl, u16 slot_att, const s16 s)
@@ -794,21 +1057,17 @@ void op5(struct Slot * slot)
    }
    else
    {
-      int alfo_val = 0;
-      int lfo_add = 0;
       s16 sample = 0;
 
-      if (slot->regs.alfows == 0)
-         alfo_val = alfo.saw_table[slot->state.lfo_pos];
-      else if (slot->regs.alfows == 1)
-         alfo_val = alfo.square_table[slot->state.lfo_pos];
-      else if (slot->regs.alfows == 2)
-         alfo_val = alfo.tri_table[slot->state.lfo_pos];
-      else if (slot->regs.alfows == 3)
-         alfo_val = alfo.noise_table[slot->state.lfo_pos];
-
-      lfo_add = (((alfo_val + 1)) >> (7 - slot->regs.alfos)) << 1;
-      sample = apply_volume(slot->regs.tl, slot->state.attenuation + lfo_add, slot->state.output);
+      // Direct Sound
+      if( slot->regs.sd ){
+        sample = slot->state.output;
+      }else{
+        // EGHOLD: during attack the slot is held at full volume (scsp3 AttackHold).
+        u16 eff_att = (slot->state.envelope == ATTACK && slot->regs.hold) ? 0 : slot->state.attenuation;
+        // Amplitude LFO adds to the envelope attenuation (scsp3 GetALFO).
+        sample = apply_volume(slot->regs.tl, eff_att + new_scsp_get_alfo(slot), slot->state.output);
+      }
       slot->state.output = sample;
    }
 }
@@ -822,12 +1081,34 @@ void op6(struct Slot * slot)
 //sound stack write
 void op7(struct Slot * slot, struct Scsp*s)
 {
-   u32 previous = s->sound_stack[slot->state.num + 32];
-   s->sound_stack[slot->state.num + 32] = slot->state.output;
-   s->sound_stack[slot->state.num] = previous;
+   {
+      // scsp3 GlobalCounter mechanics: commit the 4-deep delayed output to ring entry (GC-4),
+      // gated by the LIVE StackWriteInhibit of the slot being written, then advance the counter.
+      // op7 processes slot[step-6] while global_counter has advanced to 32*frame+step, so the
+      // GlobalCounter that scsp3 would have for this slot is global_counter-6. delayer[3] holds
+      // slot(step-10)'s output, which scsp3 stores at ring entry (GlobalCounter-6-4).
+      u32 gc = s->global_counter - 6;
+
+      if (!s->slots[(gc - 4) & 0x1F].regs.si)
+         s->sound_stack[(gc - 4) & 0x3F] = (u16)s->sound_stack_delayer[3];
+
+
+      s->sound_stack_delayer[3] = s->sound_stack_delayer[2];
+      s->sound_stack_delayer[2] = s->sound_stack_delayer[1];
+      s->sound_stack_delayer[1] = s->sound_stack_delayer[0];
+      s->sound_stack_delayer[0] = slot->state.output;
+
+      s->global_counter++;
+   }
+
+   // Record sample for debug waveform display (Issue #73)
+   // Only record when debug mode is active to avoid performance overhead
+   if (s->debug_mode) {
+      scsp_debug_record_sample(slot->state.num, slot->state.output);
+   }
 
    slot->state.sample_counter++;
-   slot->state.lfo_counter++;
+   // lfo_counter is no longer used; the scsp3-style LFO is paced by lfo_time_counter in op1.
 }
 
 struct DebugInstrument
@@ -923,18 +1204,168 @@ void scsp_debug_get_envelope(int chan, int * env, int * state)
    *state = new_scsp.slots[chan].state.envelope;
 }
 
+void scsp_debug_get_tl(int chan, int * tl, int * dldisdl, int * imxl, int * efsdl )
+{
+   *tl = new_scsp.slots[chan].regs.tl;
+   *dldisdl = new_scsp.slots[chan].regs.disdl;
+   *imxl = new_scsp.slots[chan].regs.imxl;
+   *efsdl = new_scsp.slots[chan].regs.efsdl;
+}
 
+// Extended debug API (Issue #73)
+void scsp_debug_get_slot_state(int slot, ScspSlotDebugInfo *info)
+{
+   if (slot < 0 || slot >= 32 || info == NULL)
+      return;
 
-void keyon(struct Slot * slot) 
+   struct Slot *s = &new_scsp.slots[slot];
+
+   // Key state
+   info->key_on = s->regs.kx;
+   info->key_bit = s->regs.kb;
+   info->is_active = (s->state.envelope != RELEASE) &&
+                     (s->state.attenuation < 0x3bf) &&
+                     (s->regs.tl < 0x3ff);
+
+   // Source settings
+   info->source_bit_ctrl = s->regs.sbctl;
+   info->source_select = s->regs.ssctl;
+   info->loop_ctrl = s->regs.lpctl;
+   info->pcm_8bit = s->regs.pcm8b;
+
+   // Address
+   info->start_addr = s->regs.sa;
+   info->loop_start = s->regs.lsa;
+   info->loop_end = s->regs.lea;
+   info->current_addr = s->state.address_pointer;
+
+   // Envelope (ADSR)
+   info->attack_rate = s->regs.ar;
+   info->decay1_rate = s->regs.d1r;
+   info->decay2_rate = s->regs.d2r;
+   info->release_rate = s->regs.rr;
+   info->decay_level = s->regs.dl;
+   info->key_rate_scale = s->regs.krs;
+   info->envelope_state = (u8)s->state.envelope;
+   info->envelope_level = s->state.attenuation;
+
+   // Pitch
+   info->octave = s->regs.oct;
+   info->frequency_num = s->regs.fns;
+   info->phase_value = s->state.waveform_phase_value;
+
+   // LFO
+   info->lfo_frequency = s->regs.lfof;
+   info->pitch_lfo_wave = s->regs.plfows;
+   info->pitch_lfo_shift = s->regs.plfos;
+   info->amp_lfo_wave = s->regs.alfows;
+   info->amp_lfo_shift = s->regs.alfos;
+   info->lfo_position = s->state.lfo_pos;
+
+   // Level
+   info->total_level = s->regs.tl;
+   info->direct_level = s->regs.disdl;
+   info->direct_pan = s->regs.dipan;
+   info->effect_level = s->regs.efsdl;
+   info->effect_pan = s->regs.efpan;
+
+   // Modulation
+   info->mod_level = s->regs.mdl;
+   info->mod_x_select = s->regs.mdxsl;
+   info->mod_y_select = s->regs.mdysl;
+
+   // Output
+   info->current_output = s->state.output;
+   info->is_muted = s->state.is_muted;
+}
+
+int scsp_debug_is_slot_active(int slot)
+{
+   if (slot < 0 || slot >= 32)
+      return 0;
+
+   struct Slot *s = &new_scsp.slots[slot];
+   return (s->state.envelope != RELEASE) &&
+          (s->state.attenuation < 0x3bf) &&
+          (s->regs.tl < 0x3ff);
+}
+
+void scsp_debug_get_output_level(int slot, s16 *level_l, s16 *level_r)
+{
+   if (slot < 0 || slot >= 32 || level_l == NULL || level_r == NULL)
+      return;
+
+   struct Slot *s = &new_scsp.slots[slot];
+   s16 output = s->state.output;
+
+   // Apply direct pan (dipan: 0-31, where 0=full left, 31=full right)
+   int pan = s->regs.dipan;
+   int left_vol = (31 - pan) * 8;   // 0-248
+   int right_vol = pan * 8;          // 0-248
+
+   *level_l = (s16)((output * left_vol) >> 8);
+   *level_r = (s16)((output * right_vol) >> 8);
+}
+
+// Sample ring buffer for waveform display
+#define SCSP_DEBUG_SAMPLE_BUFFER_SIZE 1024
+static s16 scsp_debug_sample_buffer[32][SCSP_DEBUG_SAMPLE_BUFFER_SIZE];
+static int scsp_debug_sample_buffer_pos[32] = {0};
+
+void scsp_debug_record_sample(int slot, s16 sample)
+{
+   if (slot < 0 || slot >= 32)
+      return;
+   scsp_debug_sample_buffer[slot][scsp_debug_sample_buffer_pos[slot]] = sample;
+   scsp_debug_sample_buffer_pos[slot] =
+      (scsp_debug_sample_buffer_pos[slot] + 1) % SCSP_DEBUG_SAMPLE_BUFFER_SIZE;
+}
+
+int scsp_debug_get_sample_buffer(int slot, s16 *buffer, int max_samples)
+{
+   if (slot < 0 || slot >= 32 || buffer == NULL || max_samples <= 0)
+      return 0;
+
+   int count = (max_samples < SCSP_DEBUG_SAMPLE_BUFFER_SIZE) ?
+               max_samples : SCSP_DEBUG_SAMPLE_BUFFER_SIZE;
+   int pos = scsp_debug_sample_buffer_pos[slot];
+
+   // Copy samples in chronological order (oldest first)
+   for (int i = 0; i < count; i++) {
+      int idx = (pos + i) % SCSP_DEBUG_SAMPLE_BUFFER_SIZE;
+      buffer[i] = scsp_debug_sample_buffer[slot][idx];
+   }
+
+   return count;
+}
+
+void keyon(struct Slot * slot)
 {
    if (slot->state.envelope == RELEASE )
    {
      slot->state.envelope = ATTACK;
-      slot->state.attenuation = 0x280;
       slot->state.sample_counter = 0;
       slot->state.step_count = 0;
       slot->state.sample_offset = 0;
       slot->state.envelope_steps_taken = 0;
+      slot->state.lfo_pos = 0;
+      slot->state.lfo_time_counter = 1; // non-zero so the first decrement triggers a reload
+      slot->state.in_loop = 0;
+      slot->state.eg_keyon_skip = 1; // scsp3 runs RunEG before key-on: no attack step this sample
+
+      {
+         // Attack starts at full attenuation, unless the effective attack rate is so fast that
+         // it begins already at max volume (scsp3 RunSample key-on).
+         unsigned key_eg_scale;
+         if (slot->regs.krs == 0xf)
+            key_eg_scale = 0;
+         else
+         {
+            int v = (int)slot->regs.krs + (int)(slot->regs.oct ^ 8) - 8;
+            key_eg_scale = (v < 0) ? 0 : (v > 0xf ? 0xf : v);
+         }
+         slot->state.attenuation = ((slot->regs.ar + key_eg_scale) >= 0x20) ? 0x000 : 0x280;
+      }
 
       if ( !slot->regs.pcm8b && (slot->regs.sa&0x01) ) {
         slot->regs.sa &= 0xFFFFFE ;
@@ -1070,9 +1501,12 @@ void scsp_slot_write_byte(struct Scsp *s, u32 addr, u8 data)
    case 9:
       slot->regs.d1r = (slot->regs.d1r & 0x1c) | ((data >> 6) & 3);
       slot->regs.hold = (data >> 5) & 1;
+      // scsp3 parity: use AR verbatim. The legacy "< 0x10 -> 0x10" (Darius Gaiden)
+      // and "hold -> AR=0x1F" clamps force AR=0 held-attack slots to progress their
+      // envelope; a self-modulating FM carrier then grows unbounded and buzzes. scsp3
+      // keeps AR=0 (attack held at the key-on level) and models EGHOLD via AttackHold
+      // at the output stage (op5: hold -> full volume during attack).
       slot->regs.ar = data & 0x1f;
-      if (slot->regs.ar < 0x010) slot->regs.ar = 0x10; // for Darius Gaiden
-      if (slot->regs.hold) slot->regs.ar = 0x1f; // SCSP Users manual 4.2
       break;
    case 10:
       slot->regs.unknown1 = (data >> 7) & 1;
@@ -1102,6 +1536,7 @@ void scsp_slot_write_byte(struct Scsp *s, u32 addr, u8 data)
       break;
    case 16:
       slot->regs.unknown3 = (data >> 7) & 1;
+      slot->regs.shortwave = (data >> 7) & 1;
       slot->regs.oct = (data >> 3) & 0xf;
       slot->regs.unknown4 = (data >> 2) & 1;
       slot->regs.fns = (slot->regs.fns & 0xff) | ((data & 0x7) << 8);
@@ -1134,6 +1569,9 @@ void scsp_slot_write_byte(struct Scsp *s, u32 addr, u8 data)
    case 23:
       slot->regs.efsdl = (data >> 5) & 7;
       slot->regs.efpan = data & 0x1f;
+//      if (slot_num == 16) {
+//        printf("efsdl is updated %d", slot->regs.efsdl);
+//      }
       break;
    default:
       break;
@@ -1290,9 +1728,9 @@ void scsp_slot_write_word(struct Scsp *s, u32 addr, u16 data)
       slot->regs.d2r = data >> 11;
       slot->regs.d1r = (data >> 6) & 0x1f;
       slot->regs.hold = (data >> 5) & 1;
+      // scsp3 parity: use AR verbatim (see scsp_slot_write_byte case 9). The legacy
+      // Darius Gaiden / EGHOLD clamps broke AR=0 held-attack FM carriers and buzzed.
       slot->regs.ar = data & 0x1f;
-      if (slot->regs.ar < 0x010) slot->regs.ar = 0x10; // for Darius Gaiden
-      if (slot->regs.hold) slot->regs.ar = 0x1f; // SCSP Users manual 4.2
       break;
    case 5:
       slot->regs.unknown1 = (data >> 15) & 1;
@@ -1314,6 +1752,7 @@ void scsp_slot_write_word(struct Scsp *s, u32 addr, u16 data)
       break;
    case 8:
       slot->regs.unknown3 = (data >> 15) & 1;
+      slot->regs.shortwave = (data >> 15) & 1;
       slot->regs.unknown4 = (data >> 10) & 1;
       slot->regs.oct = (data >> 11) & 0xf;
       slot->regs.fns = data & 0x7ff;
@@ -1336,6 +1775,9 @@ void scsp_slot_write_word(struct Scsp *s, u32 addr, u16 data)
       slot->regs.dipan = (data >> 8) & 0x1f;
       slot->regs.efsdl = (data >> 5) & 7;
       slot->regs.efpan = data & 0x1f;
+      //if (slot_num == 16) {
+        //printf("%d", slot->regs.efsdl);
+      //}
       break;
    default:
       break;
@@ -1446,118 +1888,13 @@ int get_sdl_shift(int sdl)
 
 
 
-void generate_sample(struct Scsp * s, int rbp, int rbl, s16 * out_l, s16* out_r, int mvol, s16 cd_in_l, s16 cd_in_r)
-{
-   int step_num = 0;
-   int i = 0;
-   int mvol_shift = 0;
-   s32 outl32 = 0;
-   s32 outr32 = 0;
-
-   //run 32 steps to generate 1 full sample (512 clock cycles at 22579200hz)
-   //7 operations happen simultaneously on different channels due to pipelining
-   for (step_num = 0; step_num < 32; step_num++)
-   {
-      int last_step = (step_num - 6) & 0x1f;
-      int debug_muted = 0;
-
-      op1(&s->slots[step_num]);//phase, pitch lfo
-      op2(&s->slots[(step_num - 1) & 0x1f],s);//address pointer, modulation data read
-      op3(&s->slots[(step_num - 2) & 0x1f]);//waveform dram read
-      op4(&s->slots[(step_num - 3) & 0x1f]);//interpolation, eg, amplitude lfo
-      op5(&s->slots[(step_num - 4) & 0x1f]);//level calc 1
-      op6(&s->slots[(step_num - 5) & 0x1f]);//level calc 2
-      op7(&s->slots[(step_num - 6) & 0x1f],s);//sound stack write
-
-      if (s->debug_mode)
-      {
-         if (scsp_debug_instrument_check_is_muted(s->slots[last_step].regs.sa))
-            debug_muted = 1;
-      }
-
-      if (!debug_muted)
-      {
-         int disdl = get_sdl_shift(s->slots[last_step].regs.disdl);
-
-         s16 disdl_applied = (s->slots[last_step].state.output >> disdl);
-
-         s16 mixs_input = s->slots[last_step].state.output >> 
-            get_sdl_shift(s->slots[last_step].regs.imxl);
-
-         int pan_val_l = 0, pan_val_r = 0;
-
-         get_panning(s->slots[last_step].regs.dipan, &pan_val_l, &pan_val_r);
-
-         outl32 = outl32 + ((disdl_applied >> pan_val_l) >> 1);
-         outr32 = outr32 + ((disdl_applied >> pan_val_r) >> 1);
-         scsp_dsp.mixs[s->slots[last_step].regs.isel] += mixs_input << 4;
-      }
-   }
-
-   scsp_dsp.rbp = rbp;
-   scsp_dsp.rbl = rbl;
-
-   scsp_dsp.exts[0] = cd_in_l;
-   scsp_dsp.exts[1] = cd_in_r;
-
-   if (scsp_dsp.updated){
-
-	   for (i = 127; i >= 0; --i)
-	   {
-		   if( scsp_dsp.mpro[i] != 0 )
-			   break;
-	   }
-	   scsp_dsp.last_step = i + 1;
-	   scsp_dsp.updated = 0;
-   }
-
-   for (i = 0; i < scsp_dsp.last_step; i++)
-      ScspDspExec(&scsp_dsp, i, SoundRam);
-
-   if (!scsp_dsp.mdec_ct){
-     scsp_dsp.mdec_ct = (0x2000 << rbl);
-   }
-   scsp_dsp.mdec_ct--;
-
-   for (i = 0; i < 16; i++)
-      scsp_dsp.mixs[i] = 0;
-
-   for (i = 0; i < 18; i++)//16,17 are exts0/1
-   {
-      int efsdl = get_sdl_shift(s->slots[i].regs.efsdl);
-      s16 efsdl_applied = 0; 
-
-      int pan_val_l = 0, pan_val_r = 0;
-      s16 panned_l = 0, panned_r = 0;
-
-      if (i < 16)
-        efsdl_applied = (scsp_dsp.efreg[i] >> efsdl);
-      else if (i == 16)
-        efsdl_applied = scsp_dsp.exts[0] >>  efsdl;
-      else if (i == 17)
-        efsdl_applied = scsp_dsp.exts[1] >>  efsdl;
-
-      get_panning(s->slots[i].regs.efpan, &pan_val_l, &pan_val_r);
-
-      panned_l = (efsdl_applied >> pan_val_l)>>1;
-      panned_r = (efsdl_applied >> pan_val_r)>>1;
-
-      outl32 = outl32 + panned_l;
-      outr32 = outr32 + panned_r;
-   }
-
-   mvol_shift = 0xf - mvol;
-
-   outl32 = outl32 >> mvol_shift;
-   *out_l = min(SHRT_MAX, max(SHRT_MIN, outl32));
-   outr32 = outr32 >> mvol_shift;
-   *out_r = min(SHRT_MAX, max(SHRT_MIN, outr32));
-}
 
 void new_scsp_reset(struct Scsp* s)
 {
    int slot_num;
+   int backDebug = s->debug_mode;
    memset(s, 0, sizeof(struct Scsp));
+   s->debug_mode = backDebug;
 
    for (slot_num = 0; slot_num < 32; slot_num++)
    {
@@ -1763,6 +2100,7 @@ typedef struct scsp_t
 
   s32 stack[32 * 2];    // two last generation slot output (SCSP STACK)
   slot_t slot[32];      // 32 slots
+
 } scsp_t;
 
 ////////////////////////////////////////////////////////////////
@@ -1800,6 +2138,11 @@ static u32 scsp_buf_pos;
 
 static scsp_t   scsp;                         // SCSP structure
 
+int scsp_debug_get_mvol(){
+  return scsp.mvol;
+}
+
+
 #define CDDA_NUM_BUFFERS	2*75
 
 static union {
@@ -1816,6 +2159,122 @@ static void scsp_sustain_next(slot_t *slot);
 static void scsp_decay_next(slot_t *slot);
 static void scsp_attack_next(slot_t *slot);
 static void scsp_slot_update_keyon(slot_t *slot);
+
+void generate_sample(struct Scsp * s, int rbp, int rbl, s16 * out_l, s16* out_r, int mvol, s16 cd_in_l, s16 cd_in_r)
+{
+   int step_num = 0;
+   int i = 0;
+   int mvol_shift = 0;
+   s32 outl32 = 0;
+   s32 outr32 = 0;
+
+   // Per-sample counter (scsp3 SampleCounter), consumed by the op4 envelope generator.
+   s->frame++;
+
+   scsp_dsp.rbp = rbp;
+   scsp_dsp.rbl = rbl;
+
+   scsp_dsp.exts[0] = cd_in_l;
+   scsp_dsp.exts[1] = cd_in_r;
+
+   if (scsp_dsp.updated){
+
+	   for (i = 127; i >= 0; --i)
+	   {
+		   if( scsp_dsp.mpro[i] != 0 )
+			   break;
+	   }
+	   scsp_dsp.last_step = i + 1;
+	   scsp_dsp.updated = 0;
+   }
+
+   for (i = 0; i < scsp_dsp.last_step; i++)
+      ScspDspExec(&scsp_dsp, i, SoundRam);
+
+   if (!scsp_dsp.mdec_ct){
+     scsp_dsp.mdec_ct = (0x2000 << rbl);
+   }
+   scsp_dsp.mdec_ct--;
+
+   for (i = 0; i < 16; i++)
+      scsp_dsp.mixs[i] = 0;   
+
+   //run 32 steps to generate 1 full sample (512 clock cycles at 22579200hz)
+   //7 operations happen simultaneously on different channels due to pipelining
+   for (step_num = 0; step_num < 32; step_num++)
+   {
+      int last_step = (step_num - 6) & 0x1f;
+      int debug_muted = 0;
+
+      op1(&s->slots[step_num]);//phase, pitch lfo
+      op2(&s->slots[(step_num - 1) & 0x1f],s);//address pointer, modulation data read
+      op3(&s->slots[(step_num - 2) & 0x1f]);//waveform dram read
+      op4(&s->slots[(step_num - 3) & 0x1f]);//interpolation, eg, amplitude lfo
+      op5(&s->slots[(step_num - 4) & 0x1f]);//level calc 1
+      op6(&s->slots[(step_num - 5) & 0x1f]);//level calc 2
+      op7(&s->slots[(step_num - 6) & 0x1f],s);//sound stack write
+
+      if (s->debug_mode)
+      {
+         if (scsp_debug_instrument_check_is_muted(s->slots[last_step].regs.sa))
+            debug_muted = 1;
+      }
+
+      if (!debug_muted)
+      {
+         int disdl = get_sdl_shift(s->slots[last_step].regs.disdl);
+
+         s16 disdl_applied = (s->slots[last_step].state.output >> disdl);
+
+         s16 mixs_input = s->slots[last_step].state.output >> 
+           get_sdl_shift(s->slots[last_step].regs.imxl);
+
+         int pan_val_l = 0, pan_val_r = 0;
+
+         get_panning(s->slots[last_step].regs.dipan, &pan_val_l, &pan_val_r);
+
+         outl32 = outl32 + (disdl_applied >> pan_val_l);
+         outr32 = outr32 + (disdl_applied >> pan_val_r);
+         scsp_dsp.mixs[s->slots[last_step].regs.isel] += mixs_input << 4;
+      }
+   }
+
+
+   for (i = 0; i < 18; i++)//16,17 are exts0/1
+   {
+      int efsdl = get_sdl_shift(s->slots[i].regs.efsdl);
+      s16 efsdl_applied = 0; 
+
+      int pan_val_l = 0, pan_val_r = 0;
+      s16 panned_l = 0, panned_r = 0;
+
+      if (i < 16)
+        efsdl_applied = (scsp_dsp.efreg[i] >> efsdl);
+      else if (i == 16)
+        efsdl_applied = scsp_dsp.exts[0] >> efsdl;
+      else if (i == 17)
+        efsdl_applied = scsp_dsp.exts[1] >> efsdl;
+
+      get_panning(s->slots[i].regs.efpan, &pan_val_l, &pan_val_r);
+
+      panned_l = (efsdl_applied >> pan_val_l);
+      panned_r = (efsdl_applied >> pan_val_r);
+
+      outl32 = outl32 + panned_l;
+      outr32 = outr32 + panned_r;
+   }
+
+   mvol_shift = 0xf - mvol;
+
+   outl32 = outl32 >> mvol_shift;
+   outr32 = outr32 >> mvol_shift;   
+   *out_l = min(SHRT_MAX, max(SHRT_MIN, outl32));
+   *out_r = min(SHRT_MAX, max(SHRT_MIN, outr32));
+   if( scsp.dac18b != 0 ){
+     *out_l = *out_l << 2;
+     *out_r = *out_r << 2;
+   }
+}
 
 //////////////////////////////////////////////////////////////////////////////
 
@@ -1973,6 +2432,7 @@ scsp_dma (void)
         u16 val = scsp_r_w(from);
         //if (scsp.dmfl & 0x40) val = 0;
         T2WriteWord(SoundRam, to & 0x7FFFF, val);
+        cache_update_external_write(0x05A00000 | (to & 0x7FFFF), val, 2);
         from += 2;
         to += 2;
       }
@@ -2721,6 +3181,7 @@ scsp_set_b (u32 a, u8 d)
   switch (a & 0x3F)
     {
     case 0x00: // MEM4MB/DAC18B
+      scsp.dac18b = d&0x01;
       scsp.mem4b = (d >> 1) & 0x1;
       if (scsp.mem4b)
         {
@@ -2913,6 +3374,7 @@ scsp_set_w (u32 a, u16 d)
   switch (a & 0x3E)
     {
     case 0x00: // MEM4MB/DAC18B/VER/MVOL
+      scsp.dac18b = (d>>8) & 0x1;
       scsp.mem4b = (d >> 9) & 0x1;
       scsp.mvol = d & 0xF;
       if (scsp.mem4b)
@@ -3047,10 +3509,12 @@ scsp_get_b (u32 a)
 
   switch (a)
     {
+    case 0x0:
+      return  scsp.dac18b |  (scsp.mem4b<<1);
+      break;
     case 0x01: // VER/MVOL
       scsp_ccr[a ^ 3] &= 0x0F;
       break;
-
     case 0x04: // Midi flags register
       return scsp.midflag;
 
@@ -4850,6 +5314,8 @@ c68k_byte_write (const u32 adr, u32 data)
     //}
     if (adr < 0x80000) {
       T2WriteByte(SoundRam, adr & 0x7FFFF, data);
+      // keep the SH2 caches coherent with sound-CPU writes
+      cache_update_external_write(0x05A00000 | (adr & 0x7FFFF), data, 1);
     }
   }
   else{
@@ -4885,6 +5351,8 @@ c68k_word_write (const u32 adr, u32 data)
 //    }
     if (adr < 0x80000) {
       T2WriteWord(SoundRam, adr, data);
+      // keep the SH2 caches coherent with sound-CPU writes
+      cache_update_external_write(0x05A00000 | (adr & 0x7FFFF), data, 2);
     }
   }
   else{
@@ -4913,11 +5381,97 @@ scu_interrupt_handler (void)
 
 //////////////////////////////////////////////////////////////////////////////
 
+// scsp_main_mode==0 only: before the SH2 touches sound RAM, wait until the
+// SCSP thread has executed the M68K up to every cycle already granted by the
+// SH2 side. This keeps the host-memory order of SH2/M68K stores identical to
+// their emulated order and prevents lost mailbox flags (e.g. Techno Motor).
+// scsp_main_mode==0 only: SH2 sound RAM writes are staged in this FIFO and
+// committed as complete bursts, so the sound CPU can never observe a
+// half-written command block. Real hardware never shows such states because
+// the SH2 finishes its mailbox bursts orders of magnitude faster than the
+// 68K reacts. The FIFO lives entirely on the emulation thread (no locking):
+// it is flushed before any SH2 sound RAM read, at the per-frame handshake
+// (SyncCPUtoSCSP), on M68KStart, and when full.
+#define SH2_SRAM_FIFO_SIZE 1024
+typedef struct { u32 addr; u32 val; u8 size; } Sh2SramWrite;
+static Sh2SramWrite sh2_sram_fifo[SH2_SRAM_FIFO_SIZE];
+static int sh2_sram_fifo_count = 0;
+
+static void Sh2SramFifoCommit(void)
+{
+  int i;
+  for (i = 0; i < sh2_sram_fifo_count; i++) {
+    Sh2SramWrite *w = &sh2_sram_fifo[i];
+    if (w->size == 1)      T2WriteByte(SoundRam, w->addr, (u8)w->val);
+    else if (w->size == 2) T2WriteWord(SoundRam, w->addr, (u16)w->val);
+    else                   T2WriteLong(SoundRam, w->addr, w->val);
+    if (M68K) M68K->WriteNotify(w->addr, w->size);
+  }
+  sh2_sram_fifo_count = 0;
+}
+
+static void Sh2DrainM68k(void)
+{
+  if (g_scsp_main_mode != 0 || thread_running == 0 || !IsM68KRunning || g_scsp_lock)
+    return;
+
+  // This thread (the emulation thread) is the only writer of the m68k
+  // counter, so the target cannot move while we wait here.
+  u64 target = getM68KCounter() >> SCSP_FRACTIONAL_BITS;
+  if (m68k_done_upto.load(std::memory_order_acquire) >= target)
+    return;
+
+  int spins = 0;
+  while (m68k_done_upto.load(std::memory_order_acquire) < target &&
+         thread_running && !g_scsp_lock &&
+         !m68k_at_frame_boundary.load(std::memory_order_acquire)) {
+    YabThreadYield();
+    // safety valve: never hard-block the emulation thread
+    if (++spins > 10000) {
+      // watchdog: repeated valve hits mean the SCSP thread is not draining
+      static u32 valve_hits = 0;
+      valve_hits++;
+      if ((valve_hits & 0xFF) == 1) {
+        printf("scsp0 drain valve: target=%llu done=%llu hits=%u\n",
+               (unsigned long long)target,
+               (unsigned long long)m68k_done_upto.load(), valve_hits);
+      }
+      break;
+    }
+  }
+}
+
+// Returns 1 when the write was staged into the burst FIFO (mode 0), or 0
+// when the caller must perform the write directly.
+static INLINE int Sh2SramStageWrite(u32 addr, u32 val, u8 size)
+{
+  if (g_scsp_main_mode != 0 || thread_running == 0 || !IsM68KRunning)
+    return 0;
+  if (sh2_sram_fifo_count >= SH2_SRAM_FIFO_SIZE) {
+    Sh2DrainM68k();
+    Sh2SramFifoCommit();
+  }
+  sh2_sram_fifo[sh2_sram_fifo_count].addr = addr;
+  sh2_sram_fifo[sh2_sram_fifo_count].val = val;
+  sh2_sram_fifo[sh2_sram_fifo_count].size = size;
+  sh2_sram_fifo_count++;
+  return 1;
+}
+
+// Exported: commit staged SH2 sound RAM writes (emulation thread only).
+void ScspCommitSh2SoundRamWrites(void)
+{
+  Sh2SramFifoCommit();
+}
+
 u8 FASTCALL
 SoundRamReadByte (u32 addr)
 {
   addr &= 0xFFFFF;
   u8 val = 0;
+
+  Sh2DrainM68k();
+  Sh2SramFifoCommit();
 
   // If mem4b is set, mirror ram every 256k
   if (scsp.mem4b == 0)
@@ -4944,8 +5498,10 @@ SoundRamWriteByte (u32 addr, u8 val)
     return;
 
   //SCSPLOG("SoundRamWriteByte %08X:%02X", addr, val);
-  T2WriteByte (SoundRam, addr, val);
-  M68K->WriteNotify (addr, 1);
+  if (!Sh2SramStageWrite(addr, val, 1)) {
+    T2WriteByte (SoundRam, addr, val);
+    M68K->WriteNotify (addr, 1);
+  }
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -4989,6 +5545,9 @@ SoundRamReadWord (u32 addr)
   addr &= 0xFFFFF;
   u16 val = 0;
 
+  Sh2DrainM68k();
+  Sh2SramFifoCommit();
+
   if (scsp.mem4b == 0)
     addr &= 0x3FFFF;
   else if (addr > 0x7FFFF)
@@ -5017,8 +5576,10 @@ SoundRamWriteWord (u32 addr, u16 val)
   else if (addr > 0x7FFFF)
     return;
   //LOG("SoundRamWriteWord %08X:%04X", addr, val);
-  T2WriteWord (SoundRam, addr, val);
-  M68K->WriteNotify (addr, 2);
+  if (!Sh2SramStageWrite(addr, val, 2)) {
+    T2WriteWord (SoundRam, addr, val);
+    M68K->WriteNotify (addr, 2);
+  }
   //SyncSh2And68k();
 }
 
@@ -5030,6 +5591,9 @@ SoundRamReadLong (u32 addr)
   addr &= 0xFFFFF;
   u32 val;
   u32 pre_cycle = m68kcycle;
+
+  Sh2DrainM68k();
+  Sh2SramFifoCommit();
 
   // If mem4b is set, mirror ram every 256k
   if (scsp.mem4b == 0)
@@ -5043,7 +5607,6 @@ SoundRamReadLong (u32 addr)
   SyncSh2And68k();
 
   val = T2ReadLong(SoundRam, addr);
-
 
   return val;
 
@@ -5064,8 +5627,10 @@ SoundRamWriteLong (u32 addr, u32 val)
     return;
 
   //LOG("SoundRamWriteLong %08X:%08X", addr, val);
-  T2WriteLong (SoundRam, addr, val);
-  M68K->WriteNotify (addr, 4);
+  if (!Sh2SramStageWrite(addr, val, 4)) {
+    T2WriteLong (SoundRam, addr, val);
+    M68K->WriteNotify (addr, 4);
+  }
   //SyncSh2And68k();
 
 }
@@ -5196,7 +5761,7 @@ ScspDeInit (void)
 {
   ScspUnMuteAudio(1);
   scsp_mute_flags = 0;
-  thread_running = 0; 
+  thread_running = 0;
 #if defined(ASYNC_SCSP)
   //if (q_scsp_finish) YabAddEventQueue(q_scsp_finish, 0);
   if (q_scsp_frame_start)YabAddEventQueue(q_scsp_frame_start, 0);
@@ -5227,6 +5792,8 @@ ScspDeInit (void)
 void
 M68KStart (void)
 {
+  // make sure no staged SH2 writes (e.g. the driver upload) are pending
+  Sh2SramFifoCommit();
   M68K->Reset ();
   //ScspReset();
   savedcycles = 0;
@@ -5525,7 +6092,7 @@ extern "C" void * ScspAsynMainCpuTime( void * p ){
   int frame_count = 0;
   int i;
   int frame_div = g_scsp_sync_count_per_frame;
-  int framecnt = 188160 / frame_div; // 11289600/60
+  int framecnt = (yabsys.IsPal ? 225792 : 188160) / frame_div; // 11289600/50 or 11289600/60
   int hzcheck = 0;
 
 #if defined(ARCH_IS_LINUX)
@@ -5539,8 +6106,9 @@ extern "C" void * ScspAsynMainCpuTime( void * p ){
   u32 wait_clock = 0;
   u64 pre_m68k_cycle = 0;
   u64 m68k_inc = 0;
-  
-  framecnt = 188160; // 11289600/60
+  int flush_timer_carry = 0;
+
+  framecnt = yabsys.IsPal ? 225792 : 188160; // 11289600/50 or 11289600/60
 
   //YabWaitEventQueue(q_scsp_frame_start);
   now = 0;
@@ -5550,10 +6118,95 @@ extern "C" void * ScspAsynMainCpuTime( void * p ){
     u64 m68k_done_counter = 0;
     u64 m68k_integer_part = 0;
     u64 m68k_cycle = 0;
+
+    // End-of-frame handshake with the emulation thread. Triggered when the
+    // executed-cycle position (pre_m68k_cycle - m68k_inc) reaches framecnt.
+    // Everything (counter, pre, inc, done) resets to zero per frame, so any
+    // transient accounting disturbance (counter true-up/regression, reset)
+    // self-heals at the next boundary instead of drifting.
+    auto scsp_frame_boundary = [&]() {
+      // parked state first: SH2 drains must not wait on us from here on
+      m68k_at_frame_boundary.store(1, std::memory_order_release);
+
+      ScspInternalVars->scsptiming2 = 0;
+      ScspInternalVars->scsptiming1 = scsplines;
+      ScspExecAsync();
+
+      YabAddEventQueue( q_scsp_finish , 0);
+      // cycles granted beyond framecnt (counter rounding) are discarded
+      pre_m68k_cycle = 0;
+      m68k_inc = 0;
+      m68k_done_upto.store(0, std::memory_order_release);
+      //LOG("[SCSP] WAIT SH2");
+      YabWaitEventQueue(q_scsp_frame_start);
+      m68k_at_frame_boundary.store(0, std::memory_order_release);
+      now = YabauseGetTicks();
+      //LOG(" SCSPTIME = %d/16666666 %d/735", (s32)(now - before), hzcheck);
+      hzcheck = 0;
+      before = now;
+    };
+
+    u64 dbg_spin = 0;
     do {
       m68k_integer_part = getM68KCounter() >> SCSP_FRACTIONAL_BITS;
-      m68k_cycle = m68k_integer_part - pre_m68k_cycle;
       if (thread_running == 0) break;
+      // counter regression = the emulation thread reset it (YabauseReset
+      // etc.): drop pending work and resync instead of computing a bogus
+      // huge delta
+      if (m68k_integer_part < pre_m68k_cycle) {
+        pre_m68k_cycle = m68k_integer_part;
+        m68k_inc = 0;
+        m68k_cycle = 0;
+        m68k_done_upto.store(m68k_integer_part, std::memory_order_release);
+        // The emulation thread's VBlank snap (yabause.c setM68kCounter of the
+        // exact frame total) is a small counter REGRESSION whenever the
+        // per-deciline grants had already accumulated past one frame. If we
+        // had read the higher pre-snap value (pre > framecnt) but had not yet
+        // consumed up to the boundary, the resync above lands exactly on
+        // pre == framecnt with inc == 0 -- and this spin loop has no other
+        // path that fires the frame boundary in that state. The emulation
+        // thread then waits on q_scsp_finish forever (observed deadlock:
+        // watchdog counter=pre=188160, inc=0). Fire the boundary here so the
+        // handshake always completes.
+        if (pre_m68k_cycle >= (u64)framecnt) {
+          scsp_frame_boundary();
+        }
+        continue;
+      }
+      m68k_cycle = m68k_integer_part - pre_m68k_cycle;
+      // We caught up with the granted cycle counter: consume any sub-chunk
+      // remainder now. The 256-cycle chunking below is only an efficiency
+      // choice; consuming the tail here keeps the SH2 drain exact.
+      if (m68k_inc > 0) {
+        s32 c = (s32)m68k_inc;
+        MM68KExec(c);
+        if (use_new_scsp) {
+          new_scsp_exec(c << 1);
+        }
+        else {
+          // legacy engine: tick the timer once per accumulated sample worth
+          flush_timer_carry += c;
+          while (flush_timer_carry >= samplecnt) {
+            flush_timer_carry -= samplecnt;
+            scsp_update_timer(1);
+          }
+        }
+        m68k_inc = 0;
+        if (pre_m68k_cycle >= (u64)framecnt) {
+          scsp_frame_boundary();
+        }
+        else {
+          m68k_done_upto.store(pre_m68k_cycle, std::memory_order_release);
+        }
+      }
+      // watchdog: this state should never persist; log it if it does
+      dbg_spin++;
+      if ((dbg_spin & 0x7FFFFFF) == 0) {
+        printf("scsp0 watchdog: counter=%llu pre=%llu inc=%llu fcnt=%d lock=%d\n",
+               (unsigned long long)m68k_integer_part,
+               (unsigned long long)pre_m68k_cycle,
+               (unsigned long long)m68k_inc, framecnt, g_scsp_lock);
+      }
     } while (m68k_cycle == 0);
 
     m68k_inc += m68k_cycle;
@@ -5572,27 +6225,18 @@ extern "C" void * ScspAsynMainCpuTime( void * p ){
       }
       hzcheck++;
 
-      frame += samplecnt;
-      if (frame >= framecnt) {
-        frame = frame - framecnt;
-        ScspInternalVars->scsptiming2 = 0;
-        ScspInternalVars->scsptiming1 = scsplines;
-        ScspExecAsync();
+      m68k_done_upto.store(pre_m68k_cycle - m68k_inc, std::memory_order_release);
 
-        YabAddEventQueue( q_scsp_finish , 0);
-        pre_m68k_cycle = 0;
-        m68k_inc = 0;
-        //LOG("[SCSP] WAIT SH2");
-        YabWaitEventQueue(q_scsp_frame_start);
-        now = YabauseGetTicks();
-        //LOG(" SCSPTIME = %d/16666666 %d/735", (s32)(now - before), hzcheck);
-        hzcheck = 0;
-        before = now;
+      if (pre_m68k_cycle - m68k_inc >= (u64)framecnt) {
+        scsp_frame_boundary();
         break;
       }
     }
     setM68kDoneCounter(pre_m68k_cycle);
   }
+
+  q_scsp_frame_start = 0;
+  q_scsp_finish = 0;
   YabThreadWake(YAB_THREAD_SCSP);
   return NULL;
 }
@@ -5609,7 +6253,7 @@ extern "C" void * ScspAsynMainRealtime(void * p) {
   int frame_count = 0;
   int i;
   int frame_div = g_scsp_sync_count_per_frame;
-  int framecnt = 188160 / frame_div; // 11289600/60
+  int framecnt = (yabsys.IsPal ? 225792 : 188160) / frame_div; // 11289600/50 or 11289600/60
   int hzcheck = 0;
 
 #if defined(ARCH_IS_LINUX)
@@ -5626,7 +6270,7 @@ extern "C" void * ScspAsynMainRealtime(void * p) {
   char * pCurrentGame = Cs2GetCurrentGmaecode();
   if (!strcmp(pCurrentGame, "T-1811G") && frame_div < 4) {
     frame_div = 4; 
-    framecnt = 188160 / frame_div;
+    framecnt = (yabsys.IsPal ? 225792 : 188160) / frame_div;
     LOG("Thunder Force V is detected. Force frame_div to 4");
   }
 
@@ -5775,6 +6419,8 @@ extern "C" void * ScspAsynMainRealtime(void * p) {
 
 void ScspExec(){
   if (thread_running == 0){
+    m68k_done_upto.store(0);
+    m68k_at_frame_boundary.store(0);
     thread_running = 1;
     if (g_scsp_main_mode == 0) {
       YabThreadStart(YAB_THREAD_SCSP, "scsp sync", ScspAsynMainCpuTime, NULL);
@@ -6071,32 +6717,14 @@ SoundSaveState (FILE *fp)
   u8 nextphase;
   IOCheck_struct check = { 0, 0 };
 
-  offset = StateWriteHeader (fp, "SCSP", 4);
+  offset = StateWriteHeader (fp, "SCSP", 5);
 
   // Save 68k registers first
   ywrite (&check, (void *)&IsM68KRunning, 1, 1, fp);
   ywrite(&check, (void *)&savedcycles, sizeof(u32), 1, fp );
 
-#ifdef IMPROVED_SAVESTATES
+  // Version 5: Musashi now properly saves M68K state (124 bytes)
   M68K->SaveState(fp);
-#else
-  for (i = 0; i < 8; i++)
-    {
-      temp = M68K->GetDReg (i);
-      ywrite (&check, (void *)&temp, 4, 1, fp);
-    }
-
-  for (i = 0; i < 8; i++)
-    {
-      temp = M68K->GetAReg (i);
-      ywrite (&check, (void *)&temp, 4, 1, fp);
-    }
-
-  temp = M68K->GetSR ();
-  ywrite (&check, (void *)&temp, 4, 1, fp);
-  temp = M68K->GetPC ();
-  ywrite (&check, (void *)&temp, 4, 1, fp);
-#endif
 
   ywrite(&check, (void *)&use_new_scsp, 1, sizeof(int), fp);
   ywrite(&check, (void *)&new_scsp_cycles, 1, sizeof(u32), fp);
@@ -6175,25 +6803,20 @@ SoundSaveState (FILE *fp)
     {
       s32 einc;
 
-#ifdef IMPROVED_SAVESTATES
       ywrite(&check, (void *)&scsp.slot[i].swe, sizeof(u8), 1, fp);
       ywrite(&check, (void *)&scsp.slot[i].sdir, sizeof(u8), 1, fp);
       ywrite(&check, (void *)&scsp.slot[i].pcm8b, sizeof(u8), 1, fp);
       ywrite(&check, (void *)&scsp.slot[i].sbctl, sizeof(u8), 1, fp);
       ywrite(&check, (void *)&scsp.slot[i].ssctl, sizeof(u8), 1, fp);
       ywrite(&check, (void *)&scsp.slot[i].lpctl, sizeof(u8), 1, fp);
-#endif
       ywrite (&check, (void *)&scsp.slot[i].key, 1, 1, fp);
-#ifdef IMPROVED_SAVESTATES
       ywrite(&check, (void *)&scsp.slot[i].keyx, sizeof(u8), 1, fp);
-#endif
+
       //buf8,16 get regenerated on state load
 
       ywrite (&check, (void *)&scsp.slot[i].fcnt, 4, 1, fp);
-#ifdef IMPROVED_SAVESTATES
       ywrite(&check, (void *)&scsp.slot[i].finc, sizeof(u32), 1, fp);
       ywrite(&check, (void *)&scsp.slot[i].finct, sizeof(u32), 1, fp);
-#endif
       ywrite (&check, (void *)&scsp.slot[i].ecnt, 4, 1, fp);
 
       if (scsp.slot[i].einc == &scsp.slot[i].einca)
@@ -6213,9 +6836,8 @@ SoundSaveState (FILE *fp)
 
       ywrite (&check, (void *)&scsp.slot[i].ecmp, 4, 1, fp);
       ywrite (&check, (void *)&scsp.slot[i].ecurp, 4, 1, fp);
-#ifdef IMPROVED_SAVESTATES
       ywrite(&check, (void *)&scsp.slot[i].env, sizeof(s32), 1, fp);
-#endif
+
       if (scsp.slot[i].enxt == scsp_env_null_next)
         nextphase = 0;
       else if (scsp.slot[i].enxt == scsp_release_next)
@@ -6230,7 +6852,6 @@ SoundSaveState (FILE *fp)
 
       ywrite (&check, (void *)&scsp.slot[i].lfocnt, 4, 1, fp);
       ywrite (&check, (void *)&scsp.slot[i].lfoinc, 4, 1, fp);
-#ifdef IMPROVED_SAVESTATES
       ywrite(&check, (void *)&scsp.slot[i].sa, sizeof(u32), 1, fp);
       ywrite(&check, (void *)&scsp.slot[i].lsa, sizeof(u32), 1, fp);
       ywrite(&check, (void *)&scsp.slot[i].lea , sizeof(u32), 1, fp);
@@ -6269,7 +6890,6 @@ SoundSaveState (FILE *fp)
 
       ywrite(&check, (void *)&scsp.slot[i].eghold, sizeof(u8), 1, fp);
       ywrite(&check, (void *)&scsp.slot[i].lslnk, sizeof(u8), 1, fp);
-#endif
     }
 
   // Write main internal variables
@@ -6350,6 +6970,10 @@ SoundSaveState (FILE *fp)
   ywrite(&check, (void *)&scspsoundlen, sizeof(u32), 1, fp);
   ywrite(&check, (void *)&scsplines, sizeof(u32), 1, fp);
 
+  // Version 5: Audio buffer position variables
+  ywrite(&check, (void *)&scspsoundgenpos, sizeof(u32), 1, fp);
+  ywrite(&check, (void *)&scspsoundoutleft, sizeof(u32), 1, fp);
+  ywrite(&check, (void *)&new_scsp_outbuf_pos, sizeof(int), 1, fp);
 
   g_scsp_lock = 0;
 
@@ -6365,32 +6989,20 @@ SoundLoadState (FILE *fp, int version, int size)
   u32 temp;
   u8 nextphase;
   IOCheck_struct check = { 0, 0 };
+
+  LOG("--------------- SoundLoadState ----------------");
   
 
   // Read 68k registers first
   yread(&check, (void *)&IsM68KRunning, 1, 1, fp);
   yread(&check, (void *)&savedcycles, sizeof(u32), 1, fp);
 
-#ifdef IMPROVED_SAVESTATES
-  M68K->LoadState(fp);
-#else
-  for (i = 0; i < 8; i++)
-    {
-      yread (&check, (void *)&temp, 4, 1, fp);
-      M68K->SetDReg (i, temp);
-    }
-
-  for (i = 0; i < 8; i++)
-    {
-      yread (&check, (void *)&temp, 4, 1, fp);
-      M68K->SetAReg (i, temp);
-    }
-
-  yread (&check, (void *)&temp, 4, 1, fp);
-  M68K->SetSR (temp);
-  yread (&check, (void *)&temp, 4, 1, fp);
-  M68K->SetPC (temp);
-#endif
+  // Version 5+: Musashi saves M68K state (124 bytes)
+  // Version < 5: Old Musashi didn't save M68K state (0 bytes), skip loading
+  if (version >= 5) {
+    M68K->LoadState(fp);
+  }
+  // For version < 5, M68K registers are not in save file - M68K will be reset
 
   yread(&check, (void *)&use_new_scsp, 1, sizeof(int), fp);
   yread(&check, (void *)&new_scsp_cycles, 1, sizeof(u32), fp);
@@ -6483,7 +7095,6 @@ SoundLoadState (FILE *fp, int version, int size)
       for (i = 0; i < 32; i++)
         {
           s32 einc;
-#ifdef IMPROVED_SAVESTATES
           yread(&check, (void *)&scsp.slot[i].swe, sizeof(u8), 1, fp);
           yread(&check, (void *)&scsp.slot[i].sdir, sizeof(u8), 1, fp);
           yread(&check, (void *)&scsp.slot[i].pcm8b, sizeof(u8), 1, fp);
@@ -6491,18 +7102,14 @@ SoundLoadState (FILE *fp, int version, int size)
           yread(&check, (void *)&scsp.slot[i].sbctl, sizeof(u8), 1, fp);
           yread(&check, (void *)&scsp.slot[i].ssctl, sizeof(u8), 1, fp);
           yread(&check, (void *)&scsp.slot[i].lpctl, sizeof(u8), 1, fp);
-#endif
           yread (&check, (void *)&scsp.slot[i].key, 1, 1, fp);
-#ifdef IMPROVED_SAVESTATES
           yread(&check, (void *)&scsp.slot[i].keyx, sizeof(u8), 1, fp);
-#endif
+
           //buf8,16 regenerated at end
 
           yread (&check, (void *)&scsp.slot[i].fcnt, 4, 1, fp);
-#ifdef IMPROVED_SAVESTATES
           yread(&check, (void *)&scsp.slot[i].finc, sizeof(u32), 1, fp);
           yread(&check, (void *)&scsp.slot[i].finct, sizeof(u32), 1, fp);
-#endif
           yread (&check, (void *)&scsp.slot[i].ecnt, 4, 1, fp);
 
           yread (&check, (void *)&einc, 4, 1, fp);
@@ -6529,9 +7136,7 @@ SoundLoadState (FILE *fp, int version, int size)
 
           yread (&check, (void *)&scsp.slot[i].ecmp, 4, 1, fp);
           yread (&check, (void *)&scsp.slot[i].ecurp, 4, 1, fp);
-#ifdef IMPROVED_SAVESTATES
           yread(&check, (void *)&scsp.slot[i].env, sizeof(s32), 1, fp);
-#endif
           yread (&check, (void *)&nextphase, 1, 1, fp);
           switch (nextphase)
             {
@@ -6556,7 +7161,6 @@ SoundLoadState (FILE *fp, int version, int size)
           yread (&check, (void *)&scsp.slot[i].lfocnt, 4, 1, fp);
           yread (&check, (void *)&scsp.slot[i].lfoinc, 4, 1, fp);
 
-#ifdef IMPROVED_SAVESTATES
           yread(&check, (void *)&scsp.slot[i].sa, sizeof(u32), 1, fp);
           yread(&check, (void *)&scsp.slot[i].lsa, sizeof(u32), 1, fp);
           yread(&check, (void *)&scsp.slot[i].lea, sizeof(u32), 1, fp);
@@ -6595,7 +7199,6 @@ SoundLoadState (FILE *fp, int version, int size)
 
           yread(&check, (void *)&scsp.slot[i].eghold, sizeof(u8), 1, fp);
           yread(&check, (void *)&scsp.slot[i].lslnk, sizeof(u8), 1, fp);
-#endif
 
           // depends on pcm8b, sa, lea being loaded first
           // Rebuild the buf8/buf16 variables
@@ -6655,7 +7258,7 @@ SoundLoadState (FILE *fp, int version, int size)
       yread (&check, (void *)&scsp.mcieb, 4, 1, fp);
       u32 mcipd = 0;
       yread (&check, (void *)&mcipd, 4, 1, fp);
-      scsp.mcipd.store(0);
+      scsp.mcipd.store(mcipd);
       yread (&check, (void *)scsp.stack, 4, 32 * 2, fp);
 
     }
@@ -6698,6 +7301,45 @@ SoundLoadState (FILE *fp, int version, int size)
       yread(&check, (void *)&scsp_mute_flags, sizeof(u32), 1, fp);
       yread(&check, (void *)&scspsoundlen, sizeof(u32), 1, fp);
       yread(&check, (void *)&scsplines, sizeof(u32), 1, fp);
+    }
+
+    // Version 5: Audio buffer position variables
+    if (version >= 5) {
+      yread(&check, (void *)&scspsoundgenpos, sizeof(u32), 1, fp);
+      yread(&check, (void *)&scspsoundoutleft, sizeof(u32), 1, fp);
+      yread(&check, (void *)&new_scsp_outbuf_pos, sizeof(int), 1, fp);
+    } else {
+      // Reset to safe defaults for older state files
+      scspsoundgenpos = 0;
+      scspsoundoutleft = 0;
+      new_scsp_outbuf_pos = 0;
+    }
+
+    // ========== Post-load initialization ==========
+
+    // 1. Re-trigger pending interrupts to M68K
+    //    (The interrupt pending state is restored, but M68K needs to be notified)
+    if (scsp.scipd & scsp.scieb) {
+        u32 pending = scsp.scipd & scsp.scieb;
+        for (int bit = 0; bit < 11; bit++) {
+            u32 id = 1 << bit;
+            if (pending & id) {
+                scsp_trigger_sound_interrupt(id);
+            }
+        }
+    }
+
+    // 2. Clear audio buffers to prevent noise
+    if (scspchannel[0].data32)
+        memset(scspchannel[0].data32, 0, scspsoundbufsize * sizeof(u32));
+    if (scspchannel[1].data32)
+        memset(scspchannel[1].data32, 0, scspsoundbufsize * sizeof(u32));
+    memset(new_scsp_outbuf_l, 0, sizeof(new_scsp_outbuf_l));
+    memset(new_scsp_outbuf_r, 0, sizeof(new_scsp_outbuf_r));
+
+    // 3. Unmute audio
+    if (SNDCore) {
+        ScspUnMuteAudio(0xFFFFFFFF);  // Clear all mute flags
     }
 
   return size;

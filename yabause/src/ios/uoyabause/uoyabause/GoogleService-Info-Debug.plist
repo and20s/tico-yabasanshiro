@@ -3,23 +3,23 @@
 <plist version="1.0">
 <dict>
 	<key>CLIENT_ID</key>
-	<string>215139612886-70j8sd40ilnemimbp2618641k6rc3khq.apps.googleusercontent.com</string>
+	<string>REPLACE_WITH_YOUR_OWN_VALUE</string>
 	<key>REVERSED_CLIENT_ID</key>
-	<string>com.googleusercontent.apps.215139612886-70j8sd40ilnemimbp2618641k6rc3khq</string>
+	<string>REPLACE_WITH_YOUR_OWN_VALUE</string>
 	<key>ANDROID_CLIENT_ID</key>
-	<string>215139612886-e115o95sosutt0nb095ekhvteh091hqs.apps.googleusercontent.com</string>
+	<string>REPLACE_WITH_YOUR_OWN_VALUE</string>
 	<key>API_KEY</key>
-	<string>AIzaSyDyYTel20HTnSm5tMkGgDTzh78tNEelB5k</string>
+	<string>REPLACE_WITH_YOUR_OWN_VALUE</string>
 	<key>GCM_SENDER_ID</key>
-	<string>215139612886</string>
+	<string>REPLACE_WITH_YOUR_OWN_VALUE</string>
 	<key>PLIST_VERSION</key>
 	<string>1</string>
 	<key>BUNDLE_ID</key>
 	<string>org.devMiyax.yabasanshiro2</string>
 	<key>PROJECT_ID</key>
-	<string>uoyabause-dev</string>
+	<string>REPLACE_WITH_YOUR_OWN_VALUE</string>
 	<key>STORAGE_BUCKET</key>
-	<string>uoyabause-dev.firebasestorage.app</string>
+	<string>REPLACE_WITH_YOUR_OWN_VALUE</string>
 	<key>IS_ADS_ENABLED</key>
 	<false></false>
 	<key>IS_ANALYTICS_ENABLED</key>
@@ -31,8 +31,8 @@
 	<key>IS_SIGNIN_ENABLED</key>
 	<true></true>
 	<key>GOOGLE_APP_ID</key>
-	<string>1:215139612886:ios:e0fb894f62a792ef843177</string>
+	<string>REPLACE_WITH_YOUR_OWN_VALUE</string>
 	<key>DATABASE_URL</key>
-	<string>https://uoyabause-dev-default-rtdb.firebaseio.com</string>
+	<string>REPLACE_WITH_YOUR_OWN_VALUE</string>
 </dict>
 </plist>

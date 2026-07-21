@@ -22,6 +22,8 @@
 #include "UIMemorySearch.h"
 #include "Settings.h"
 #include "../CommonDialogs.h"
+#include <QApplication>
+#include <QClipboard>
 
 MemorySearch::MemorySearch(UIMemorySearch *memorySearch, QObject *parent)
    : QObject(parent)
@@ -127,8 +129,19 @@ UIMemoryEditor::UIMemoryEditor( YabauseThread *mYabauseThread, QWidget* p )
       pbSearchMemory->setEnabled(false);
    }
    else
+   {
       saMemoryEditor->setFocus();
-   
+
+      // Restore last address
+      Settings settings;
+      u32 lastAddress = settings.value("MemoryEditor/LastAddress", 0).toUInt();
+      if (lastAddress != 0)
+      {
+         gotoAddress = lastAddress;
+         saMemoryEditor->goToAddress(lastAddress);
+      }
+   }
+
 	// retranslate widgets
 	QtYabause::retranslateWidget( this );
 }
@@ -162,7 +175,7 @@ void UIMemoryEditor::on_pbSaveTab_clicked()
 void UIMemoryEditor::on_pbSearchMemory_clicked()
 {
    UIMemorySearch memorySearch( this );
-   
+
    if (searchStartAddress == 0 && searchEndAddress == 0)
    {
       UIHexEditorWnd *hexEditorWnd=(UIHexEditorWnd *)saMemoryEditor->currentWidget();
@@ -175,7 +188,7 @@ void UIMemoryEditor::on_pbSearchMemory_clicked()
    {
       MemorySearch search( &memorySearch );
       QProgressDialog progress;
-      
+
       progress.setLabelText("Searching memory...");
 
       connect(&search, SIGNAL(searchResult(bool, bool, u32)), this, SLOT(searchResult(bool, bool, u32)));
@@ -187,6 +200,12 @@ void UIMemoryEditor::on_pbSearchMemory_clicked()
       search.start();
       progress.exec();
    }
+}
+
+void UIMemoryEditor::on_pbCopy_clicked()
+{
+   QString memoryText = saMemoryEditor->getMemoryAsText();
+   QApplication::clipboard()->setText(memoryText);
 }
 
 void UIMemoryEditor::searchResult(bool found, bool cancel, u32 address)
@@ -210,4 +229,18 @@ void UIMemoryEditor::searchResult(bool found, bool cancel, u32 address)
             CommonDialogs::information( "No matches found." );
       }
    }
+}
+
+void UIMemoryEditor::done(int r)
+{
+   // Save current address
+   UIHexEditorWnd *hexEditorWnd = (UIHexEditorWnd *)saMemoryEditor->currentWidget();
+   if (hexEditorWnd)
+   {
+      u32 currentAddress = hexEditorWnd->getAddress() / 2;
+      Settings settings;
+      settings.setValue("MemoryEditor/LastAddress", currentAddress);
+   }
+
+   QDialog::done(r);
 }

@@ -170,6 +170,31 @@ public:
   float color_offset_val[4];
   int specialPriority = 0;
   int specialcolormode = 0;
+  // issue #22: special color calc flag (SFCCMD mode 1 source). For a bitmap it
+  // is the per-layer BMSCC bit; for tiles the per-character supplement bit. Used
+  // by the new compositor to resolve RGB-direct special color calc host-side.
+  int specialcolorfunction = 0;
+
+  // --- issue #22: per-layer G-buffer output mode (task T-004) ---
+  // When gbufferOutput is true the pipeline renders into a Vdp2GBuffer slice
+  // (2-attachment MRT: color at location 0, packed attr R32_UINT at location
+  // 1). Fixed-function color blend is forced off and depth/stencil disabled,
+  // because the GBuffer render pass has no depth attachment and the new
+  // compositor sorts per-pixel using the priority stored in attr.
+  //
+  // gbAttrPriority / gbAttrCcEnable / gbAttrCcRatio carry the per-layer
+  // attribute values that the fragment shader packs into the attr output. They
+  // are layer-uniform in the MVP scope, so they are passed through the UBO and
+  // populated by the draw-side code (task T-008). The packed layout mirrors
+  // vdp2_color_oracle.h packAttr() exactly:
+  //   bits 0..4 priority, bit 5 ccEnable, bits 6..11 ccRatio, bit 12 transparent.
+  // The transparent bit is never set here: surviving fragments are opaque (the
+  // existing alpha discard kills transparent texels, and discarded fragments
+  // write neither attachment, leaving the attr clear value = 0 = transparent).
+  bool gbufferOutput = false;
+  int gbAttrPriority = 0;   // 0..31
+  int gbAttrCcEnable = 0;   // 0 / 1
+  int gbAttrCcRatio = 0;    // 0..0x3F
 
   YglVdp1CommonParam * ids;
   float * matrix;
@@ -238,6 +263,27 @@ protected:
   virtual void createDpethStencil(VkPipelineDepthStencilStateCreateInfo & depthStencil);
   virtual void createInputAssembly(VkPipelineInputAssemblyStateCreateInfo & inputAssembly);
   virtual void createColorBlending(VkPipelineColorBlendStateCreateInfo & colorBlending, VkPipelineColorBlendAttachmentState & colorAttachment);
+
+  // issue #22 T-004: rewrite a layer fragment shader so that, in addition to
+  // its existing color output at location 0, it writes the packed VDP2 attr
+  // word to location 1. Returns `src` unchanged when gbufferOutput is false.
+  // The attr value is taken from a push constant supplied at draw time. See
+  // gbufferOutput in the public section for the bit layout.
+  std::string injectGBufferAttrOutput(const std::string & src);
+
+  // issue #22 (layer display window): rewrite a GBuffer companion fragment
+  // shader so it discards windowed-out fragments by sampling the per-line window
+  // spans (lineColor rows 2/3, bound at windowSampler) and evaluating the
+  // per-layer winmask / winflag / winmode from the UBO. Replaces the legacy
+  // stencil window for the GBuffer pass (which has no stencil attachment).
+  // Returns `src` unchanged when gbufferOutput is false or the shader has no
+  // windowSampler binding.
+  std::string injectGBufferWindow(const std::string & src);
+
+  // Two color-blend attachment states (both blendEnable = VK_FALSE) used for
+  // the GBuffer MRT render pass. Kept as a member so its lifetime spans the
+  // vkCreateGraphicsPipelines call.
+  VkPipelineColorBlendAttachmentState gbufferBlendAttachments[2] = {};
 
 
   void initDescriptorSets(const vector<int> & bindid);
@@ -320,6 +366,23 @@ public:
   VdpCramLine(VIDVulkan * vulkan, TextureManager * tm, VertexManager * vm);
 };
 
+// Line color insertion with destination-alpha color calculation (CCRTMD=1).
+// Mirrors the OpenGL PG_LINECOLOR_INSERT_DESTALPHA program: the line color is
+// folded in by its own ratio (lncol.a from CCRLB) inside the shader, blending
+// is disabled, and the layer's color-calc ratio is written to dst alpha for
+// later destination-alpha consumers (e.g. the VDP1 fb composite).
+class VdpLineColDst : public VdpLineBase {
+public:
+  VdpLineColDst(VIDVulkan * vulkan, TextureManager * tm, VertexManager * vm);
+  virtual void createColorAttachment(VkPipelineColorBlendAttachmentState & color);
+};
+
+class VdpCramLineDst : public VdpLineBase {
+public:
+  VdpCramLineDst(VIDVulkan * vulkan, TextureManager * tm, VertexManager * vm);
+  virtual void createColorAttachment(VkPipelineColorBlendAttachmentState & color);
+};
+
 
 class VdpPipelineAdd : public VdpPipeline {
 public:
@@ -349,6 +412,34 @@ public:
 class VdpPipelinePreLineAlphaCram : public VdpPipeline {
 public:
   VdpPipelinePreLineAlphaCram(VIDVulkan * vulkan, TextureManager * tm, VertexManager * vm);
+};
+
+// issue #22 (T-015): per-line color offset variant used ONLY as a G-buffer
+// companion. Decodes a CRAM (palette) layer and applies the per-line color
+// offset stored in the per-line texture (Vdp2GeneratePerLineColorCalcuration),
+// then writes the slice color + packed attr. The legacy renderer applies the
+// same per-line offset to palette layers via a 2-pass offscreen + PER_LINE_ALPHA
+// blit (VIDVulkan.cpp:1668); the new composite path bakes it into the slice in
+// one pass here. Declares its own location=1 attr output so the gbuffer attr
+// injection leaves the shader as-is.
+class VdpPipelineCramPerLineGBuffer : public VdpPipeline {
+public:
+  VdpPipelineCramPerLineGBuffer(VIDVulkan * vulkan, TextureManager * tm, VertexManager * vm);
+  void createColorAttachment(VkPipelineColorBlendAttachmentState & color);
+};
+
+// issue #108: G-buffer companion for DIRECT COLOR (non-CRAM) per-line layers.
+// Same per-line color offset / per-line ratio handling as
+// VdpPipelineCramPerLineGBuffer but samples the layer texture as final RGBA
+// instead of doing a palette lookup. Without this, a non-CRAM layer with a
+// per-line table (e.g. Sakura Taisen's opening movie: RBG0 32K-color bitmap
+// masked per line via BGON) was skipped entirely by the new composite path
+// ("isPerLineDeferred"), which flickered the whole layer on and off as the
+// per-line detection toggled between frames.
+class VdpPipelinePerLineGBuffer : public VdpPipeline {
+public:
+  VdpPipelinePerLineGBuffer(VIDVulkan * vulkan, TextureManager * tm, VertexManager * vm);
+  void createColorAttachment(VkPipelineColorBlendAttachmentState & color);
 };
 
 class VdpPipelineSpecialPriorityColorOffset : public VdpPipeline {

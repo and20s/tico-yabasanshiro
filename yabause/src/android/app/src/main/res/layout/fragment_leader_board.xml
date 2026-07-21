@@ -16,7 +16,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:background="#CC222222"
+        android:background="@color/overlay_dark"
         android:padding="8dp"
         >
         <TextView
@@ -24,7 +24,7 @@
             android:layout_height="wrap_content"
             android:gravity="center"
             android:text="@string/leaderboard_position"
-            android:textColor="#FFF"
+            android:textColor="@color/white"
             android:textStyle="bold" />
         <View
             android:layout_width="1dp"
@@ -37,7 +37,7 @@
             android:layout_weight="2"
             android:gravity="center"
             android:text="@string/leaderboard_name"
-            android:textColor="#FFF"
+            android:textColor="@color/white"
             android:textStyle="bold" />
         <View
             android:layout_width="1dp"
@@ -45,11 +45,12 @@
             android:background="@drawable/vertical_divider" />
 
         <TextView
+            android:id="@+id/timeScoreHeaderTextView"
             android:layout_width="100dp"
             android:layout_height="wrap_content"
             android:gravity="center"
             android:text="@string/leaderboard_time"
-            android:textColor="#FFF"
+            android:textColor="@color/white"
             android:textStyle="bold" />
         <View
             android:layout_width="1dp"
@@ -61,7 +62,7 @@
             android:layout_height="wrap_content"
             android:gravity="center"
             android:text="@string/leaderboard_diff"
-            android:textColor="#FFF"
+            android:textColor="@color/white"
             android:textStyle="bold" />
     </LinearLayout>
 
@@ -86,17 +87,17 @@
         <View
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:background="#33000000" /> <!-- 20%黒背景 -->
+            android:background="@color/overlay_light" /> <!-- 20%黒背景 -->
         <TextView
             android:id="@+id/emptyView"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center"
             android:text="@string/leaderboard_no_data"
-            android:textColor="#FFF"
+            android:textColor="@color/white"
             android:textSize="22sp"
             android:textStyle="bold"
-            android:background="#CC222222"
+            android:background="@color/overlay_dark"
             android:padding="32dp"
             android:elevation="4dp"
             android:gravity="center" />
@@ -123,7 +124,7 @@
         android:layout_height="wrap_content"
         android:gravity="center"
         android:text="@string/leaderboard_title"
-        android:textColor="#FFF"
+        android:textColor="@color/white"
         android:textSize="18sp"
         android:layout_margin="8dp"/>
 </LinearLayout>

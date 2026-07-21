@@ -22,6 +22,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 //#ifdef __ANDROID__
 #include <stdlib.h>
 #include <math.h>
+#include <string.h>
 #include "ygl.h"
 #include "yui.h"
 #include "vidshared.h"
@@ -48,6 +49,51 @@ extern int GlWidth;
 static GLuint _prgid[PG_MAX] = { 0 };
 
 char * lastShaderError = NULL;
+
+// GLSL version detection and header strings
+#if defined(IOS)
+static const char* glsl_header_320es = "#version 300 es\nprecision highp float;\nprecision highp int;\n";
+static const char* glsl_header_310es = "#version 300 es\nprecision highp float;\nprecision highp int;\n";
+#else
+static const char* glsl_header_320es = "#version 320 es\nprecision highp float;\nprecision highp int;\n";
+static const char* glsl_header_310es = "#version 310 es\n#extension GL_ANDROID_extension_pack_es31a : enable\nprecision highp float;\nprecision highp int;\n";
+#endif
+
+static const char* glsl_header_desktop = "#version 400\n";
+
+static const char* ygl_get_glsl_header() {
+  static const char* cached_header = NULL;
+  if (cached_header != NULL) {
+    return cached_header;
+  }
+
+#if defined(_OGLES3_)
+  // Query OpenGL ES version
+  const char* version_string = (const char*)glGetString(GL_SHADING_LANGUAGE_VERSION);
+  if (version_string) {
+    // Parse version string like "OpenGL ES GLSL ES 3.20" or "OpenGL ES GLSL ES 3.10"
+    if (strstr(version_string, "3.2")) {
+      cached_header = glsl_header_320es;
+      YGLLOG("Using GLSL ES 3.20 header\n");
+    } else if (strstr(version_string, "3.1")) {
+      cached_header = glsl_header_310es;
+      YGLLOG("Using GLSL ES 3.10 header\n");
+    } else {
+      // Fallback to 3.10 for older versions
+      cached_header = glsl_header_310es;
+      YGLLOG("Defaulting to GLSL ES 3.10 header\n");
+    }
+  } else {
+    cached_header = glsl_header_310es;
+    YGLLOG("Failed to query GLSL version, using 3.10 fallback\n");
+  }
+#else
+  cached_header = glsl_header_desktop;
+  YGLLOG("Using desktop GLSL 4.00 header\n");
+#endif
+
+  return cached_header;
+}
 
 char * getLastShaderError(){
   return lastShaderError;
@@ -219,11 +265,6 @@ int Ygl_cleanupVdp1CommonParam(void * p){
  *  Normal Draw
  * ----------------------------------------------------------------------------------*/
 const GLchar Yglprg_normal_v[] =
-#if defined(_OGLES3_)
-      "#version 300 es \n"
-#else
-      "#version 330 \n"
-#endif
       "uniform mat4 u_mvpMatrix;    \n"
       "layout (location = 0) in vec4 a_position;   \n"
       "layout (location = 1) in vec4 a_texcoord;   \n"
@@ -233,15 +274,9 @@ const GLchar Yglprg_normal_v[] =
       "   gl_Position = a_position*u_mvpMatrix; \n"
       "   v_texcoord  = a_texcoord; \n"
       "} ";
-const GLchar * pYglprg_normal_v[] = {Yglprg_normal_v, NULL};
+const GLchar * pYglprg_normal_v[] = {NULL,Yglprg_normal_v, NULL};
 
 const GLchar Yglprg_normal_f[] =
-#if defined(_OGLES3_)
-"#version 300 es \n"
-"precision highp float;                            \n"
-#else
-"#version 330 \n"
-#endif
 "in highp vec4 v_texcoord;                            \n"
 "uniform vec4 u_color_offset;    \n"
 "uniform sampler2D s_texture;                        \n"
@@ -257,7 +292,7 @@ const GLchar Yglprg_normal_f[] =
 "  else \n                                            "
 "     discard;\n                                      "
 "}                                                   \n";
-const GLchar * pYglprg_normal_f[] = {Yglprg_normal_f, NULL};
+const GLchar * pYglprg_normal_f[] = {NULL,Yglprg_normal_f, NULL};
 static int id_normal_s_texture = -1;
 static int id_normal_color_offset = -1;
 static int id_normal_matrix = -1;
@@ -299,13 +334,6 @@ int Ygl_cleanupNormal(void * p)
 //---------------------------------------------------------
 
 const GLchar Yglprg_normal_cram_f[] =
-#if defined(_OGLES3_)
-"#version 300 es \n"
-"precision highp float;\n"
-"precision highp int;\n"
-#else
-"#version 330 \n"
-#endif
 "in vec4 v_texcoord;\n"
 "uniform vec4 u_color_offset;\n"
 "uniform highp sampler2D s_texture;\n"
@@ -321,13 +349,6 @@ const GLchar Yglprg_normal_cram_f[] =
 "}\n";
 
 const GLchar Yglprg_normal_cram_special_priority_f[] =
-#if defined(_OGLES3_)
-"#version 300 es \n"
-"precision highp float;\n"
-"precision highp int;\n"
-#else
-"#version 330 \n"
-#endif
 "in vec4 v_texcoord;\n"
 "uniform vec4 u_color_offset;\n"
 "uniform highp sampler2D s_texture;\n"
@@ -344,13 +365,13 @@ const GLchar Yglprg_normal_cram_special_priority_f[] =
 "}\n";
 
 
-const GLchar * pYglprg_normal_cram_f[] = { Yglprg_normal_cram_f, NULL };
+const GLchar * pYglprg_normal_cram_f[] = { NULL, Yglprg_normal_cram_f, NULL };
 static int id_normal_cram_s_texture = -1;
 static int id_normal_cram_s_color = -1;
 static int id_normal_cram_color_offset = -1;
 static int id_normal_cram_matrix = -1;
 
-const GLchar * pYglprg_normal_cram_special_priority_f[] = { Yglprg_normal_cram_special_priority_f, NULL };
+const GLchar * pYglprg_normal_cram_special_priority_f[] = { NULL,Yglprg_normal_cram_special_priority_f, NULL };
 static int id_normal_cram_sp_s_texture = -1;
 static int id_normal_cram_sp_s_color = -1;
 static int id_normal_cram_sp_color_offset = -1;
@@ -410,13 +431,6 @@ int Ygl_uniformNormalCramSpecialPriority(void * p)
 
 
 const GLchar Yglprg_normal_cram_special_priority_colf_f[] =
-#if defined(_OGLES3_)
-"#version 300 es \n"
-"precision highp float;\n"
-"precision highp int;\n"
-#else
-"#version 330 \n"
-#endif
 "in vec4 v_texcoord;\n"
 "uniform highp sampler2D s_texture;\n"
 "uniform sampler2D s_color;\n"
@@ -435,7 +449,7 @@ const GLchar Yglprg_normal_cram_special_priority_colf_f[] =
 "  gl_FragDepth = ((txindex.b*255.0/10.0) +1.0)/2.0 ; \n"
 "}\n";
 
-const GLchar * pYglprg_normal_cram_special_priority_colf_f[] = { Yglprg_normal_cram_special_priority_colf_f, NULL };
+const GLchar * pYglprg_normal_cram_special_priority_colf_f[] = { NULL, Yglprg_normal_cram_special_priority_colf_f, NULL };
 static int id_normal_cram_spc_s_texture = -1;
 static int id_normal_cram_spc_s_color = -1;
 static int id_normal_cram_spc_s_line = -1;
@@ -469,13 +483,6 @@ int Ygl_uniformNormalCramSPC(void * p)
 
 
 const GLchar Yglprg_normal_cram_addcol_f[] =
-#if defined(_OGLES3_)
-"#version 300 es \n"
-"precision highp float;\n"
-"precision highp int;\n"
-#else
-"#version 330 \n"
-#endif
 "in vec4 v_texcoord;\n"
 "uniform vec4 u_color_offset;\n"
 "uniform highp sampler2D s_texture;\n"
@@ -490,7 +497,7 @@ const GLchar Yglprg_normal_cram_addcol_f[] =
 "  if( txindex.a > 0.5) { fragColor.a = 1.0;} else {fragColor.a = 0.0;}\n"
 "}\n";
 
-const GLchar * pYglprg_normal_cram_addcol_f[] = { Yglprg_normal_cram_addcol_f, NULL };
+const GLchar * pYglprg_normal_cram_addcol_f[] = { NULL,Yglprg_normal_cram_addcol_f, NULL };
 static int id_normal_cram_s_texture_addcol = -1;
 static int id_normal_cram_s_color_addcol = -1;
 static int id_normal_cram_color_offset_addcol = -1;
@@ -553,13 +560,6 @@ void Ygl_setNormalshader(YglProgram * prg) {
 
 
 const GLchar Yglprg_rgb_cram_line_f[] =
-#if defined(_OGLES3_)
-"#version 300 es \n"
-"precision highp float;\n"
-"precision highp int;\n"
-#else
-"#version 330 \n"
-#endif
 "in vec4 v_texcoord;\n"
 "uniform vec4 u_color_offset;\n"
 "uniform highp sampler2D s_texture;\n"
@@ -596,7 +596,7 @@ const GLchar Yglprg_rgb_cram_line_f[] =
 "    discard;\n"
 "}\n";
 
-const GLchar * pYglprg_rbg_cram_line_f[] = { Yglprg_rgb_cram_line_f, NULL };
+const GLchar * pYglprg_rbg_cram_line_f[] = { NULL,Yglprg_rgb_cram_line_f, NULL };
 static int id_rbg_cram_line_s_texture = -1;
 static int id_rbg_cram_line_s_color = -1;
 static int id_rbg_cram_line_s_line_texture = -1;
@@ -945,12 +945,6 @@ int Ygl_cleanupNormal_blur(void * p)
 
 
 const GLchar Yglprg_DestinationAlpha_f[] =
-#if defined(_OGLES3_)
-"#version 300 es \n"
-"precision highp float;                                  \n"
-#else
-"#version 330 \n"
-#endif
 "in highp vec4 v_texcoord;                               \n"
 "uniform vec4 u_color_offset;                            \n"
 "uniform sampler2D s_texture;                            \n"
@@ -977,32 +971,21 @@ const GLchar Yglprg_DestinationAlpha_f[] =
  *  Window Operation
  * ----------------------------------------------------------------------------------*/
 const GLchar Yglprg_window_v[] =
-#if defined(_OGLES3_)
-      "#version 300 es \n"
-#else
-      "#version 330 \n"
-#endif
       "uniform mat4 u_mvpMatrix;    \n"
       "layout (location = 0) in vec4 a_position;               \n"
       "void main()                  \n"
       "{                            \n"
       "   gl_Position = a_position*u_mvpMatrix; \n"
       "} ";
-const GLchar * pYglprg_window_v[] = {Yglprg_window_v, NULL};
+const GLchar * pYglprg_window_v[] = {NULL,Yglprg_window_v, NULL};
 
 const GLchar Yglprg_window_f[] =
-#if defined(_OGLES3_)
-      "#version 300 es \n"
-      "precision highp float;                            \n"
-#else
-      "#version 330 \n"
-#endif
       "out vec4 fragColor;            \n"
       "void main()                                         \n"
       "{                                                   \n"
       "  fragColor = vec4( 1.0,1.0,1.0,1.0 );\n"
       "}                                                   \n";
-const GLchar * pYglprg_window_f[] = {Yglprg_window_f, NULL};
+const GLchar * pYglprg_window_f[] = {NULL,Yglprg_window_f, NULL};
 
 int Ygl_uniformWindow(void * p )
 {
@@ -1029,11 +1012,6 @@ int Ygl_cleanupWindow(void * p )
  *  VDP1 Normal Draw
  * ----------------------------------------------------------------------------------*/
 const GLchar Yglprg_vdp1_normal_v[] =
-#if defined(_OGLES3_)
-      "#version 300 es \n"
-#else
-      "#version 330 \n"
-#endif
       "uniform mat4 u_mvpMatrix;    \n"
     "uniform vec2 u_texsize;    \n"
       "layout (location = 0) in vec4 a_position;   \n"
@@ -1046,15 +1024,9 @@ const GLchar Yglprg_vdp1_normal_v[] =
     "   v_texcoord.x  = v_texcoord.x / u_texsize.x;\n"
     "   v_texcoord.y  = v_texcoord.y / u_texsize.y;\n"
       "} ";
-const GLchar * pYglprg_vdp1_normal_v[] = {Yglprg_vdp1_normal_v, NULL};
+const GLchar * pYglprg_vdp1_normal_v[] = {NULL,Yglprg_vdp1_normal_v, NULL};
 
 const GLchar Yglprg_vpd1_normal_f[] =
-#if defined(_OGLES3_)
-      "#version 300 es \n"
-      "precision highp float;                            \n"
-#else
-      "#version 330 \n"
-#endif
       "in vec4 v_texcoord;                            \n"
       "uniform sampler2D s_texture;                        \n"
       "out vec4 fragColor;            \n"
@@ -1067,7 +1039,7 @@ const GLchar Yglprg_vpd1_normal_f[] =
       "  /*if( FragColor.a == 0.0 ) discard;*/                \n"
       "  fragColor = FragColor;\n "
       "}                                                   \n";
-const GLchar * pYglprg_vdp1_normal_f[] = {Yglprg_vpd1_normal_f, NULL};
+const GLchar * pYglprg_vdp1_normal_f[] = {NULL,Yglprg_vpd1_normal_f, NULL};
 static int id_vdp1_normal_s_texture_size = -1;
 static int id_vdp1_normal_s_texture = -1;
 
@@ -1097,13 +1069,7 @@ int Ygl_cleanupVdp1Normal(void * p )
 /*------------------------------------------------------------------------------------
 *  VDP1 GlowShading Operation with tessellation
 * ----------------------------------------------------------------------------------*/
-const GLchar Yglprg_vdp1_gouraudshading_tess_v[] =
-#if defined(_OGLES3_)
-"#version 310 es \n"
-"#extension GL_ANDROID_extension_pack_es31a : enable \n"
-#else
-"#version 400 \n"
-#endif
+const GLchar Yglprg_vdp1_gouraudshading_tess_v_body[] =
 "layout (location = 0) in vec3 a_position; \n"
 "layout (location = 1) in vec4 a_texcoord; \n"
 "layout (location = 2) in vec4 a_grcolor;  \n"
@@ -1118,15 +1084,9 @@ const GLchar Yglprg_vdp1_gouraudshading_tess_v[] =
 "   v_texcoord.x  = v_texcoord.x / u_texsize.x; \n"
 "   v_texcoord.y  = v_texcoord.y / u_texsize.y; \n"
 "}\n";
-const GLchar * pYglprg_vdp1_gouraudshading_tess_v[] = { Yglprg_vdp1_gouraudshading_tess_v, NULL };
+const GLchar * pYglprg_vdp1_gouraudshading_tess_v[] = { NULL, Yglprg_vdp1_gouraudshading_tess_v_body, NULL };
 
-const GLchar Yglprg_tess_c[] =
-#if defined(_OGLES3_)
-"#version 310 es \n"
-"#extension GL_ANDROID_extension_pack_es31a : enable \n"
-#else
-"#version 400 \n"
-#endif
+const GLchar Yglprg_tess_c_body[] =
 "layout(vertices = 4) out; //<???? what does it means? \n"
 "in vec3 v_position[];  \n"
 "in vec4 v_texcoord[]; \n"
@@ -1154,15 +1114,9 @@ const GLchar Yglprg_tess_c[] =
 "		gl_TessLevelOuter[3] = TessLevelOuter; \n"
 "	} \n"
 "} \n";
-const GLchar * pYglprg_vdp1_gouraudshading_tess_c[] = { Yglprg_tess_c, NULL };
+const GLchar * pYglprg_vdp1_gouraudshading_tess_c[] = { NULL, Yglprg_tess_c_body, NULL };
 
-const GLchar Yglprg_tess_e[] =
-#if defined(_OGLES3_)
-"#version 310 es \n"
-"#extension GL_ANDROID_extension_pack_es31a : enable \n"
-#else
-"#version 400 \n"
-#endif
+const GLchar Yglprg_tess_e_body[] =
 "layout(quads, equal_spacing, ccw) in; \n"
 "in vec3 tcPosition[]; \n"
 "in vec4 tcTexCoord[]; \n"
@@ -1186,15 +1140,9 @@ const GLchar Yglprg_tess_e[] =
 "	vec4 cb = mix(tcColor[1], tcColor[2], u); \n"
 "	teColor = mix(ca, cb, v); \n"
 "} \n";
-const GLchar * pYglprg_vdp1_gouraudshading_tess_e[] = { Yglprg_tess_e, NULL };
+const GLchar * pYglprg_vdp1_gouraudshading_tess_e[] = { NULL, Yglprg_tess_e_body, NULL };
 
-const GLchar Yglprg_tess_g[] =
-#if defined(_OGLES3_)
-"#version 310 es \n"
-"#extension GL_ANDROID_extension_pack_es31a : enable \n"
-#else
-"#version 400 \n"
-#endif
+const GLchar Yglprg_tess_g_body[] =
 "uniform mat4 Modelview; \n"
 "uniform mat3 NormalMatrix; \n"
 "layout(triangles) in; \n"
@@ -1220,7 +1168,7 @@ const GLchar Yglprg_tess_g[] =
 " \n"
 "	EndPrimitive(); \n"
 "} \n";
-const GLchar * pYglprg_vdp1_gouraudshading_tess_g[] = { Yglprg_tess_g, NULL };
+const GLchar * pYglprg_vdp1_gouraudshading_tess_g[] = { NULL, Yglprg_tess_g_body, NULL };
 
 static YglVdp1CommonParam id_gt = { 0 };
 
@@ -1229,11 +1177,6 @@ static YglVdp1CommonParam id_gt = { 0 };
  *  VDP1 GlowShading Operation
  * ----------------------------------------------------------------------------------*/
 const GLchar Yglprg_vdp1_gouraudshading_v[] =
-#if defined(_OGLES3_)
-"#version 300 es \n"
-#else
-"#version 330 \n"
-#endif
 "uniform mat4 u_mvpMatrix;                \n"
 "uniform vec2 u_texsize;    \n"
 "layout (location = 0) in vec4 a_position;               \n"
@@ -1248,15 +1191,9 @@ const GLchar Yglprg_vdp1_gouraudshading_v[] =
 "   v_texcoord.y  = v_texcoord.y / u_texsize.y; \n"
 "   gl_Position = a_position*u_mvpMatrix; \n"
 "}\n";
-const GLchar * pYglprg_vdp1_gouraudshading_v[] = {Yglprg_vdp1_gouraudshading_v, NULL};
+const GLchar * pYglprg_vdp1_gouraudshading_v[] = {NULL,Yglprg_vdp1_gouraudshading_v, NULL};
 
 const GLchar Yglprg_vdp1_gouraudshading_f[] =
-#if defined(_OGLES3_)
-"#version 300 es \n"
-"precision highp float;                                                 \n"
-#else
-"#version 330 \n"
-#endif
 "uniform sampler2D u_sprite;                                              \n"
 "in vec4 v_texcoord;                                                 \n"
 "in vec4 v_vtxcolor;                                                 \n"
@@ -1271,15 +1208,9 @@ const GLchar Yglprg_vdp1_gouraudshading_f[] =
 "  fragColor  = clamp(spriteColor+v_vtxcolor,vec4(0.0),vec4(1.0));     \n"
 "  fragColor.a = spriteColor.a;                                        \n"
 "}\n";
-const GLchar * pYglprg_vdp1_gouraudshading_f[] = {Yglprg_vdp1_gouraudshading_f, NULL};
+const GLchar * pYglprg_vdp1_gouraudshading_f[] = {NULL,Yglprg_vdp1_gouraudshading_f, NULL};
 
 const GLchar Yglprg_vdp1_gouraudshading_spd_f[] =
-#if defined(_OGLES3_)
-"#version 300 es \n"
-"precision highp float;                                                 \n"
-#else
-"#version 330 \n"
-#endif
 "uniform sampler2D u_sprite;                                              \n"
 "in vec4 v_texcoord;                                                 \n"
 "in vec4 v_vtxcolor;                                                 \n"
@@ -1292,7 +1223,7 @@ const GLchar Yglprg_vdp1_gouraudshading_spd_f[] =
 "  fragColor  = clamp(spriteColor+v_vtxcolor,vec4(0.0),vec4(1.0));     \n"
 "  fragColor.a = spriteColor.a;                                        \n"
 "}\n";
-const GLchar * pYglprg_vdp1_gouraudshading_spd_f[] = { Yglprg_vdp1_gouraudshading_spd_f, NULL };
+const GLchar * pYglprg_vdp1_gouraudshading_spd_f[] = { NULL,Yglprg_vdp1_gouraudshading_spd_f, NULL };
 
 static YglVdp1CommonParam id_g = { 0 };
 static YglVdp1CommonParam id_spd_g = { 0 };
@@ -1302,11 +1233,6 @@ static YglVdp1CommonParam id_spd_g = { 0 };
  *  VDP1 GlowShading and Half Trans Operation
  * ----------------------------------------------------------------------------------*/
 const GLchar Yglprg_vdp1_gouraudshading_hf_v[] =
-#if defined(_OGLES3_)
-      "#version 300 es \n"
-#else
-      "#version 330 \n"
-#endif
       "uniform mat4 u_mvpMatrix;                \n"
     "uniform vec2 u_texsize;    \n"
       "layout (location = 0) in vec4 a_position;               \n"
@@ -1321,15 +1247,9 @@ const GLchar Yglprg_vdp1_gouraudshading_hf_v[] =
     "   v_texcoord.y  = v_texcoord.y / u_texsize.y; \n"
       "   gl_Position = a_position*u_mvpMatrix; \n"
       "}\n";
-const GLchar * pYglprg_vdp1_gouraudshading_hf_v[] = {Yglprg_vdp1_gouraudshading_hf_v, NULL};
+const GLchar * pYglprg_vdp1_gouraudshading_hf_v[] = {NULL,Yglprg_vdp1_gouraudshading_hf_v, NULL};
 
 const GLchar Yglprg_vdp1_gouraudshading_hf_f[] =
-#if defined(_OGLES3_)
-      "#version 300 es \n"
-      "precision highp float;                                                                     \n"
-#else
-      "#version 330 \n"
-#endif
       "uniform highp sampler2D u_sprite;                                                                  \n"
       "uniform highp sampler2D u_fbo;                                                                     \n"
       "uniform int u_fbowidth;                                                                      \n"
@@ -1355,7 +1275,7 @@ const GLchar Yglprg_vdp1_gouraudshading_hf_f[] =
       "    fragColor = spriteColor;                                                              \n"
       "  }                                                                                          \n"
       "}\n";
-const GLchar * pYglprg_vdp1_gouraudshading_hf_f[] = {Yglprg_vdp1_gouraudshading_hf_f, NULL};
+const GLchar * pYglprg_vdp1_gouraudshading_hf_f[] = {NULL,Yglprg_vdp1_gouraudshading_hf_f, NULL};
 
 
 static YglVdp1CommonParam id_ght = { 0 };
@@ -1367,11 +1287,6 @@ static YglVdp1CommonParam id_ght_tess = { 0 };
  *  VDP1 Half Trans Operation
  * ----------------------------------------------------------------------------------*/
 const GLchar Yglprg_vdp1_halftrans_v[] =
-#if defined(_OGLES3_)
-      "#version 300 es \n"
-#else
-      "#version 330 \n"
-#endif
         "uniform mat4 u_mvpMatrix;                \n"
     "uniform vec2 u_texsize;    \n"
         "layout (location = 0) in vec4 a_position;               \n"
@@ -1387,15 +1302,9 @@ const GLchar Yglprg_vdp1_halftrans_v[] =
         "   gl_Position = a_position*u_mvpMatrix; \n"
         "}\n";
 
-const GLchar * pYglprg_vdp1_halftrans_v[] = {Yglprg_vdp1_halftrans_v, NULL};
+const GLchar * pYglprg_vdp1_halftrans_v[] = {NULL,Yglprg_vdp1_halftrans_v, NULL};
 
 const GLchar Yglprg_vdp1_halftrans_f[] =
-#if defined(_OGLES3_)
-      "#version 300 es \n"
-      "precision highp float;                                                                     \n"
-#else
-      "#version 330 \n"
-#endif
       "uniform highp sampler2D u_sprite;                                                           \n"
       "uniform highp sampler2D u_fbo;                                                               \n"
       "uniform int u_fbowidth;                                                                      \n"
@@ -1419,7 +1328,7 @@ const GLchar Yglprg_vdp1_halftrans_f[] =
       "    fragColor = spriteColor;                                                              \n"
       "  }                                                                                          \n"
       "}\n";
-const GLchar * pYglprg_vdp1_halftrans_f[] = {Yglprg_vdp1_halftrans_f, NULL};
+const GLchar * pYglprg_vdp1_halftrans_f[] = {NULL,Yglprg_vdp1_halftrans_f, NULL};
 
 static YglVdp1CommonParam hf = {0};
 static YglVdp1CommonParam hf_tess = {0};
@@ -1428,11 +1337,6 @@ static YglVdp1CommonParam hf_tess = {0};
 *  VDP1 Mesh Operaion
 * ----------------------------------------------------------------------------------*/
 const GLchar Yglprg_vdp1_mesh_v[] =
-#if defined(_OGLES3_)
-"#version 300 es \n"
-#else
-"#version 330 \n"
-#endif
 "uniform mat4 u_mvpMatrix;                \n"
 "uniform vec2 u_texsize;    \n"
 "layout (location = 0) in vec4 a_position;               \n"
@@ -1447,16 +1351,10 @@ const GLchar Yglprg_vdp1_mesh_v[] =
 "   v_texcoord.y  = v_texcoord.y / u_texsize.y; \n"
 "   gl_Position = a_position*u_mvpMatrix; \n"
 "}\n";
-const GLchar * pYglprg_vdp1_mesh_v[] = { Yglprg_vdp1_mesh_v, NULL };
+const GLchar * pYglprg_vdp1_mesh_v[] = { NULL,Yglprg_vdp1_mesh_v, NULL };
 
 #if 1
 const GLchar Yglprg_vdp1_mesh_f[] =
-#if defined(_OGLES3_)
-"#version 300 es \n"
-"precision highp float;                                                                     \n"
-#else
-"#version 330 \n"
-#endif
 "uniform sampler2D u_sprite;                                                                  \n"
 "uniform sampler2D u_fbo;                                                                     \n"
 "uniform int u_fbowidth;                                                                      \n"
@@ -1519,7 +1417,7 @@ const GLchar Yglprg_vdp1_mesh_f[] =
 "  }                                                                                          \n"
 "}\n";
 #endif
-const GLchar * pYglprg_vdp1_mesh_f[] = { Yglprg_vdp1_mesh_f, NULL };
+const GLchar * pYglprg_vdp1_mesh_f[] = { NULL,Yglprg_vdp1_mesh_f, NULL };
 
 static YglVdp1CommonParam mesh = { 0 };
 static YglVdp1CommonParam grow_tess = { 0 };
@@ -1530,11 +1428,6 @@ static YglVdp1CommonParam mesh_tess = { 0 };
 *  VDP1 Half luminance Operaion
 * ----------------------------------------------------------------------------------*/
 const GLchar Yglprg_vdp1_half_luminance_v[] =
-#if defined(_OGLES3_)
-      "#version 300 es \n"
-#else
-      "#version 330 \n"
-#endif
       "uniform mat4 u_mvpMatrix;    \n"
     "uniform vec2 u_texsize;    \n"
       "layout (location = 0) in vec4 a_position;   \n"
@@ -1547,15 +1440,9 @@ const GLchar Yglprg_vdp1_half_luminance_v[] =
     "   v_texcoord.x  = v_texcoord.x / u_texsize.x;\n"
     "   v_texcoord.y  = v_texcoord.y / u_texsize.y;\n"
       "} ";
-const GLchar * pYglprg_vdp1_half_luminance_v[] = {Yglprg_vdp1_half_luminance_v, NULL};
+const GLchar * pYglprg_vdp1_half_luminance_v[] = {NULL,Yglprg_vdp1_half_luminance_v, NULL};
 
 const GLchar Yglprg_vpd1_half_luminance_f[] =
-#if defined(_OGLES3_)
-      "#version 300 es \n"
-      "precision highp float;                            \n"
-#else
-      "#version 330 \n"
-#endif
       "in vec4 v_texcoord;                            \n"
       "uniform sampler2D s_texture;                        \n"
       "out vec4 fragColor;            \n"
@@ -1571,7 +1458,7 @@ const GLchar Yglprg_vpd1_half_luminance_f[] =
       "  fragColor.b = FragColor.b * 0.5;\n "
       "  fragColor.a = FragColor.a;\n "
       "}                                                   \n";
-const GLchar * pYglprg_vdp1_half_luminance_f[] = {Yglprg_vpd1_half_luminance_f, NULL};
+const GLchar * pYglprg_vdp1_half_luminance_f[] = {NULL,Yglprg_vpd1_half_luminance_f, NULL};
 static YglVdp1CommonParam half_luminance = { 0 };
 
 
@@ -1580,11 +1467,6 @@ static YglVdp1CommonParam half_luminance = { 0 };
 *    hard/vdp1/hon/p06_37.htm
 * ----------------------------------------------------------------------------------*/
 const GLchar Yglprg_vdp1_shadow_v[] =
-#if defined(_OGLES3_)
-"#version 300 es \n"
-#else
-"#version 330 \n"
-#endif
 "uniform mat4 u_mvpMatrix;                \n"
 "uniform vec2 u_texsize;    \n"
 "layout (location = 0) in vec4 a_position;               \n"
@@ -1600,15 +1482,9 @@ const GLchar Yglprg_vdp1_shadow_v[] =
 "   gl_Position = a_position*u_mvpMatrix; \n"
 "}\n";
 
-const GLchar * pYglprg_vdp1_shadow_v[] = { Yglprg_vdp1_shadow_v, NULL };
+const GLchar * pYglprg_vdp1_shadow_v[] = { NULL,Yglprg_vdp1_shadow_v, NULL };
 
 const GLchar Yglprg_vdp1_shadow_f[] =
-#if defined(_OGLES3_)
-"#version 300 es \n"
-"precision highp float;\n"
-#else
-"#version 330 \n"
-#endif
 "uniform sampler2D u_sprite;\n"
 "uniform highp sampler2D u_fbo;\n"
 "uniform int u_fbowidth;\n"
@@ -1630,7 +1506,7 @@ const GLchar Yglprg_vdp1_shadow_f[] =
 "    discard;\n"
 "  }\n"
 "}\n";
-const GLchar * pYglprg_vdp1_shadow_f[] = { Yglprg_vdp1_shadow_f, NULL };
+const GLchar * pYglprg_vdp1_shadow_f[] = { NULL,Yglprg_vdp1_shadow_f, NULL };
 
 static YglVdp1CommonParam shadow = { 0 };
 static YglVdp1CommonParam shadow_tess = { 0 };
@@ -2870,15 +2746,9 @@ int Ygl_cleanupAddBlend(void * p )
 /*------------------------------------------------------------------------------------
 *  11.3 Line Color Insertion
 * ----------------------------------------------------------------------------------*/
-const GLchar * pYglprg_linecol_v[] = { Yglprg_normal_v, NULL };
+const GLchar * pYglprg_linecol_v[] = { NULL,Yglprg_normal_v, NULL };
 
 const GLchar Yglprg_linecol_f[] =
-#if defined(_OGLES3_)
-"#version 300 es \n"
-"precision highp float;\n"
-#else
-"#version 330 \n"
-#endif
 "in highp vec4 v_texcoord;\n"
 "uniform vec4 u_color_offset;\n"
 "uniform float u_emu_height;\n"
@@ -2924,11 +2794,11 @@ const GLchar Yglprg_linecol_finish_f[] =
 "  }\n"
 "}\n";
 
-const GLchar * pYglprg_linecol_f[] = { Yglprg_linecol_f, Yglprg_linecol_main_f, Yglprg_linecol_finish_f};
-const GLchar * pYglprg_linecol_dest_alpha_f[] = { Yglprg_linecol_f, Yglprg_linecol_destalpha_f, Yglprg_linecol_finish_f };
+const GLchar * pYglprg_linecol_f[] = { NULL,Yglprg_linecol_f, Yglprg_linecol_main_f, Yglprg_linecol_finish_f};
+const GLchar * pYglprg_linecol_dest_alpha_f[] = { NULL,Yglprg_linecol_f, Yglprg_linecol_destalpha_f, Yglprg_linecol_finish_f };
 
-const GLchar * pYglprg_linecol_cram_f[] = { Yglprg_linecol_f, Yglprg_linecol_main_cram_f, Yglprg_linecol_finish_f };
-const GLchar * pYglprg_linecol_dest_alpha_cram_f[] = { Yglprg_linecol_f, Yglprg_linecol_destalpha_cram_f, Yglprg_linecol_finish_f };
+const GLchar * pYglprg_linecol_cram_f[] = { NULL,Yglprg_linecol_f, Yglprg_linecol_main_cram_f, Yglprg_linecol_finish_f };
+const GLchar * pYglprg_linecol_dest_alpha_cram_f[] = { NULL,Yglprg_linecol_f, Yglprg_linecol_destalpha_cram_f, Yglprg_linecol_finish_f };
 
 
 typedef struct _LinecolUniform{
@@ -3019,6 +2889,9 @@ int YglInitShader(int id, const GLchar * vertex[], const GLchar * frag[], int fc
   GLuint tcsHandle = 0;
   GLuint tesHandle = 0;
   GLuint gsHandle = 0;
+  
+  // Get the appropriate GLSL header for this device
+  const GLchar* header = ygl_get_glsl_header();
 
    _prgid[id] = glCreateProgram();
     if (_prgid[id] == 0 ) return -1;
@@ -3026,7 +2899,15 @@ int YglInitShader(int id, const GLchar * vertex[], const GLchar * frag[], int fc
     vshader = glCreateShader(GL_VERTEX_SHADER);
   fshader = glCreateShader(GL_FRAGMENT_SHADER);
 
-    glShaderSource(vshader, 1, vertex, NULL);
+    // Handle vertex shader with dynamic header
+    if (vertex != NULL && vertex[0] == NULL && vertex[1] != NULL) {
+      // New format: { NULL, body, NULL } - insert header dynamically
+      const GLchar* vertex_sources[3] = { header, vertex[1], NULL };
+      glShaderSource(vshader, 2, vertex_sources, NULL);
+    } else {
+      // Legacy format: { full_shader, NULL } - use as-is
+      glShaderSource(vshader, 1, vertex, NULL);
+    }
     glCompileShader(vshader);
     glGetShaderiv(vshader, GL_COMPILE_STATUS, &compiled);
     if (compiled == GL_FALSE) {
@@ -3036,7 +2917,20 @@ int YglInitShader(int id, const GLchar * vertex[], const GLchar * frag[], int fc
        return -1;
     }
 
-    glShaderSource(fshader, fcount, frag, NULL);
+    // Handle vertex shader with dynamic header
+    if (frag != NULL && frag[0] == NULL && frag[1] != NULL) {
+      // New format: { NULL, body, NULL } - insert header dynamically
+      const GLchar* fshader_sources[32] = {NULL}; // = { header, fshader[1], NULL };
+      fshader_sources[0] = header;
+      for( int i=0; i<fcount; i++ ){
+        fshader_sources[1+i] = frag[1+i];
+      }
+      glShaderSource(fshader, fcount+1, fshader_sources, NULL);
+    } else {
+      // Legacy format: { full_shader, NULL } - use as-is
+      glShaderSource(fshader, fcount, frag, NULL);
+    }    
+    
     glCompileShader(fshader);
     glGetShaderiv(fshader, GL_COMPILE_STATUS, &compiled);
     if (compiled == GL_FALSE) {
@@ -3054,7 +2948,16 @@ int YglInitShader(int id, const GLchar * vertex[], const GLchar * frag[], int fc
     if (tcsHandle == 0){
       YGLLOG("GL_TESS_CONTROL_SHADER is not supported\n");
     }
-    glShaderSource(tcsHandle, 1, tc, NULL);
+    
+    // Handle tessellation control shader with dynamic header
+    if (tc[0] == NULL && tc[1] != NULL) {
+      // New format: { NULL, body, NULL } - insert header dynamically
+      const GLchar* tc_sources[3] = { header, tc[1], NULL };
+      glShaderSource(tcsHandle, 2, tc_sources, NULL);
+    } else {
+      // Legacy format: { full_shader, NULL } - use as-is
+      glShaderSource(tcsHandle, 1, tc, NULL);
+    }
     glCompileShader(tcsHandle);
     glGetShaderiv(tcsHandle, GL_COMPILE_STATUS, &compiled);
     if (compiled == GL_FALSE) {
@@ -3070,7 +2973,16 @@ int YglInitShader(int id, const GLchar * vertex[], const GLchar * frag[], int fc
     if (tesHandle == 0){
       YGLLOG("GL_TESS_EVALUATION_SHADER is not supported\n");
     }
-    glShaderSource(tesHandle, 1, te, NULL);
+    
+    // Handle tessellation evaluation shader with dynamic header
+    if (te[0] == NULL && te[1] != NULL) {
+      // New format: { NULL, body, NULL } - insert header dynamically
+      const GLchar* te_sources[3] = { header, te[1], NULL };
+      glShaderSource(tesHandle, 2, te_sources, NULL);
+    } else {
+      // Legacy format: { full_shader, NULL } - use as-is
+      glShaderSource(tesHandle, 1, te, NULL);
+    }
     glCompileShader(tesHandle);
     glGetShaderiv(tesHandle, GL_COMPILE_STATUS, &compiled);
     if (compiled == GL_FALSE) {
@@ -3086,11 +2998,20 @@ int YglInitShader(int id, const GLchar * vertex[], const GLchar * frag[], int fc
     if (gsHandle == 0){
       YGLLOG("GL_GEOMETRY_SHADER is not supported\n");
     }
-    glShaderSource(gsHandle, 1, g, NULL);
+    
+    // Handle geometry shader with dynamic header
+    if (g[0] == NULL && g[1] != NULL) {
+      // New format: { NULL, body, NULL } - insert header dynamically
+      const GLchar* g_sources[3] = { header, g[1], NULL };
+      glShaderSource(gsHandle, 2, g_sources, NULL);
+    } else {
+      // Legacy format: { full_shader, NULL } - use as-is
+      glShaderSource(gsHandle, 1, g, NULL);
+    }
     glCompileShader(gsHandle);
     glGetShaderiv(gsHandle, GL_COMPILE_STATUS, &compiled);
     if (compiled == GL_FALSE) {
-      YGLLOG("Compile error in GL_TESS_EVALUATION_SHADER shader.\n");
+      YGLLOG("Compile error in GL_GEOMETRY_SHADER shader.\n");
       Ygl_printShaderError(id,gsHandle);
       _prgid[id] = 0;
       return -1;
@@ -3295,6 +3216,7 @@ int YglProgramInit()
    linecol.vheight = glGetUniformLocation(_prgid[PG_LINECOLOR_INSERT], (const GLchar *)"u_vheight");
    linecol.viewport_offset = glGetUniformLocation(_prgid[PG_LINECOLOR_INSERT], (const GLchar *)"u_viewport_offset");
 
+   YGLLOG("PG_LINECOLOR_INSERT_DESTALPHA\n");
    if (YglInitShader(PG_LINECOLOR_INSERT_DESTALPHA, pYglprg_linecol_v, pYglprg_linecol_dest_alpha_f, 3, NULL, NULL, NULL) != 0)
      return -1;
 
@@ -3305,6 +3227,7 @@ int YglProgramInit()
    linecol_destalpha.vheight = glGetUniformLocation(_prgid[PG_LINECOLOR_INSERT_DESTALPHA], (const GLchar *)"u_vheight");
    linecol_destalpha.viewport_offset = glGetUniformLocation(_prgid[PG_LINECOLOR_INSERT_DESTALPHA], (const GLchar *)"u_viewport_offset");
 
+   YGLLOG("PG_LINECOLOR_INSERT_CRAM\n");
    if (YglInitShader(PG_LINECOLOR_INSERT_CRAM, pYglprg_linecol_v, pYglprg_linecol_cram_f, 3, NULL, NULL, NULL) != 0)
      return -1;
 
@@ -3316,6 +3239,7 @@ int YglProgramInit()
    linecol_cram.vheight = glGetUniformLocation(_prgid[PG_LINECOLOR_INSERT_CRAM], (const GLchar *)"u_vheight");
    linecol_cram.viewport_offset = glGetUniformLocation(_prgid[PG_LINECOLOR_INSERT_CRAM], (const GLchar *)"u_viewport_offset");
 
+   YGLLOG("PG_LINECOLOR_INSERT_DESTALPHA_CRAM\n");
    if (YglInitShader(PG_LINECOLOR_INSERT_DESTALPHA_CRAM, pYglprg_linecol_v, pYglprg_linecol_dest_alpha_cram_f, 3, NULL, NULL, NULL) != 0)
      return -1;
 
@@ -3327,6 +3251,7 @@ int YglProgramInit()
    linecol_destalpha_cram.vheight = glGetUniformLocation(_prgid[PG_LINECOLOR_INSERT_DESTALPHA_CRAM], (const GLchar *)"u_vheight");
    linecol_destalpha_cram.viewport_offset = glGetUniformLocation(_prgid[PG_LINECOLOR_INSERT_DESTALPHA_CRAM], (const GLchar *)"u_viewport_offset");
 
+   YGLLOG("PG_VDP2_DRAWFRAMEBUFF_ADDCOLOR_SHADOW\n");
    //
    if (YglInitShader(PG_VDP2_DRAWFRAMEBUFF_ADDCOLOR_SHADOW, pYglprg_vdp2_drawfb_v, pYglprg_vdp2_drawfb_addcolor_shadow_f, 1,NULL, NULL, NULL) != 0)
      return -1;

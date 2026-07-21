@@ -88,7 +88,8 @@ const Items mVideoFilterMode = Items()
 const Items mPolygonGenerationMode = Items()
 	<< Item("0", "Triangles using perspective correction")
 	<< Item("1", "CPU Tesselation")
-	<< Item("2", "GPU Tesselation");
+	<< Item("2", "GPU Tesselation")
+	<< Item("3", "Compute Rasterizer (Experimental)");
 
 const Items mResolutionMode = Items()
 << Item("0", "Native (native resolution of Window)")
@@ -134,13 +135,16 @@ UISettings::UISettings( QList <supportedRes_struct> *supportedResolutions, QList
 	pmPort1->loadSettings();
 	pmPort2->setPort( 2 );
 	pmPort2->loadSettings();
-	
+
 	if ( p && !p->isFullScreen() )
 	{
 		setWindowFlags( Qt::Sheet );
 	}
 
-	setupCdDrives();
+	// NOTE: CD-ROM drive enumeration (setupCdDrives) is deferred. It is only
+	// needed for the real-CD-drive playback core (CDCORE_ARCH) and is populated
+	// lazily from on_cbCdRom_currentIndexChanged / loadSettings when that core is
+	// selected. Enumerating drives here blocked dialog construction for seconds.
 
 	// load cores informations
 	loadCores();
@@ -160,13 +164,13 @@ UISettings::UISettings( QList <supportedRes_struct> *supportedResolutions, QList
 
 	// load settings
 	loadSettings();
-	
+
 	// connections
 	foreach ( QToolButton* tb, findChildren<QToolButton*>() )
 	{
 		connect( tb, SIGNAL( clicked() ), this, SLOT( tbBrowse_clicked() ) );
 	}
-	
+
 	// retranslate widgets
 	QtYabause::retranslateWidget( this );
 
@@ -217,11 +221,19 @@ QStringList getCdDriveList()
 	QStringList list;
 
 #if defined Q_OS_WIN
-	foreach( QFileInfo drive, QDir::drives () )
+	// Enumerate CD-ROM drives with GetLogicalDrives() directly. QDir::drives()
+	// stats every drive root (GetFileAttributes on "X:\"), which blocks for
+	// seconds per empty optical or disconnected network drive. GetDriveTypeW()
+	// reports the drive type from cached info without touching the media, so it
+	// stays fast.
+	DWORD driveMask = GetLogicalDrives();
+	for (int i = 0; i < 26; ++i)
 	{
-		LPCWSTR driveString = (LPCWSTR)drive.filePath().utf16();
-		if (GetDriveTypeW(driveString) == DRIVE_CDROM)
-			list.append(drive.filePath());
+		if (!(driveMask & (1u << i)))
+			continue;
+		wchar_t root[4] = { static_cast<wchar_t>(L'A' + i), L':', L'\\', 0 };
+		if (GetDriveTypeW(root) == DRIVE_CDROM)
+			list.append(QString("%1:/").arg(QChar(QLatin1Char('A' + i))));
 	}
 #elif defined Q_OS_LINUX
 	FILE * f = fopen("/proc/sys/dev/cdrom/info", "r");
@@ -323,6 +335,9 @@ void UISettings::on_cbCdRom_currentIndexChanged( int id )
 			tbCdRom->setVisible(true);
 			break;
 		case CDCORE_ARCH:
+			// Populate the CD-drive list lazily: only the real-CD-drive core needs it.
+			if (cbCdDrive->count() == 0)
+				setupCdDrives();
 			cbCdDrive->setVisible(true);
 			leCdRom->setVisible(false);
 			tbCdRom->setVisible(false);
@@ -594,8 +609,11 @@ void UISettings::loadSettings()
 	cbEnableBiosEmulation->setChecked( s->value( "General/EnableEmulatedBios" ).toBool() );
 	cbCdRom->setCurrentIndex( cbCdRom->findData( s->value( "General/CdRom", QtYabause::defaultCDCore().id ).toInt() ) );
 	leCdRom->setText( s->value( "General/CdRomISO" ).toString() );
-	if (s->value( "General/CdRom", QtYabause::defaultCDCore().id ).toInt() == CDCORE_ARCH)
+	if (s->value( "General/CdRom", QtYabause::defaultCDCore().id ).toInt() == CDCORE_ARCH) {
+		if (cbCdDrive->count() == 0)
+			setupCdDrives();
 		cbCdDrive->setCurrentIndex(leCdRom->text().isEmpty() ? 0 : cbCdDrive->findText(leCdRom->text()));
+	}
 
 	leSaveStates->setText( s->value( "General/SaveStates", getDataDirPath() ).toString() );
 #ifdef HAVE_LIBMINI18N
@@ -648,6 +666,7 @@ void UISettings::loadSettings()
 //   sbIntegerPixelScalingMultiplier->setValue(s->value("Video/IntegerPixelScalingMultiplier", 2).toInt());
    cbRotateScreen->setChecked(s->value("Video/RotateScreen").toBool());
    cbUseComputeShader->setChecked(s->value("Video/UseComputeShader",1).toBool());
+   cbVdp2NewComposite->setChecked(s->value("Video/vdp2_new_composite", false).toBool());
 
    cbSh2Cache->setChecked(s->value("General/UseSh2Cache", true).toBool());
 
@@ -751,6 +770,7 @@ void UISettings::saveSettings()
   s->setValue("Video/resolution_mode", cbResolution->itemData(cbResolution->currentIndex()).toInt());
   s->setValue("Video/rbg_resolution_mode", cbResolution->itemData(cbRBGREsolution->currentIndex()).toInt());
   s->setValue("Video/UseComputeShader", cbUseComputeShader->isChecked());
+  s->setValue("Video/vdp2_new_composite", cbVdp2NewComposite->isChecked());
 //   s->setValue("Video/EnableIntegerPixelScaling", cbEnableIntegerPixelScaling->isChecked());
 //   s->setValue("Video/IntegerPixelScalingMultiplier", sbIntegerPixelScalingMultiplier->value());
 

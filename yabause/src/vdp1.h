@@ -198,6 +198,7 @@ void FASTCALL	Vdp1WriteLong(u32, u32);
 
 void Vdp1Draw(void);
 void Vdp1NoDraw(void);
+int Vdp1EstimateDrawLines(u8 * ram, Vdp1 * regs);
 void FASTCALL Vdp1ReadCommand(vdp1cmd_struct *cmd, u32 addr, u8* ram);
 
 int Vdp1SaveState(FILE *fp);

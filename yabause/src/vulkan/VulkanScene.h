@@ -33,6 +33,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 #include <array>
 #include <chrono>
 
+class VulkanGpuProfiler;
+
 #define MAX_COMMANDBUFFER_COUNT (4)
 struct Vertex2v {
   glm::vec4 pos;
@@ -166,6 +168,18 @@ public:
     return _renderer->GetVulkanComputeQueueFamilyIndex();
   }
 
+  bool graphicsQueueSupportsCompute() const {
+    return _renderer->GraphicsQueueSupportsCompute();
+  }
+
+  bool graphicsQueueSupportsTimestamp() const {
+    return _renderer->GraphicsQueueSupportsTimestamp();
+  }
+
+  bool supportsPipelineStatisticsQuery() const {
+    return _renderer->SupportsPipelineStatisticsQuery();
+  }
+
   const VkQueue getVulkanComputeQueue() {
     return _renderer->GetComputeQueue();
   }
@@ -202,6 +216,8 @@ public:
   void transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout);
   void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
 
+  VulkanGpuProfiler& gpuProfiler();
+
 
 protected:
   virtual int init(void);
@@ -223,7 +239,8 @@ protected:
 
   VkImage dstScreenImage = VK_NULL_HANDLE;
   VkDeviceMemory dstImageScreenMemory = VK_NULL_HANDLE;
-  unsigned char * dstbuf = nullptr;
+
+  VulkanGpuProfiler* _gpuProfiler = nullptr;
 
 };
 

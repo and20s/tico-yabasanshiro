@@ -45,7 +45,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 #include <inttypes.h>
 #include "object_type_string_helper.h"
 
-#define _DEBUG_ (0)
+#define _DEBUG_ (1)
 
 VKAPI_ATTR VkBool32 VKAPI_CALL debug_messenger_callback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
   VkDebugUtilsMessageTypeFlagsEXT messageType,
@@ -138,7 +138,11 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debug_messenger_callback(VkDebugUtilsMessageSever
 #endif
 
 #if defined(ANDROID)
-  LOGE("%s", stream.str().c_str());
+  // LOGE compiles to no-op when NDEBUG is defined (the default for the
+  // assembleDebug native lib). Use printf which yui.cpp redirects to
+  // __android_log_vprint(ANDROID_LOG_DEBUG, "yabause", ...) so messages
+  // reach logcat as `D/yabause`.
+  printf("%s", stream.str().c_str());
 #endif
 
 //#if defined( _WIN32 )
@@ -348,6 +352,7 @@ void Renderer::_InitDevice()
     else {
       canUseTess = false;
     }
+    _supports_pipeline_statistics_query = deviceFeatures.pipelineStatisticsQuery == VK_TRUE;
   }
   {
     uint32_t family_count = 0;
@@ -355,31 +360,64 @@ void Renderer::_InitDevice()
     std::vector<VkQueueFamilyProperties> family_property_list(family_count);
     vkGetPhysicalDeviceQueueFamilyProperties(_gpu, &family_count, family_property_list.data());
 
-    bool found = false;
+    bool foundGraphics = false;
+    bool foundCompute = false;
+    bool foundUnified = false;
+    uint32_t graphicsQueueCount = 0;
     for (uint32_t i = 0; i < family_count; ++i) {
-      if (family_property_list[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
-        found = true;
+      const VkQueueFlags flags = family_property_list[i].queueFlags;
+      const bool supportsGraphics = (flags & VK_QUEUE_GRAPHICS_BIT) != 0;
+      const bool supportsCompute = (flags & VK_QUEUE_COMPUTE_BIT) != 0;
+
+      LOGI("Vulkan queue family %u: flags=0x%x queueCount=%u\n",
+           i, flags, family_property_list[i].queueCount);
+
+      // VDP1 compute dispatch is recorded into the graphics command pool and
+      // submitted on the graphics queue. Prefer a unified graphics+compute
+      // family so Android drivers do not see vkCmdDispatch on a graphics-only
+      // queue family.
+      if (supportsGraphics && supportsCompute && !foundUnified) {
         _graphics_family_index = i;
-      }
-      if (family_property_list[i].queueFlags & VK_QUEUE_COMPUTE_BIT) {
-        found = true;
         _compute_family_index = i;
+        graphicsQueueCount = family_property_list[i].queueCount;
+        foundGraphics = true;
+        foundCompute = true;
+        foundUnified = true;
       }
 
+      if (!foundUnified && supportsGraphics) {
+        _graphics_family_index = i;
+        graphicsQueueCount = family_property_list[i].queueCount;
+        foundGraphics = true;
+      }
+      if (!foundUnified && supportsCompute) {
+        _compute_family_index = i;
+        foundCompute = true;
+      }
     }
-    if (!found) {
+    if (!foundGraphics || !foundCompute) {
       assert(0 && "Vulkan ERROR: Queue family supporting graphics not found.");
       std::exit(-1);
     }
-  }
 
-  if (_compute_family_index == _graphics_family_index) {
+    _graphics_queue_supports_compute =
+        (family_property_list[_graphics_family_index].queueFlags & VK_QUEUE_COMPUTE_BIT) != 0;
+    _graphics_queue_supports_timestamp =
+        family_property_list[_graphics_family_index].timestampValidBits != 0;
+
+    LOGI("Vulkan selected graphicsFamily=%u computeFamily=%u graphicsHasCompute=%d graphicsHasTimestamp=%d graphicsQueueCount=%u\n",
+         _graphics_family_index, _compute_family_index,
+         _graphics_queue_supports_compute ? 1 : 0,
+         _graphics_queue_supports_timestamp ? 1 : 0,
+         graphicsQueueCount);
+
+    if (_compute_family_index == _graphics_family_index) {
 
     float queue_priorities[]{ 0.5f, 1.0f };
     VkDeviceQueueCreateInfo device_queue_create_info{};
     device_queue_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
     device_queue_create_info.queueFamilyIndex = _graphics_family_index;
-    device_queue_create_info.queueCount = 2;
+    device_queue_create_info.queueCount = graphicsQueueCount >= 2 ? 2 : 1;
     device_queue_create_info.pQueuePriorities = queue_priorities;
 
     VkDeviceQueueCreateInfo infos[] = { device_queue_create_info };
@@ -388,6 +426,9 @@ void Renderer::_InitDevice()
     if (canUseTess) {
       features.tessellationShader = VK_TRUE;
       features.geometryShader = VK_TRUE;
+    }
+    if (_supports_pipeline_statistics_query) {
+      features.pipelineStatisticsQuery = VK_TRUE;
     }
 #ifdef _WINDOWS
     features.samplerAnisotropy = VK_TRUE;
@@ -402,7 +443,12 @@ void Renderer::_InitDevice()
 
     ErrorCheck(vkCreateDevice(_gpu, &device_create_info, nullptr, &_device));
     vkGetDeviceQueue(_device, _graphics_family_index, 0, &_queue);
-    vkGetDeviceQueue(_device, _graphics_family_index, 1, &_queueCompute);
+    if (device_queue_create_info.queueCount >= 2) {
+      vkGetDeviceQueue(_device, _graphics_family_index, 1, &_queueCompute);
+    }
+    else {
+      _queueCompute = _queue;
+    }
 
 
   }
@@ -419,7 +465,7 @@ void Renderer::_InitDevice()
     compute_device_queue_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
     compute_device_queue_create_info.queueFamilyIndex = _compute_family_index;
     compute_device_queue_create_info.queueCount = 1;
-    compute_device_queue_create_info.pQueuePriorities = queue_priorities;
+    compute_device_queue_create_info.pQueuePriorities = compute_queue_priorities;
 
     VkDeviceQueueCreateInfo infos[] = { device_queue_create_info , compute_device_queue_create_info, };
 
@@ -427,6 +473,9 @@ void Renderer::_InitDevice()
     if (canUseTess) {
       features.tessellationShader = VK_TRUE;
       features.geometryShader = VK_TRUE;
+    }
+    if (_supports_pipeline_statistics_query) {
+      features.pipelineStatisticsQuery = VK_TRUE;
     }
 #ifdef _WINDOWS
     // I don't know hwy this is needed. but validation error happed when samplerAnisotropy is false
@@ -445,7 +494,7 @@ void Renderer::_InitDevice()
     vkGetDeviceQueue(_device, _compute_family_index, 0, &_queueCompute);
   }
 
-
+  }
   
 }
 
@@ -583,10 +632,10 @@ void Renderer::_SetupDebug()
 
   _instance_extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
   _instance_extensions.push_back(VK_EXT_DEBUG_REPORT_EXTENSION_NAME);
-  #if defined(ANDROID)
-  #else
+  // Validation layer enabled on Android too (libVkLayer_khronos_validation.so
+  // is bundled in jniLibs/arm64-v8a/). Used for ad-hoc debugging -- disable for
+  // release if perf overhead matters.
   _instance_layers.push_back("VK_LAYER_KHRONOS_validation");
-  #endif
 
    //_instance_layers.push_back( "VK_LAYER_LUNARG_standard_validation" );
   /*
@@ -699,5 +748,11 @@ void Renderer::_DeInitDebug()
 void Renderer::_SetupDebug() {};
 void Renderer::_InitDebug() {};
 void Renderer::_DeInitDebug() {};
+
+// vkDebugNameObject is called unconditionally from other TUs (Vdp1Renderer,
+// VIDVulkan, VulkanScene, Window) to label Vulkan handles for debuggers.
+// Provide a no-op stub when the debug machinery is compiled out so the
+// link still resolves.
+void vkDebugNameObject(VkDevice, VkObjectType, uint64_t, const char*, ...) {}
 
 #endif // BUILD_ENABLE_VULKAN_DEBUG

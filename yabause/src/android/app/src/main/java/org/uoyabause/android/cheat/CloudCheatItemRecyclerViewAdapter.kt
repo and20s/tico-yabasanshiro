@@ -19,121 +19,200 @@
 package org.uoyabause.android.cheat
 
 import android.annotation.SuppressLint
-import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.ImageButton
 import android.widget.TextView
-import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.button.MaterialButton
+import com.google.android.material.card.MaterialCardView
+import com.google.android.material.color.MaterialColors
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.materialswitch.MaterialSwitch
-import com.google.android.material.switchmaterial.SwitchMaterial
 import org.devmiyax.yabasanshiro.R
+import org.uoyabause.android.auth.AuthState
 
 /**
  * [RecyclerView.Adapter] that can display a [CheatItem] and makes a call to the
  * specified [OnListFragmentInteractionListener].
  */
 class CloudCheatItemRecyclerViewAdapter(
-    private val mValues: List<CheatItem?>?,
-    private var mListener: OnItemClickListener?
+    private val values: List<CheatItem?>?,
+    private var listener: OnItemClickListener?,
 ) : RecyclerView.Adapter<CloudCheatItemRecyclerViewAdapter.ViewHolder>() {
     private var focusedItem = 0
+    private var attachedRecyclerView: RecyclerView? = null
 
-    fun setOnItemClickListener(listener: OnItemClickListener?) {
-        mListener = listener
+    override fun onAttachedToRecyclerView(recyclerView: RecyclerView) {
+        super.onAttachedToRecyclerView(recyclerView)
+        attachedRecyclerView = recyclerView
+    }
+
+    override fun onDetachedFromRecyclerView(recyclerView: RecyclerView) {
+        super.onDetachedFromRecyclerView(recyclerView)
+        attachedRecyclerView = null
+    }
+
+    fun moveCursor(direction: Int) {
+        val rv = attachedRecyclerView ?: return
+        tryMoveSelection(rv.layoutManager, direction)
+    }
+
+    fun selectFocused() {
+        val rv = attachedRecyclerView ?: return
+        val holder = rv.findViewHolderForAdapterPosition(focusedItem) as? ViewHolder ?: return
+        holder.view.performClick()
+    }
+
+    private fun tryMoveSelection(
+        lm: RecyclerView.LayoutManager?,
+        direction: Int,
+    ): Boolean {
+        val next = focusedItem + direction
+        if (next in 0 until itemCount) {
+            notifyItemChanged(focusedItem)
+            focusedItem = next
+            notifyItemChanged(focusedItem)
+            lm?.scrollToPosition(focusedItem)
+            return true
+        }
+        return false
+    }
+
+    fun setOnItemClickListener(itemClickListener: OnItemClickListener?) {
+        listener = itemClickListener
     }
 
     interface OnItemClickListener {
-        fun onItemClick(position: Int, item: CheatItem?, v: View?, isLikeButton: Boolean)
+        fun onItemClick(
+            position: Int,
+            item: CheatItem?,
+            v: View?,
+            isLikeButton: Boolean,
+        )
+
+        fun onItemDelete(
+            position: Int,
+            item: CheatItem?,
+        )
     }
 
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
-        val view = LayoutInflater.from(parent.context)
-            .inflate(R.layout.fragment_cloudcheatitem, parent, false)
+    override fun onCreateViewHolder(
+        parent: ViewGroup,
+        viewType: Int,
+    ): ViewHolder {
+        val view =
+            LayoutInflater
+                .from(parent.context)
+                .inflate(R.layout.fragment_cloudcheatitem, parent, false)
         return ViewHolder(view)
     }
 
-    override fun onBindViewHolder(holder: ViewHolder, @SuppressLint("RecyclerView") position: Int) {
-        holder.mItem = mValues?.get(position)
-        holder.mIdView.text = mValues?.get(position)?.description
-        holder.mContentView.text = mValues?.get(position)?.cheat_code
+    override fun onBindViewHolder(
+        holder: ViewHolder,
+        @SuppressLint("RecyclerView") position: Int,
+    ) {
+        holder.item = values?.get(position)
+        holder.idView.text = values?.get(position)?.description
+        holder.contentView.text = values?.get(position)?.cheat_code
         holder.itemView.isSelected = focusedItem == position
-        
+
+        val card = holder.itemView as MaterialCardView
         if (focusedItem == position) {
-            holder.itemView.setBackgroundColor(ContextCompat.getColor(
-                holder.itemView.context,
-                R.color.colorPrimaryDark
-            ))
+            card.strokeColor = MaterialColors.getColor(card, androidx.appcompat.R.attr.colorPrimary, 0)
+            card.strokeWidth = card.resources.getDimensionPixelSize(R.dimen.card_stroke_width_focused)
+            card.setCardBackgroundColor(
+                MaterialColors.getColor(card, com.google.android.material.R.attr.colorSurfaceContainerHigh, 0),
+            )
         } else {
-            holder.itemView.setBackgroundColor(ContextCompat.getColor(
-                holder.itemView.context,
-                R.color.halfTransparent
-            ))
+            card.strokeColor = 0
+            card.strokeWidth = 0
+            card.setCardBackgroundColor(
+                MaterialColors.getColor(card, com.google.android.material.R.attr.colorSurface, 0),
+            )
         }
 
-        holder.mLikeCount.text = holder.mItem?.star_count?.toString() ?: "0"
-        
-        // Set enable state
-        holder.mSwitchEnable.isChecked = holder.mItem?.enable == true
+        holder.likeCount.text = holder.item?.star_count?.toString() ?: "0"
 
-        holder.mSwitchEnable.setOnCheckedChangeListener { _ , isChecked ->
-            if (null != mListener) {
-                if( isChecked != holder.mItem?.enable ) {
-                    mListener!!.onItemClick(position, holder.mItem, holder.mView, false)
+        // Set enable state
+        holder.switchEnable.isChecked = holder.item?.enable == true
+
+        holder.switchEnable.setOnCheckedChangeListener { _, isChecked ->
+            if (null != listener) {
+                if (isChecked != holder.item?.enable) {
+                    listener!!.onItemClick(position, holder.item, holder.view, false)
                 }
             }
         }
 
-        holder.mLikeButton.setOnClickListener {
-            if (null != mListener) {
-                mListener!!.onItemClick(position, holder.mItem, holder.mView, true)
+        holder.likeButton.setOnClickListener {
+            if (null != listener) {
+                listener!!.onItemClick(position, holder.item, holder.view, true)
             }
         }
 
-        holder.mView.setOnClickListener {
+        holder.view.setOnClickListener {
             focusedItem = position
-            
-            // ダイアログを作成して表示
-            val context = holder.mView.context
-            val enableText = if (holder.mSwitchEnable.isChecked == true) "無効化する" else "有効化する"
-            val options = arrayOf("評価する/しない", enableText)
-            
-            androidx.appcompat.app.AlertDialog.Builder(context)
-                .setTitle(holder.mItem?.description)
+
+            val context = holder.view.context
+            val enableText = if (holder.switchEnable.isChecked) {
+                context.getString(R.string.disable)
+            } else {
+                context.getString(R.string.enable)
+            }
+
+            val currentUserId = AuthState.realUser()?.uid
+            val isOwner = currentUserId != null && currentUserId == holder.item?.user_id
+
+            val options = if (isOwner) {
+                arrayOf(
+                    context.getString(R.string.toggle_like),
+                    enableText,
+                    context.getString(R.string.delete),
+                )
+            } else {
+                arrayOf(
+                    context.getString(R.string.toggle_like),
+                    enableText,
+                )
+            }
+
+            MaterialAlertDialogBuilder(context)
+                .setTitle(holder.item?.description)
                 .setItems(options) { _, which ->
                     when (which) {
-                        0 -> { // 評価する/しない
-                            if (null != mListener) {
-                                mListener!!.onItemClick(position, holder.mItem, holder.mView, true)
+                        0 -> {
+                            if (null != listener) {
+                                listener!!.onItemClick(position, holder.item, holder.view, true)
                             }
                         }
-                        1 -> { // 有効化する/しない
-                            if (null != mListener) {
-                                mListener!!.onItemClick(position, holder.mItem, holder.mView, false)
+                        1 -> {
+                            if (null != listener) {
+                                listener!!.onItemClick(position, holder.item, holder.view, false)
+                            }
+                        }
+                        2 -> {
+                            if (isOwner && null != listener) {
+                                listener!!.onItemDelete(position, holder.item)
                             }
                         }
                     }
-                }
-                .show()
+                }.show()
         }
     }
 
-    override fun getItemCount(): Int {
-        return if (mValues == null) 0 else mValues.size
-    }
+    override fun getItemCount(): Int = if (values == null) 0 else values.size
 
-    inner class ViewHolder(val mView: View) : RecyclerView.ViewHolder(mView) {
-        val mIdView: TextView = mView.findViewById(R.id.id)
-        val mContentView: TextView = mView.findViewById(R.id.content)
-        val mLikeButton: ImageButton = mView.findViewById(R.id.button_like)
-        val mLikeCount: TextView = mView.findViewById(R.id.text_like_count)
-        val mSwitchEnable: MaterialSwitch = mView.findViewById(R.id.switch_enable)
-        var mItem: CheatItem? = null
+    inner class ViewHolder(
+        val view: View,
+    ) : RecyclerView.ViewHolder(view) {
+        val idView: TextView = view.findViewById(R.id.id)
+        val contentView: TextView = view.findViewById(R.id.content)
+        val likeButton: MaterialButton = view.findViewById(R.id.button_like)
+        val likeCount: TextView = view.findViewById(R.id.text_like_count)
+        val switchEnable: MaterialSwitch = view.findViewById(R.id.switch_enable)
+        var item: CheatItem? = null
 
-        override fun toString(): String {
-            return super.toString() + " '" + mContentView.text + "'"
-        }
+        override fun toString(): String = super.toString() + " '" + contentView.text + "'"
     }
 }

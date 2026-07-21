@@ -24,6 +24,7 @@
 #include "QtYabause.h"
 #include "Settings.h"
 #include "ui/UIYabause.h"
+#include "services/PreferenceManager.h"
 #ifndef NO_CLI
 #include "Arguments.h"
 #endif
@@ -51,6 +52,19 @@ int main( int argc, char** argv )
 	app.setApplicationName( QString( "Yaba Sanshiro 2 v%1 30th Anniversary Edition" ).arg( VERSION ) );
 	// init settings
 	Settings::setIniInformations();
+
+	// Perform crash recovery for bug reproduction
+	{
+		PreferenceManager crashRecovery(nullptr);
+		if (crashRecovery.hasCrashRecoverySnapshot()) {
+			qWarning() << "Crash recovery snapshot found - restoring preferences";
+			QMap<QString, QVariant> restored = crashRecovery.performCrashRecovery();
+			if (!restored.isEmpty()) {
+				qWarning() << "Restored" << restored.size() << "preferences from crash recovery";
+			}
+		}
+	}
+
 #ifdef HAVE_LIBMINI18N
 	// set translation file
 	if ( QtYabause::setTranslationFile() == -1 )

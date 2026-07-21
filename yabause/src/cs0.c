@@ -43,7 +43,9 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 */
 
 #include <stdlib.h>
+#include <string.h>
 #include "cs0.h"
+#include "debug.h"
 #include "error.h"
 #include "japmodem.h"
 #include "netlink.h"
@@ -1042,6 +1044,44 @@ static void FASTCALL ROM16MBITCs0WriteLong(u32 addr, u32 val)
 //////////////////////////////////////////////////////////////////////////////
 // General Cart functions
 //////////////////////////////////////////////////////////////////////////////
+
+// Games known to crash on real hardware when a RAM expansion cart is
+// inserted (list mirrors mednafen's ss game database). When a global DRAM
+// cart setting is active, swap it out for no cart once the disc's product
+// code is known so these games can boot. Example: Die Hard Trilogy's FMV
+// player polls 0x025E7FFE (inside the 4MiB cart window) and relies on the
+// open-bus value read on a cartless machine; with a DRAM cart mapped there
+// it reads 0 and spins forever.
+static const char *ram_cart_incompatible_games[] = {
+   "GS-9123",   // Die Hard Trilogy (Japan)
+   "T-16103H",  // Die Hard Trilogy (Europe/USA)
+   NULL
+};
+
+void CartApplyGameCompat(const char *itemnum)
+{
+   int i;
+
+   if (CartridgeArea == NULL || itemnum == NULL)
+      return;
+   if (CartridgeArea->carttype != CART_DRAM8MBIT &&
+       CartridgeArea->carttype != CART_DRAM32MBIT)
+      return;
+
+   for (i = 0; ram_cart_incompatible_games[i] != NULL; i++)
+   {
+      if (strcmp(itemnum, ram_cart_incompatible_games[i]) == 0)
+      {
+         LOG("cs0: game %s is incompatible with a RAM expansion cart, removing cart\n", itemnum);
+         CartDeInit();
+         CartInit(NULL, CART_NONE);
+         // Refresh the memory map so the CS0/CS1 handlers point at the
+         // new cartridge (the map captures the handler pointers).
+         MappedMemoryInit();
+         break;
+      }
+   }
+}
 
 int CartInit(const char * filename, int type)
 {

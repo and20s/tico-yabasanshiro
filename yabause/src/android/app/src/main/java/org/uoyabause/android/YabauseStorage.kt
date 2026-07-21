@@ -22,29 +22,13 @@ import android.database.Cursor
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
-import android.os.ParcelFileDescriptor
 import android.os.StatFs
 import android.provider.OpenableColumns
 import android.util.Log
-import android.widget.Toast
 import androidx.documentfile.provider.DocumentFile
 import androidx.preference.PreferenceManager
 import androidx.room.Room
-import androidx.room.RoomDatabase
-import androidx.room.Transaction
 import com.google.android.play.integrity.internal.i
-import io.reactivex.ObservableEmitter
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
-import kotlinx.coroutines.launch
-import java.io.*
-import java.net.*
-import java.text.SimpleDateFormat
-import java.util.*
-import java.util.regex.Pattern
-import kotlin.collections.ArrayList
-import kotlin.collections.LinkedHashSet
-import kotlin.system.measureTimeMillis
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.Credentials
@@ -52,24 +36,47 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import org.apache.commons.io.FileUtils
-import org.apache.commons.io.IOCase
-import org.apache.commons.io.filefilter.IOFileFilter
-import org.apache.commons.io.filefilter.SuffixFileFilter
 import org.devmiyax.yabasanshiro.R
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
+import org.uoyabause.android.cache.GameListCacheManager
 import org.uoyabause.android.cheat.CheatDao
+import java.io.BufferedInputStream
+import java.io.BufferedReader
+import java.io.ByteArrayOutputStream
+import java.io.DataInputStream
+import java.io.File
+import java.io.FilenameFilter
+import java.io.IOException
+import java.io.InputStreamReader
+import java.net.Authenticator
+import java.net.HttpURLConnection
+import java.net.MalformedURLException
+import java.net.PasswordAuthentication
+import java.net.URL
+import java.text.SimpleDateFormat
+import java.util.Arrays
+import java.util.Locale
+import java.util.regex.Pattern
+import kotlin.collections.ArrayList
+import kotlin.collections.LinkedHashSet
 
 internal class BiosFilter : FilenameFilter {
-    override fun accept(dir: File, filename: String): Boolean {
+    override fun accept(
+        dir: File,
+        filename: String,
+    ): Boolean {
         if (filename.endsWith(".bin")) return true
         return if (filename.endsWith(".rom")) true else false
     }
 }
 
 internal class GameFilter : FilenameFilter {
-    override fun accept(dir: File, filename: String): Boolean {
+    override fun accept(
+        dir: File,
+        filename: String,
+    ): Boolean {
         if (filename.endsWith(".img")) return true
         if (filename.endsWith(".IMG")) return true
         if (filename.endsWith(".bin")) return true
@@ -88,9 +95,10 @@ internal class GameFilter : FilenameFilter {
 }
 
 internal class MemoryFilter : FilenameFilter {
-    override fun accept(dir: File, filename: String): Boolean {
-        return if (filename.endsWith(".ram")) true else false
-    }
+    override fun accept(
+        dir: File,
+        filename: String,
+    ): Boolean = if (filename.endsWith(".ram")) true else false
 }
 
 class YabauseStorage private constructor() {
@@ -105,28 +113,27 @@ class YabauseStorage private constructor() {
     private val shader: File
     private val root: File
     private var external: File? = null
-    private var progress_emitter: ObservableEmitter<String>? = null
-    fun setProcessEmmiter(emitter: ObservableEmitter<String>?) {
-        progress_emitter = emitter
+    private var progressCallback: ((String) -> Unit)? = null
+
+    fun setProgressCallback(callback: ((String) -> Unit)?) {
+        progressCallback = callback
     }
 
     val biosFiles: Array<String?>?
         get() = bios.list(BiosFilter())
 
-    fun getBiosPath(biosfile: String): String {
-        return bios.toString() + File.separator + biosfile
-    }
+    fun getBiosPath(biosfile: String): String = bios.toString() + File.separator + biosfile
 
     fun setWebCdUrl(url: String) {
         webcdUrl = url
     }
 
-    fun getGameFiles(other_dir_string: String): Array<String?> {
+    fun getGameFiles(otherDirString: String): Array<String?> {
         val gameFiles = games.list(GameFilter())
         if (gameFiles != null) {
             Arrays.sort(gameFiles) { obj0, obj1 -> obj0.compareTo(obj1) }
         }
-        val selfiles = arrayOf(other_dir_string)
+        val selfiles = arrayOf(otherDirString)
         val allLists = arrayOfNulls<String>(selfiles.size + (gameFiles?.size ?: 0))
         System.arraycopy(selfiles, 0, allLists, 0, selfiles.size)
         if (gameFiles != null) {
@@ -135,38 +142,39 @@ class YabauseStorage private constructor() {
         return allLists
     }
 
-    fun getGamePath(gamefile: String): String {
-        return games.toString() + File.separator + gamefile
-    }
+    fun getGamePath(gamefile: String): String = games.toString() + File.separator + gamefile
 
     val gamePath: String
         get() = games.toString() + File.separator
 
     fun setExternalStoragePath(expath: String?) {
-        external = expath?.let { File(it) }
+        external = expath?.let {
+            val dir = File(it)
+            if (!dir.exists()) dir.mkdirs()
+            dir
+        }
     }
 
-    fun hasExternalSD(): Boolean {
-        return if (external != null) {
-            true
-        } else false
+    fun hasExternalSD(): Boolean = if (external != null) {
+        true
+    } else {
+        false
     }
 
     val externalGamePath: String?
-        get() = if (external == null) {
-            null
-        } else external.toString() + File.separator
+        get() =
+            if (external == null) {
+                null
+            } else {
+                external.toString() + File.separator
+            }
 
     val memoryFiles: Array<String>
         get() = memory.list(MemoryFilter()) as Array<String>
 
-    fun getMemoryPath(memoryfile: String): String {
-        return memory.toString() + File.separator + memoryfile
-    }
+    fun getMemoryPath(memoryfile: String): String = memory.toString() + File.separator + memoryfile
 
-    fun getCartridgePath(cartridgefile: String): String {
-        return cartridge.toString() + File.separator + cartridgefile
-    }
+    fun getCartridgePath(cartridgefile: String): String = cartridge.toString() + File.separator + cartridgefile
 
     val stateSavePath: String
         get() = state.toString() + File.separator
@@ -183,22 +191,24 @@ class YabauseStorage private constructor() {
     val rootPath: String
         get() = root.toString() + File.separator
 
-    internal inner class BasicAuthenticator(private val user: String, private val password: String) : Authenticator() {
-        override fun getPasswordAuthentication(): PasswordAuthentication {
-            return PasswordAuthentication(user, password.toCharArray())
-        }
+    internal inner class BasicAuthenticator(
+        private val user: String,
+        private val password: String,
+    ) : Authenticator() {
+        override fun getPasswordAuthentication(): PasswordAuthentication = PasswordAuthentication(user, password.toCharArray())
     }
 
     fun updateAllGameStatus(): Int {
         val urlstr: String
         val lastupdate = GameStatus.lastUpdate
-        urlstr = if (lastupdate == null) {
-            "https://www.uoyabause.org/api/games/get_status_from/?date=20010101"
-        } else {
-            val f = SimpleDateFormat("yyyy/MM/dd'T'HH:mm:ss'.000Z'")
-            val date_string = f.format(lastupdate)
-            "https://www.uoyabause.org/api/games/get_status_from/?date=$date_string"
-        }
+        urlstr =
+            if (lastupdate == null) {
+                "https://www.uoyabause.org/api/games/get_status_from/?date=20010101"
+            } else {
+                val f = SimpleDateFormat("yyyy/MM/dd'T'HH:mm:ss'.000Z'")
+                val dateString = f.format(lastupdate)
+                "https://www.uoyabause.org/api/games/get_status_from/?date=$dateString"
+            }
         val ctx = YabauseApplication.appContext
         val user = ctx.getString(R.string.basic_user)
         val password = ctx.getString(R.string.basic_password)
@@ -227,7 +237,6 @@ class YabauseStorage private constructor() {
             }
             val jsonstr = String(responseArray.toByteArray())
             ar = JSONArray(jsonstr)
-
         } catch (e: MalformedURLException) {
             e.printStackTrace()
             return -1
@@ -254,7 +263,8 @@ class YabauseStorage private constructor() {
                     if (lastupdate == null) {
                         status = GameStatus()
                     } else {
-                        YabauseStorage.gameStatusDao.select(jsonObj.getString("product_number"))
+                        YabauseStorage.gameStatusDao
+                            .select(jsonObj.getString("product_number"))
                             ?.let {
                                 status = it
                             } ?: run {
@@ -262,15 +272,16 @@ class YabauseStorage private constructor() {
                         }
                     }
 
-
                     status?.apply {
                         product_number = jsonObj.getString("product_number")
-                        //status.image_url = jsonObj.getString("image_url")
+                        // status.image_url = jsonObj.getString("image_url")
                         val ctx = YabauseApplication.appContext
                         image_url =
-                            "https://d3edktb2n8l35b.cloudfront.net/BOXART/" + product_number + ".PNG?" + ctx.getString(
-                                R.string.boxart_sigin
-                            ).replace("%26", "&")
+                            "https://d3edktb2n8l35b.cloudfront.net/BOXART/" + product_number + ".PNG?" +
+                            ctx
+                                .getString(
+                                    R.string.boxart_sigin,
+                                ).replace("%26", "&")
                         val dateStr = jsonObj.getString("updated_at")
                         val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'.000Z'")
                         update_at = sdf.parse(dateStr)
@@ -278,8 +289,7 @@ class YabauseStorage private constructor() {
                     }
 
                     YabauseStorage.gameStatusDao.insert(status!!)
-                    status!!.product_number.let { progress_emitter!!.onNext(it) }
-
+                    status!!.product_number.let { progressCallback?.invoke(it) }
                 }
             }
         } finally {
@@ -289,22 +299,25 @@ class YabauseStorage private constructor() {
     }
 
     fun generateGameListFromWebServer() {
-
         val client = OkHttpClient()
 
         val ctx = YabauseApplication.appContext
         val user: String = ctx.getString(R.string.basic_user)
         val password: String = ctx.getString(R.string.basic_password)
 
-        progress_emitter!!.onNext("game status")
+        progressCallback?.invoke("game status")
 
-        val requestStatus = Request.Builder()
-            .url("https://www.uoyabause.org//api/games/get_status_from/?date=1970/01/01T14:34:57")
-            .header("Authorization",
-                Credentials.basic(
-                    user,
-                    password))
-            .build()
+        val requestStatus =
+            Request
+                .Builder()
+                .url("https://www.uoyabause.org//api/games/get_status_from/?date=1970/01/01T14:34:57")
+                .header(
+                    "Authorization",
+                    Credentials.basic(
+                        user,
+                        password,
+                    ),
+                ).build()
 
         val stateRsponse = client.newCall(requestStatus).execute()
         if (!stateRsponse.isSuccessful) throw IOException("Unexpected code $stateRsponse")
@@ -313,9 +326,7 @@ class YabauseStorage private constructor() {
         var gamesJ = JSONObject()
 
         try {
-
             for (index in 0 until gameStatus.length()) {
-
                 val obj = gameStatus.getJSONObject(index)
                 val number = obj?.getString("product_number")
                 if (obj != null && number != null) {
@@ -326,20 +337,30 @@ class YabauseStorage private constructor() {
             e.localizedMessage?.let { Log.e("YabauseStorage", it) }
         }
 
-        progress_emitter!!.onNext("game list")
+        progressCallback?.invoke("game list")
 
-        val request = Request.Builder()
-            .url(webcdUrl + "/games/list")
-            .build()
-        client.newCall(request).enqueue(object : Callback {
-            override fun onResponse(call: Call, response: Response) {
-                //response.body()?.string().orEmpty()
-            }
+        val request =
+            Request
+                .Builder()
+                .url(webcdUrl + "/games/list")
+                .build()
+        client.newCall(request).enqueue(
+            object : Callback {
+                override fun onResponse(
+                    call: Call,
+                    response: Response,
+                ) {
+                    // response.body()?.string().orEmpty()
+                }
 
-            override fun onFailure(call: Call, e: IOException) {
-                Log.e("Error", e.toString())
-            }
-        })
+                override fun onFailure(
+                    call: Call,
+                    e: IOException,
+                ) {
+                    Log.e("Error", e.toString())
+                }
+            },
+        )
         val response = client.newCall(request).execute()
         if (!response.isSuccessful) throw IOException("Unexpected code $response")
         // println(response.body()?.string())
@@ -347,7 +368,6 @@ class YabauseStorage private constructor() {
         val gameList = JSONArray(response.body?.string())
 
         for (i in 0 until gameList.length()) {
-
             try {
                 var g = GameInfo()
                 val jobj = gameList.getJSONObject(i)
@@ -363,42 +383,43 @@ class YabauseStorage private constructor() {
                 g.device_infomation = jobj.getString("device_infomation")
                 g.game_title = jobj.getString("game_title")
 
-
                 try {
                     val obj = gamesJ.getJSONObject(g.product_number)
-                    //g.image_url = obj.optString("image_url", "")
-                    g.image_url = "https://d3edktb2n8l35b.cloudfront.net/BOXART/"+g.product_number+".PNG?" + ctx.getString(R.string.boxart_sigin).replace("%26","&");
+                    // g.image_url = obj.optString("image_url", "")
+                    g.image_url =
+                        "https://d3edktb2n8l35b.cloudfront.net/BOXART/" + g.product_number + ".PNG?" +
+                        ctx.getString(R.string.boxart_sigin).replace("%26", "&")
                     g.rating = obj.optInt("rating", -1)
                 } catch (e: JSONException) {
                     e.localizedMessage?.let { Log.e("YabauseStorage", it) }
                 }
                 dao.insertAll(g)
-                if (progress_emitter != null) {
-                    progress_emitter!!.onNext(g.game_title)
-                }
+                progressCallback?.invoke(g.game_title)
             } catch (e: Exception) {
                 e.localizedMessage?.let { Log.e("YabauseStorage", it) }
             }
         }
     }
+
 /*
     private fun getRealPathFromURI(contentUri: Uri): String? {
         val proj = arrayOf(MediaStore.Images.Media.DATA)
         val loader = CursorLoader(YabauseApplication.appContext, contentUri, proj, null, null, null)
         val cursor: Cursor? = loader.loadInBackground()
         if( cursor != null ) {
-            val column_index: Int = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATA)
+            val columnIndex: Int = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATA)
             cursor.moveToFirst()
-            val result: String = cursor.getString(column_index)
+            val result: String = cursor.getString(columnIndex)
             cursor.close()
             return result
         }
         return null
     }
 */
-    fun checkAndRemoveDupe( gameinfo : GameInfo ){
+    @Suppress("SENSELESS_COMPARISON")
+    fun checkAndRemoveDupe(gameinfo: GameInfo) {
         try {
-            val gameinfoInDb = dao.findByProductId(gameinfo.product_number,gameinfo.device_infomation)
+            val gameinfoInDb = dao.findByProductId(gameinfo.product_number, gameinfo.device_infomation)
             if (gameinfoInDb != null) {
                 // Preserve user-specific data from existing record
                 gameinfo.lastplay_date = gameinfoInDb.lastplay_date
@@ -406,21 +427,22 @@ class YabauseStorage private constructor() {
                 gameinfo.id = gameinfoInDb.id
                 dao.delete(gameinfoInDb)
             }
-        }catch( e : Exception ){
-            Log.e("YabauseStorage","DB error ${e.localizedMessage}");
+        } catch (e: Exception) {
+            Log.e("YabauseStorage", "DB error ${e.localizedMessage}")
         }
     }
-
 
     fun getRealPathFromURI(contentUri: Uri): String? {
         var cursor: Cursor? = null
         return try {
             // val proj = arrayOf(MediaStore.Images.Media.DATA)
-            cursor = YabauseApplication.appContext.getContentResolver()
-                .query(contentUri, null, null, null, null)
-            val column_index = cursor!!.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME)
+            cursor =
+                YabauseApplication.appContext
+                    .getContentResolver()
+                    .query(contentUri, null, null, null, null)
+            val columnIndex = cursor!!.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME)
             cursor.moveToFirst()
-            cursor.getString(column_index)
+            cursor.getString(columnIndex)
         } catch (e: Exception) {
             e.localizedMessage?.let { Log.e("Yabause", it) }
             null
@@ -428,25 +450,29 @@ class YabauseStorage private constructor() {
             cursor?.close()
         }
     }
+
+    @Suppress("SENSELESS_COMPARISON")
     fun generateGameListFromDirectory(dir: String?) {
-        val extensions = arrayOf("img",
-            "bin",
-            "ccd",
-            "CCD",
-            "cue",
-            "mds",
-            "iso",
-            "IMG",
-            "BIN",
-            "CUE",
-            "MDS",
-            "ISO",
-            "CHD",
-            "chd")
+        val extensions =
+            arrayOf(
+                "img",
+                "bin",
+                "ccd",
+                "CCD",
+                "cue",
+                "mds",
+                "iso",
+                "IMG",
+                "BIN",
+                "CUE",
+                "MDS",
+                "ISO",
+                "CHD",
+                "chd",
+            )
 
         val recursive = true
         if (dir?.contains("content://") == true) {
-
             var uri = Uri.parse(dir)
             val pickedDir = DocumentFile.fromTreeUri(YabauseApplication.appContext, uri)
             for (file in pickedDir!!.listFiles()) {
@@ -456,7 +482,7 @@ class YabauseStorage private constructor() {
                     val parcelFileDescriptor =
                         YabauseApplication.appContext.contentResolver.openFileDescriptor(
                             file.uri,
-                            "r"
+                            "r",
                         )
                     if (parcelFileDescriptor != null) {
                         val fd: Int? = parcelFileDescriptor.fd
@@ -465,44 +491,40 @@ class YabauseStorage private constructor() {
                         }
                         val gameinfo = GameInfo.genGameInfoFromCHD(apath)
                         if (gameinfo != null) {
-
                             gameinfo.file_path = file.uri.toString()
                             gameinfo.iso_file_path = uri.toString()
 
                             checkAndRemoveDupe(gameinfo)
                             YabauseStorage.dao.insertAll(gameinfo)
-                            if (progress_emitter != null) {
-                                progress_emitter!!.onNext(gameinfo.game_title)
-                            }
+                            progressCallback?.invoke(gameinfo.game_title)
                         }
                         parcelFileDescriptor.close()
                     }
                 } else if (file.name!!.lowercase(Locale.ROOT).endsWith("cue")) {
-
                     YabauseApplication.appContext.contentResolver.openInputStream(file.uri)?.use { inputStream ->
                         BufferedReader(InputStreamReader(inputStream)).use { reader ->
                             var line: String? = reader.readLine()
-                            var iso_file_name = ""
+                            var isoFileName = ""
                             while (line != null) {
                                 // System.out.println(str);
                                 val p = Pattern.compile("FILE \"(.*)\"")
                                 val m = p.matcher(line)
                                 if (m.find()) {
-                                    iso_file_name = m.group(1) as String
+                                    isoFileName = m.group(1) as String
                                     break
                                 }
                                 line = reader.readLine()
                             }
 
                             val dirDoc = DocumentFile.fromTreeUri(YabauseApplication.appContext, uri)
-                            val isoFile = dirDoc?.findFile(iso_file_name)
+                            val isoFile = dirDoc?.findFile(isoFileName)
                             if (isoFile != null) {
-
                                 YabauseApplication.appContext.contentResolver.openInputStream(isoFile.uri)?.use { inputStream ->
                                     val buff = ByteArray(0xFF)
-                                    val dataInStream = DataInputStream(
-                                        BufferedInputStream(inputStream)
-                                    )
+                                    val dataInStream =
+                                        DataInputStream(
+                                            BufferedInputStream(inputStream),
+                                        )
                                     dataInStream.read(buff, 0x0, 0xFF)
                                     dataInStream.close()
                                     val gameinfo = GameInfo.getGimeInfoFromBuf(file.uri.toString(), buff)
@@ -511,11 +533,9 @@ class YabauseStorage private constructor() {
                                         gameinfo.iso_file_path = uri.toString()
 
                                         checkAndRemoveDupe(gameinfo)
-                                        //gameinfo.updateState()
+                                        // gameinfo.updateState()
                                         YabauseStorage.dao.insertAll(gameinfo)
-                                        if (progress_emitter != null) {
-                                            progress_emitter!!.onNext(gameinfo.game_title)
-                                        }
+                                        progressCallback?.invoke(gameinfo.game_title)
                                     }
                                 }
                             }
@@ -532,9 +552,10 @@ class YabauseStorage private constructor() {
                     if (isoFile != null) {
                         YabauseApplication.appContext.contentResolver.openInputStream(isoFile.uri)?.use { inputStream ->
                             val buff = ByteArray(0xFF)
-                            val dataInStream = DataInputStream(
-                                BufferedInputStream(inputStream)
-                            )
+                            val dataInStream =
+                                DataInputStream(
+                                    BufferedInputStream(inputStream),
+                                )
                             dataInStream.read(buff, 0x0, 0xFF)
                             dataInStream.close()
                             val gameinfo = GameInfo.getGimeInfoFromBuf(file.uri.toString(), buff)
@@ -543,26 +564,24 @@ class YabauseStorage private constructor() {
                                 gameinfo.iso_file_path = uri.toString()
 
                                 checkAndRemoveDupe(gameinfo)
-                                //gameinfo.updateState()
+                                // gameinfo.updateState()
                                 YabauseStorage.dao.insertAll(gameinfo)
-                                if (progress_emitter != null) {
-                                    progress_emitter!!.onNext(gameinfo.game_title)
-                                }
+                                progressCallback?.invoke(gameinfo.game_title)
                             }
                         }
                     }
                     // Toast.makeText(YabauseApplication.appContext,"ccd is not supported yet for SAF",Toast.LENGTH_LONG).show()
                 } else if (file.name!!.lowercase(Locale.ROOT).endsWith("mds")) {
-
                     var realname = file.name!!.replace(".mds", ".mdf")
                     val dirDoc = DocumentFile.fromTreeUri(YabauseApplication.appContext, uri)
                     var isoFile = dirDoc?.findFile(realname)
                     if (isoFile != null) {
                         YabauseApplication.appContext.contentResolver.openInputStream(isoFile.uri)?.use { inputStream ->
                             val buff = ByteArray(0xFF)
-                            val dataInStream = DataInputStream(
-                                BufferedInputStream(inputStream)
-                            )
+                            val dataInStream =
+                                DataInputStream(
+                                    BufferedInputStream(inputStream),
+                                )
                             dataInStream.read(buff, 0x0, 0xFF)
                             dataInStream.close()
                             val gameinfo = GameInfo.getGimeInfoFromBuf(file.uri.toString(), buff)
@@ -570,11 +589,9 @@ class YabauseStorage private constructor() {
                                 gameinfo.file_path = file.uri.toString()
                                 gameinfo.iso_file_path = uri.toString()
                                 checkAndRemoveDupe(gameinfo)
-                                //gameinfo.updateState()
+                                // gameinfo.updateState()
                                 dao.insertAll(gameinfo)
-                                if (progress_emitter != null) {
-                                    progress_emitter!!.onNext(gameinfo.game_title)
-                                }
+                                progressCallback?.invoke(gameinfo.game_title)
                             }
                         }
                     }
@@ -582,71 +599,69 @@ class YabauseStorage private constructor() {
                     generateGameListFromDirectory(file.uri.toString())
                 }
             }
-
-
         } else {
             val gamedir = dir?.let { File(it) }
 
             if (gamedir != null) {
                 if (!gamedir.exists()) return
                 if (!gamedir.isDirectory) return
-            }else{
+            } else {
                 return
             }
 
             var iter = FileUtils.iterateFiles(gamedir, extensions, recursive)
             while (iter.hasNext()) {
                 val gamefile = iter.next()
-                val gamefile_name = gamefile.absolutePath
-                Log.d("generateGameDB", gamefile_name)
+                val gameFileName = gamefile.absolutePath
+                Log.d("generateGameDB", gameFileName)
                 var gameinfo: GameInfo? = null
-                if (gamefile_name.lowercase(Locale.ROOT).endsWith("cue")) {
-                    val tmp = dao.findByFilePath(gamefile_name)
+                if (gameFileName.lowercase(Locale.ROOT).endsWith("cue")) {
+                    val tmp = dao.findByFilePath(gameFileName)
                     if (tmp == null) {
-                        gameinfo = GameInfo.genGameInfoFromCUE(gamefile_name)
+                        gameinfo = GameInfo.genGameInfoFromCUE(gameFileName)
                     }
-                } else if (gamefile_name.lowercase(Locale.ROOT).endsWith("mds")) {
-                    val tmp = dao.findByFilePath(gamefile_name)
+                } else if (gameFileName.lowercase(Locale.ROOT).endsWith("mds")) {
+                    val tmp = dao.findByFilePath(gameFileName)
                     if (tmp == null) {
-                        gameinfo = GameInfo.genGameInfoFromMDS(gamefile_name)
+                        gameinfo = GameInfo.genGameInfoFromMDS(gameFileName)
                     }
-                } else if (gamefile_name.lowercase(Locale.ROOT).endsWith("ccd")) {
-                    val tmp = dao.findByFilePath(gamefile_name)
+                } else if (gameFileName.lowercase(Locale.ROOT).endsWith("ccd")) {
+                    val tmp = dao.findByFilePath(gameFileName)
                     if (tmp == null) {
-                        gameinfo = GameInfo.genGameInfoFromCCD(gamefile_name)
+                        gameinfo = GameInfo.genGameInfoFromCCD(gameFileName)
                     }
-                } else if (gamefile_name.lowercase(Locale.ROOT).endsWith("chd")) {
-                    val tmp = dao.findByFilePath(gamefile_name)
+                } else if (gameFileName.lowercase(Locale.ROOT).endsWith("chd")) {
+                    val tmp = dao.findByFilePath(gameFileName)
                     if (tmp == null) {
-                        gameinfo = GameInfo.genGameInfoFromCHD(gamefile_name)
+                        gameinfo = GameInfo.genGameInfoFromCHD(gameFileName)
                     }
                 }
                 if (gameinfo != null) {
-
                     checkAndRemoveDupe(gameinfo)
-                    //gameinfo.updateState()
+                    // gameinfo.updateState()
                     dao.insertAll(gameinfo)
 
-                    if (progress_emitter != null) {
-                        progress_emitter!!.onNext(gameinfo.game_title)
-                    }
+                    progressCallback?.invoke(gameinfo.game_title)
                 }
             }
             iter = FileUtils.iterateFiles(gamedir, extensions, recursive)
             while (iter.hasNext()) {
                 val gamefile = iter.next()
-                val gamefile_name = gamefile.absolutePath
-                if (gamefile_name.endsWith("BIN") || gamefile_name.endsWith("bin") ||
-                    gamefile_name.endsWith("ISO") || gamefile_name.endsWith("iso") ||
-                    gamefile_name.endsWith("IMG") || gamefile_name.endsWith("img")
+                val gameFileName = gamefile.absolutePath
+                if (gameFileName.endsWith("BIN") ||
+                    gameFileName.endsWith("bin") ||
+                    gameFileName.endsWith("ISO") ||
+                    gameFileName.endsWith("iso") ||
+                    gameFileName.endsWith("IMG") ||
+                    gameFileName.endsWith("img")
                 ) {
-                    //val tmp = GameInfo.getFromInDirectFileName(gamefile_name)
-                    val tmp =dao.findByInDirectFilePath(gamefile_name)
+                    // val tmp = GameInfo.getFromInDirectFileName(gameFileName)
+                    val tmp = dao.findByInDirectFilePath(gameFileName)
                     if (tmp == null) {
-                        val gameinfo = GameInfo.genGameInfoFromIso(gamefile_name)
+                        val gameinfo = GameInfo.genGameInfoFromIso(gameFileName)
                         if (gameinfo != null) {
                             checkAndRemoveDupe(gameinfo)
-                            //gameinfo.updateState()
+                            // gameinfo.updateState()
                             dao.insertAll(gameinfo)
                         }
                     }
@@ -658,9 +673,6 @@ class YabauseStorage private constructor() {
     fun generateGameDB(level: Int) {
 //        val rtn = updateAllGameStatus()
 //        if (level == 0 && rtn == -1) return
-        if (level >= 3) {
-            dao.deleteAll()
-        }
         val ctx = YabauseApplication.appContext
         var list: ArrayList<String?> = ArrayList()
         val sharedPref = PreferenceManager.getDefaultSharedPreferences(ctx)
@@ -685,11 +697,16 @@ class YabauseStorage private constructor() {
                 listtmp.add(externalGamePath)
             }
 
-            // for backward compatibility
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                val yabroot = File(YabauseApplication.appContext.getExternalFilesDir(null), "yabause")
-                val oldgames = File(yabroot, "games")
-                listtmp.add(oldgames.path + File.separator)
+            // for backward compatibility: scan old game locations in case
+            // migration has not yet completed or files remain in old paths
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val externalFilesDir = YabauseApplication.appContext.getExternalFilesDir(null)
+                // Old yabause/games under Android/data
+                val oldGames = File(externalFilesDir, "yabause/games")
+                if (oldGames.exists()) listtmp.add(oldGames.path + File.separator)
+                // Android 14+ special games dir
+                val oldGamesAlt = File(externalFilesDir, "games")
+                if (oldGamesAlt.exists()) listtmp.add(oldGamesAlt.path + File.separator)
             }
 
             list = ArrayList<String?>(LinkedHashSet(listtmp))
@@ -700,8 +717,50 @@ class YabauseStorage private constructor() {
         // uniqueList.addAll(list)
 
         val ulist = list.distinct()
+        val directoryPaths =
+            ulist.filterNotNull().filter { path ->
+                // Filter out non-existent directories to prevent cache mismatch
+                if (path.startsWith("content://")) {
+                    try {
+                        val uri = Uri.parse(path)
+                        val docFile = DocumentFile.fromTreeUri(YabauseApplication.appContext, uri)
+                        docFile?.exists() == true && docFile.isDirectory
+                    } catch (e: Exception) {
+                        false
+                    }
+                } else {
+                    val file = File(path)
+                    file.exists() && file.isDirectory
+                }
+            }
+
+        // Cache check: Skip scan if cache is valid (unless force refresh with level >= 3)
+        try {
+            val cacheManager = GameListCacheManager(ctx)
+            if (level < 3 && cacheManager.isCacheValid(directoryPaths)) {
+                Log.d("YabauseStorage", "Cache is valid, skipping directory scan")
+                return
+            }
+            Log.d("YabauseStorage", "Cache miss or force refresh, performing directory scan")
+        } catch (e: Exception) {
+            Log.e("YabauseStorage", "Cache check failed, proceeding with scan: ${e.message}")
+        }
+
+        if (level >= 3) {
+            dao.deleteAll()
+        }
+
         for (i in ulist.indices) {
             generateGameListFromDirectory(ulist[i])
+        }
+
+        // Update cache after successful scan
+        try {
+            val cacheManager = GameListCacheManager(ctx)
+            cacheManager.updateCache(directoryPaths)
+            Log.d("YabauseStorage", "Cache updated after scan")
+        } catch (e: Exception) {
+            Log.e("YabauseStorage", "Failed to update cache: ${e.message}")
         }
 
         // generateGameListFromWebServer("http://dddd")
@@ -771,15 +830,17 @@ class YabauseStorage private constructor() {
     }
 
     companion object {
-
         @JvmStatic
         val storage: YabauseStorage by lazy { HOLDER.INSTANCE }
 
         val db: GameInfoDatabase by lazy {
-            Room.databaseBuilder(
-                YabauseApplication.appContext,
-                GameInfoDatabase::class.java, "main-database"
-            ).allowMainThreadQueries()
+            Room
+                .databaseBuilder(
+                    YabauseApplication.appContext,
+                    GameInfoDatabase::class.java,
+                    "main-database",
+                ).allowMainThreadQueries()
+                .addMigrations(GameInfoDatabase.MIGRATION_1_2, GameInfoDatabase.MIGRATION_2_3)
                 .build()
         }
         val dao: GameInfoDao by lazy {
@@ -799,36 +860,36 @@ class YabauseStorage private constructor() {
     }
 
     init {
-        var yabroot = File(YabauseApplication.appContext.getExternalFilesDir(null), "yabause")
+        val ctx = YabauseApplication.appContext
 
-        // Above version 10
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-            //val oldyabroot = File(Environment.getExternalStorageDirectory(), "yabause")
-            // if (!yabroot.exists() && oldyabroot.exists()) {
-            //    Files.move(oldyabroot.toPath(), yabroot.toPath(), StandardCopyOption.REPLACE_EXISTING)
-            // }
-        } else {
-            yabroot = File(Environment.getExternalStorageDirectory(), "yabause")
-        }
+        // Non-game data stays in Android/data (app-specific storage)
+        val yabroot: File =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                File(ctx.getExternalFilesDir(null), "yabause")
+            } else {
+                File(Environment.getExternalStorageDirectory(), "yabause")
+            }
 
         root = yabroot
-        if (!yabroot.exists()) yabroot.mkdir()
-        bios = File(yabroot, "bios")
-        if (!bios.exists()) bios.mkdir()
+        if (!yabroot.exists()) yabroot.mkdirs()
 
-        // Above version 14
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            val mediaDir = File( YabauseApplication.appContext.getExternalMediaDirs()[0], "/games/")
-            if (!mediaDir.exists()) {
-                mediaDir.mkdir()  // Create the directory if it doesn't exist
-            }
-            games = mediaDir
-        }else {
+        // Games go to Android/media/<package>/games/ (persists after app uninstall) on Android 10+
+        // File migration from old locations is handled by StorageMigrationHelper (with user dialog).
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val mediaBase = File(
+                Environment.getExternalStorageDirectory(),
+                "Android/media/${ctx.packageName}",
+            )
+            val newGamesDir = File(mediaBase, "games")
+            if (!newGamesDir.exists()) newGamesDir.mkdirs()
+            games = newGamesDir
+        } else {
             games = File(yabroot, "games")
             if (!games.exists()) games.mkdir()
         }
 
-
+        bios = File(yabroot, "bios")
+        if (!bios.exists()) bios.mkdir()
         memory = File(yabroot, "memory")
         if (!memory.exists()) memory.mkdir()
         cartridge = File(yabroot, "cartridge")
@@ -841,48 +902,51 @@ class YabauseStorage private constructor() {
         if (!record.exists()) record.mkdir()
         shader = File(yabroot, "shader")
         if (!shader.exists()) shader.mkdir()
-
     }
 
-    fun externalMemoryAvailable(): Boolean {
-        return Environment.getExternalStorageState() ==
-                Environment.MEDIA_MOUNTED
+    fun externalMemoryAvailable(): Boolean = Environment.getExternalStorageState() ==
+        Environment.MEDIA_MOUNTED
+
+    // StatFs throws IllegalArgumentException when the path does not exist
+    // (statvfs ENOENT). This happens for removable SD cards whose game
+    // directory was never created (mkdirs silently fails under scoped
+    // storage). Walk up to the nearest existing ancestor on the same
+    // filesystem and guard the native call so callers never crash.
+    private fun statFsOrNull(path: String?): StatFs? {
+        if (path == null) return null
+        var dir: File? = File(path)
+        while (dir != null && !dir.exists()) {
+            dir = dir.parentFile
+        }
+        if (dir == null) return null
+        return try {
+            StatFs(dir.absolutePath)
+        } catch (e: IllegalArgumentException) {
+            Log.w("YabauseStorage", "StatFs failed for $path", e)
+            null
+        }
     }
 
     fun getAvailableInternalMemorySize(): String? {
-        val stat = StatFs(gamePath)
-        val blockSize = stat.blockSizeLong
-        val availableBlocks = stat.availableBlocksLong
-        return formatSize(availableBlocks * blockSize)
+        val stat = statFsOrNull(gamePath) ?: return "ERROR"
+        return formatSize(stat.availableBlocksLong * stat.blockSizeLong)
     }
 
     fun getTotalInternalMemorySize(): String? {
-        val stat = StatFs(gamePath)
-        val blockSize = stat.blockSizeLong
-        val totalBlocks = stat.blockCountLong
-        return formatSize(totalBlocks * blockSize)
+        val stat = statFsOrNull(gamePath) ?: return "ERROR"
+        return formatSize(stat.blockCountLong * stat.blockSizeLong)
     }
 
     fun getAvailableExternalMemorySize(): String? {
-        return if (externalMemoryAvailable()) {
-            val stat = StatFs(externalGamePath)
-            val blockSize = stat.blockSizeLong
-            val availableBlocks = stat.availableBlocksLong
-            formatSize(availableBlocks * blockSize)
-        } else {
-            "ERROR"
-        }
+        if (!externalMemoryAvailable()) return "ERROR"
+        val stat = statFsOrNull(externalGamePath) ?: return "ERROR"
+        return formatSize(stat.availableBlocksLong * stat.blockSizeLong)
     }
 
     fun getTotalExternalMemorySize(): String? {
-        return if (externalMemoryAvailable()) {
-            val stat = StatFs(externalGamePath)
-            val blockSize = stat.blockSizeLong
-            val totalBlocks = stat.blockCountLong
-            formatSize(totalBlocks * blockSize)
-        } else {
-            "ERROR"
-        }
+        if (!externalMemoryAvailable()) return "ERROR"
+        val stat = statFsOrNull(externalGamePath) ?: return "ERROR"
+        return formatSize(stat.blockCountLong * stat.blockSizeLong)
     }
 
     fun formatSize(size: Long): String? {

@@ -9,10 +9,24 @@ class LeaderBoardRepository {
     private let pageSize = 100
 
     // MARK: - Data Models
+    
+    // Score type definition
+    enum ScoreType: String {
+        case time = "TIME"     // Time-based score
+        case value = "VALUE"   // Value-based score (default)
+    }
+    
+    // Ranking type definition
+    enum RankingType: String {
+        case ascending = "ASCENDING"   // Lower values rank higher (times)
+        case descending = "DESCENDING" // Higher values rank higher (scores)
+    }
 
     struct LeaderboardInfo {
         let id: String
         let name: String?
+        let scoreType: ScoreType
+        let rankingType: RankingType
     }
 
     struct ScoreEntry {
@@ -79,9 +93,18 @@ class LeaderBoardRepository {
 
             // Map documents to LeaderboardInfo objects
             return leaderboardsResult.documents.map { doc in
-                LeaderboardInfo(
+                // Get scoreType and rankingType with defaults
+                let scoreTypeString = doc.get("scoreType") as? String ?? "VALUE"
+                let rankingTypeString = doc.get("rankingType") as? String ?? "DESCENDING"
+                
+                let scoreType = ScoreType(rawValue: scoreTypeString.uppercased()) ?? .value
+                let rankingType = RankingType(rawValue: rankingTypeString.uppercased()) ?? .descending
+                
+                return LeaderboardInfo(
                     id: doc.documentID,
-                    name: doc.get("name") as? String
+                    name: doc.get("name") as? String,
+                    scoreType: scoreType,
+                    rankingType: rankingType
                 )
             }
         } catch {
@@ -91,7 +114,7 @@ class LeaderBoardRepository {
     }
 
     // Get top score for a leaderboard
-    func getTopScore(leaderboardId: String) async throws -> Int64 {
+    func getTopScore(leaderboardId: String, leaderboardInfo: LeaderboardInfo? = nil) async throws -> Int64 {
         do {
             if gameId.isEmpty {
                 print("gameId is not set. Call getLeaderboards first.")
@@ -100,11 +123,17 @@ class LeaderBoardRepository {
 
             print("Getting top score for leaderboardId: \(leaderboardId)")
 
-            // Get scores ordered by score (ascending) and limit to 1
+            // Determine sort direction based on ranking type
+            let rankingType = leaderboardInfo?.rankingType ?? .descending
+            let isDescending = (rankingType == .descending)
+            
+            // Get the top score (1st place)
+            // For ASCENDING: smallest value is best (descending: false)
+            // For DESCENDING: largest value is best (descending: true)
             let query = db.collection("games").document(gameId)
                 .collection("leaderboards").document(leaderboardId)
                 .collection("scores")
-                .order(by: "score", descending: false)
+                .order(by: "score", descending: isDescending)
                 .limit(to: 1)
 
             let result = try await query.getDocuments()
@@ -127,7 +156,7 @@ class LeaderBoardRepository {
     }
 
     // Load a specific page of scores
-    func loadPage(leaderboardId: String, pageNumber: Int, userId: String?, topScore: Int64) async throws -> PageResult {
+    func loadPage(leaderboardId: String, pageNumber: Int, userId: String?, topScore: Int64, leaderboardInfo: LeaderboardInfo? = nil) async throws -> PageResult {
         do {
             if gameId.isEmpty {
                 print("gameId is not set. Call getLeaderboards first.")
@@ -158,10 +187,22 @@ class LeaderBoardRepository {
 
                     if let userScore = userDoc.get("score") as? Int64 {
                         // Count how many scores are better than the user's score
-                        let betterScoresQuery = db.collection("games").document(gameId)
-                            .collection("leaderboards").document(leaderboardId)
-                            .collection("scores")
-                            .whereField("score", isLessThan: userScore)
+                        let rankingType = leaderboardInfo?.rankingType ?? .descending
+                        let betterScoresQuery: Query
+                        
+                        if rankingType == .ascending {
+                            // For ascending (times), better scores are less than user's
+                            betterScoresQuery = db.collection("games").document(gameId)
+                                .collection("leaderboards").document(leaderboardId)
+                                .collection("scores")
+                                .whereField("score", isLessThan: userScore)
+                        } else {
+                            // For descending (scores), better scores are greater than user's
+                            betterScoresQuery = db.collection("games").document(gameId)
+                                .collection("leaderboards").document(leaderboardId)
+                                .collection("scores")
+                                .whereField("score", isGreaterThan: userScore)
+                        }
 
                         let betterScoresSnapshot = try await betterScoresQuery.count.getAggregation(source: .server)
                         let betterScoresCount = Int(truncating: betterScoresSnapshot.count)
@@ -177,7 +218,8 @@ class LeaderBoardRepository {
                             leaderboardId: leaderboardId,
                             pageNumber: userPage,
                             totalCount: totalCount,
-                            topScore: topScore
+                            topScore: topScore,
+                            leaderboardInfo: leaderboardInfo
                         )
                     }
                 }
@@ -188,7 +230,8 @@ class LeaderBoardRepository {
                 leaderboardId: leaderboardId,
                 pageNumber: pageNumber,
                 totalCount: totalCount,
-                topScore: topScore
+                topScore: topScore,
+                leaderboardInfo: leaderboardInfo
             )
         } catch {
             print("Error loading page: \(error)")
@@ -197,18 +240,21 @@ class LeaderBoardRepository {
     }
 
     // Load a page by page number
-    func loadPageByNumber(leaderboardId: String, pageNumber: Int, totalCount: Int, topScore: Int64) async throws -> PageResult {
+    func loadPageByNumber(leaderboardId: String, pageNumber: Int, totalCount: Int, topScore: Int64, leaderboardInfo: LeaderboardInfo? = nil) async throws -> PageResult {
         let offset = pageNumber * pageSize
         let hasMoreBefore = pageNumber > 0
         let hasMoreAfter = (offset + pageSize) < totalCount
 
         do {
             // Get scores for this page
+            let rankingType = leaderboardInfo?.rankingType ?? .descending
+            let isDescending = (rankingType == .descending)
+            
             let query = db.collection("games").document(gameId)
                 .collection("leaderboards").document(leaderboardId)
                 .collection("scores")
-                .order(by: "score", descending: false)
-                .order(by: "timestamp")
+                .order(by: "score", descending: isDescending)  // DESCENDING: higher is better, ASCENDING: lower is better
+                .order(by: "timestamp", descending: isDescending)
                 .limit(to: pageSize)
 
             // Apply offset if needed
@@ -247,7 +293,7 @@ class LeaderBoardRepository {
                     let rank = offset + index + 1
 
                     // Calculate difference from top score
-                    let diff = score - topScore
+                    let diff = calculateDiff(score: score, topScore: topScore, rankingType: leaderboardInfo?.rankingType ?? .descending)
 
                     // エポックミリ秒からDateに変換
                     let date = Date(timeIntervalSince1970: TimeInterval(timestamp) / 1000.0)
@@ -281,7 +327,7 @@ class LeaderBoardRepository {
     }
 
     // Load scores after a specific document
-    func loadScoresAfter(leaderboardId: String, lastVisible: DocumentSnapshot, lastRank: Int, topScore: Int64) async throws -> PageResult {
+    func loadScoresAfter(leaderboardId: String, lastVisible: DocumentSnapshot, lastRank: Int, topScore: Int64, leaderboardInfo: LeaderboardInfo? = nil) async throws -> PageResult {
         do {
             if gameId.isEmpty {
                 print("gameId is not set. Call getLeaderboards first.")
@@ -291,11 +337,14 @@ class LeaderBoardRepository {
             print("Loading scores after for leaderboardId: \(leaderboardId)")
 
             // Get scores after the last visible document
+            let rankingType = leaderboardInfo?.rankingType ?? .descending
+            let isDescending = (rankingType == .descending)
+            
             let query = db.collection("games").document(gameId)
                 .collection("leaderboards").document(leaderboardId)
                 .collection("scores")
-                .order(by: "score", descending: false)
-                .order(by: "timestamp")
+                .order(by: "score", descending: isDescending)
+                .order(by: "timestamp", descending: isDescending)
                 .start(afterDocument: lastVisible)
                 .limit(to: pageSize)
 
@@ -319,7 +368,7 @@ class LeaderBoardRepository {
                     }
 
                     // Calculate difference from top score
-                    let diff = score - topScore
+                    let diff = calculateDiff(score: score, topScore: topScore, rankingType: leaderboardInfo?.rankingType ?? .descending)
 
                     // エポックミリ秒からDateに変換
                     let date = Date(timeIntervalSince1970: TimeInterval(timestamp) / 1000.0)
@@ -356,7 +405,7 @@ class LeaderBoardRepository {
     }
 
     // Load scores before a specific document
-    func loadScoresBefore(leaderboardId: String, firstVisible: DocumentSnapshot, firstRank: Int, topScore: Int64) async throws -> PageResult {
+    func loadScoresBefore(leaderboardId: String, firstVisible: DocumentSnapshot, firstRank: Int, topScore: Int64, leaderboardInfo: LeaderboardInfo? = nil) async throws -> PageResult {
         do {
             if gameId.isEmpty {
                 print("gameId is not set. Call getLeaderboards first.")
@@ -368,11 +417,14 @@ class LeaderBoardRepository {
             // Get scores before the first visible document
             // Note: Firestore doesn't have a direct "end before" query
             // This is a simplification - in a real app, you'd need a more complex approach
+            let rankingType = leaderboardInfo?.rankingType ?? .descending
+            let isDescending = (rankingType == .descending)
+            
             let query = db.collection("games").document(gameId)
                 .collection("leaderboards").document(leaderboardId)
                 .collection("scores")
-                .order(by: "score", descending: false)
-                .order(by: "timestamp")
+                .order(by: "score", descending: isDescending)
+                .order(by: "timestamp", descending: isDescending)
                 .limit(to: pageSize)
 
             let result = try await query.getDocuments()
@@ -398,7 +450,7 @@ class LeaderBoardRepository {
                     let rank = firstRank - (result.documents.count - index)
 
                     // Calculate difference from top score
-                    let diff = score - topScore
+                    let diff = calculateDiff(score: score, topScore: topScore, rankingType: leaderboardInfo?.rankingType ?? .descending)
 
                     // エポックミリ秒からDateに変換
                     let date = Date(timeIntervalSince1970: TimeInterval(timestamp) / 1000.0)
@@ -434,6 +486,49 @@ class LeaderBoardRepository {
         }
     }
 
+    // Calculate score difference helper method
+    private func calculateDiff(score: Int64, topScore: Int64, rankingType: RankingType) -> Int64 {
+        if topScore > 0 && score > 0 {
+            switch rankingType {
+            case .ascending:
+                return score - topScore  // For times: my time - best time
+            case .descending:
+                return topScore - score  // For scores: best score - my score
+            }
+        }
+        return 0
+    }
+    
+    // Format score based on type
+    func formatScore(_ score: Int64, scoreType: ScoreType) -> String {
+        switch scoreType {
+        case .time:
+            return formatTime(score)
+        case .value:
+            return String(score)
+        }
+    }
+    
+    // Format difference score based on type
+    func formatDiffScore(_ diff: Int64, scoreType: ScoreType) -> String {
+        switch scoreType {
+        case .time:
+            return formatDiffTime(diff)
+        case .value:
+            return diff > 0 ? "+\(diff)" : String(diff)
+        }
+    }
+    
+    // Get column name based on score type
+    func getColumnName(scoreType: ScoreType) -> String {
+        switch scoreType {
+        case .time:
+            return "Time"
+        case .value:
+            return "Score"
+        }
+    }
+    
     // Format time for display
     func formatTime(_ time: Int64) -> String {
         let milliseconds = time % 1000
@@ -445,6 +540,25 @@ class LeaderBoardRepository {
             return String(format: "%d:%02d:%02d.%03d", hours, minutes, seconds, milliseconds)
         } else {
             return String(format: "%02d:%02d.%03d", minutes, seconds, milliseconds)
+        }
+    }
+    
+    // Format time difference for display
+    func formatDiffTime(_ diff: Int64) -> String {
+        if diff == 0 {
+            return "-"
+        }
+        
+        let sign = diff > 0 ? "+" : "-"
+        let absDiff = abs(diff)
+        let milliseconds = absDiff % 1000
+        let seconds = (absDiff / 1000) % 60
+        let minutes = (absDiff / (1000 * 60)) % 60
+        
+        if minutes > 0 {
+            return String(format: "%@%02d:%02d.%03d", sign, minutes, seconds, milliseconds)
+        } else {
+            return String(format: "%@%02d.%03d", sign, seconds, milliseconds)
         }
     }
 }

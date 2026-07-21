@@ -27,6 +27,12 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 #include "VertexManager.h"
 #include "VulkanInitializers.hpp"
 #include "VulkanTools.h"
+#include "VulkanGpuProfiler.h"
+#include "Vdp1ComputeRasterizer.h"
+#include "Vdp1ComputeMath.h"
+
+#include <algorithm>
+#include <chrono>
 
 #include "shaderc/shaderc.hpp"
 using shaderc::CompileOptions;
@@ -94,7 +100,12 @@ Vdp1Renderer::Vdp1Renderer(int width, int height, VIDVulkan *vulkan) {
 }
 
 Vdp1Renderer::~Vdp1Renderer() {
-  VkDevice device = vulkan->getDevice();  
+  VkDevice device = vulkan->getDevice();
+
+  // Wait for any pending compute dispatches before tearing down the command
+  // pool / images they depend on. drainComputeInFlight() blocks on the front
+  // fence if it is still unsignalled.
+  drainComputeInFlight();
 
   // Offscreen pass resources cleanup
   for (int i = 0; i < FRAMEBUFFER_COUNT; i++) {
@@ -234,6 +245,28 @@ void Vdp1Renderer::createUniformBuffer() {
                        _uniformBufferMemory);
 }
 
+void Vdp1Renderer::drainComputeInFlight() {
+  if (_computeInFlight.empty()) return;
+  VkDevice device = vulkan->getDevice();
+  while (!_computeInFlight.empty()) {
+    auto& front = _computeInFlight.front();
+    if (vkGetFenceStatus(device, front.fence) != VK_SUCCESS) {
+      const auto waitStart = std::chrono::high_resolution_clock::now();
+      ErrorCheck(vkWaitForFences(device, 1, &front.fence, VK_TRUE, UINT64_MAX));
+      const auto waitEnd = std::chrono::high_resolution_clock::now();
+      const double waitMs = std::chrono::duration<double, std::milli>(waitEnd - waitStart).count();
+      vulkan->gpuProfiler().recordFenceWait(VulkanGpuProfiler::Zone::Vdp1Compute, waitMs);
+    }
+    else {
+      vulkan->gpuProfiler().recordFenceWait(VulkanGpuProfiler::Zone::Vdp1Compute, 0.0);
+    }
+    vulkan->gpuProfiler().collect(front.profileSample);
+    vkDestroyFence(device, front.fence, nullptr);
+    vkFreeCommandBuffers(device, _command_pool, 1, &front.cb);
+    _computeInFlight.pop();
+  }
+}
+
 void Vdp1Renderer::changeResolution(int width, int height) {
 
   if (width == this->width && height == this->height)
@@ -244,6 +277,10 @@ void Vdp1Renderer::changeResolution(int width, int height) {
 
   vkQueueWaitIdle(vulkan->getVulkanQueue());
   VkDevice device = vulkan->getDevice();
+  // After the queue is idle, in-flight compute fences are signalled but
+  // their fences and command buffers are still owned by us -- clean them up
+  // before the offscreen images they reference are destroyed below.
+  drainComputeInFlight();
 
   vkDestroySampler(device, offscreenPass.sampler, nullptr);
 
@@ -287,8 +324,22 @@ void Vdp1Renderer::prepareOffscreen() {
   image.samples = VK_SAMPLE_COUNT_1_BIT;
   image.tiling = VK_IMAGE_TILING_OPTIMAL;
   // We will sample directly from the color attachment
+  // VK_IMAGE_USAGE_STORAGE_BIT is added so the compute rasterizer (Tasks 7-11) can write directly into this image
+  {
+    VkFormatProperties props;
+    vkGetPhysicalDeviceFormatProperties(vulkan->getPhysicalDevice(), FB_COLOR_FORMAT, &props);
+    if ((props.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) == 0) {
+#if defined(__ANDROID__)
+      LOGE("VDP1 offscreen image format does not support STORAGE_IMAGE_BIT. "
+           "Compute Rasterizer (POLYGONMODE=3) will malfunction on this device.");
+#else
+      std::cout << "Warning: VDP1 offscreen image format does not support STORAGE_IMAGE_BIT. "
+                << "Compute Rasterizer (POLYGONMODE=3) will malfunction on this device.\n";
+#endif
+    }
+  }
   image.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT |
-                VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+                VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
 
   // VK_IMAGE_USAGE_SAMPLED_BIT;
 
@@ -302,7 +353,6 @@ void Vdp1Renderer::prepareOffscreen() {
     }
 
     VK_CHECK_RESULT(vkCreateImage(device, &image, nullptr, &offscreenPass.color[i].image));
-    printf("offscreenPass.color[%d].image = %llx\n", i,offscreenPass.color[i].image);
     vkDebugNameObject(device, VK_OBJECT_TYPE_IMAGE, (uint64_t)offscreenPass.color[i].image, "offscreenPass.color[i].image");
     vkGetImageMemoryRequirements(device, offscreenPass.color[i].image, &memReqs);
     memAlloc.allocationSize = memReqs.size;
@@ -351,7 +401,6 @@ void Vdp1Renderer::prepareOffscreen() {
 
 
   VK_CHECK_RESULT(vkCreateImage(device, &image, nullptr, &offscreenPass.depth.image));
-  printf("offscreenPass.depth.image = %llx\n", offscreenPass.depth.image);
   vkDebugNameObject(device, VK_OBJECT_TYPE_IMAGE, (uint64_t)offscreenPass.depth.image, "offscreenPass.depth.image");
   vkGetImageMemoryRequirements(device, offscreenPass.depth.image, &memReqs);
   memAlloc.allocationSize = memReqs.size;
@@ -483,17 +532,53 @@ void Vdp1Renderer::prepareOffscreen() {
   // offscreenPass.descriptor.imageView = offscreenPass.color[0].view;
   // offscreenPass.descriptor.sampler = offscreenPass.sampler;
   
-  vulkan->transitionImageLayout(offscreenPass.color[0].image, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED,
-    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+  // Freshly created color images hold undefined contents. New allocations
+  // often come back zeroed, but when the driver recycles device memory
+  // (e.g. the SMPC system reset during game boot tears down and rebuilds the
+  // whole video core) the previous framebuffer contents can reappear as a
+  // stable afterimage: right after that reset the BIOS leaves EWLR/EWRR = 0,
+  // so the VDP1 erase-write window covers almost nothing and never wipes the
+  // stale pixels (observed on the BIOS logo, Windows and Android). Clear both
+  // framebuffers explicitly so a rebuilt offscreen always starts from black.
+  {
+    VkCommandBuffer cb = vulkan->beginSingleTimeCommands();
+    VkImageSubresourceRange range = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    VkClearColorValue clearColor = {};
+    for (int i = 0; i < 2; i++) {
+      VkImageMemoryBarrier toClear = {};
+      toClear.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+      toClear.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+      toClear.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+      toClear.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      toClear.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      toClear.image = offscreenPass.color[i].image;
+      toClear.subresourceRange = range;
+      toClear.srcAccessMask = 0;
+      toClear.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+      vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                           0, 0, nullptr, 0, nullptr, 1, &toClear);
 
-  offscreenPass.color[0].layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+      vkCmdClearColorImage(cb, offscreenPass.color[i].image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                           &clearColor, 1, &range);
 
-  vulkan->transitionImageLayout(offscreenPass.color[1].image, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED,
-    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+      VkImageMemoryBarrier toAttachment = {};
+      toAttachment.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+      toAttachment.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+      toAttachment.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+      toAttachment.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      toAttachment.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      toAttachment.image = offscreenPass.color[i].image;
+      toAttachment.subresourceRange = range;
+      toAttachment.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+      toAttachment.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+      vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                           0, 0, nullptr, 0, nullptr, 1, &toAttachment);
+    }
+    vulkan->endSingleTimeCommands(cb);
 
-  offscreenPass.color[1].layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-
-
+    offscreenPass.color[0].layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    offscreenPass.color[1].layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+  }
 }
 
 void Vdp1Renderer::createCommandPool() {
@@ -518,6 +603,25 @@ void Vdp1Renderer::createCommandPool() {
 
 void Vdp1Renderer::drawStart(void) {
 
+  // DebugUI generic pre-beginFrame hook. Fires for every polygon mode so the
+  // pause UI can capture a snapshot at the same point as the COMPUTE path
+  // (the compute rasterizer has its own dedicated hook fired below). Called
+  // BEFORE any per-frame state reset so the previous frame's regs and live
+  // VRAM/CRAM are still observable when the pause flag is set.
+  if (preBeginFrameHook_) preBeginFrameHook_();
+
+  if (vulkan->getCurrentPolygonMode() == COMPUTE_RASTERIZER && vulkan->getVdp1Compute()) {
+    vulkan->getVdp1Compute()->beginFrame();
+    // Effective HD upscale factor for thin-polygon detection. The compute hooks
+    // (genPolygon / DistortedSpriteDraw / ...) scale Saturn vertices by
+    // vdp1wratio * computeFbScaleX() (similarly for Y), NOT vdp1wratio alone.
+    // Passing the unscaled ratio under-detects thin polygons at HD (e.g. a
+    // bbox 4 px tall after ~3.77x scaling slips through ceil(1.88)+1=3).
+    const float effScaleX = vdp1wratio * computeFbScaleX();
+    const float effScaleY = vdp1hratio * computeFbScaleY();
+    vulkan->getVdp1Compute()->setScale(effScaleX, effScaleY);
+  }
+
   int i;
   int maxpri;
   int minpri;
@@ -529,6 +633,7 @@ void Vdp1Renderer::drawStart(void) {
   piplelines.clear();
   currentPipeLine = nullptr;
 
+  tm->waitForCopy();
   tm->reset();
   vm->reset();
 
@@ -538,33 +643,136 @@ void Vdp1Renderer::drawStart(void) {
   memcpy(&baseVdp2Regs, fixVdp2Regs, sizeof(Vdp2));
   fixVdp2Regs = &baseVdp2Regs;
 
+  // Forward VDP2 SPCTL & 0x3F (sprite type + sprite-RGB-enable) to the
+  // compute rasterizer. Bits 0..3 = sprite type (4bpp LUT priority/colorcl
+  // extraction); bit 5 = sprite-RGB-enable (16bpp RGB direct vs palette
+  // gate). Other color modes are unaffected.
+  if (vulkan->getCurrentPolygonMode() == COMPUTE_RASTERIZER && vulkan->getVdp1Compute()) {
+    vulkan->getVdp1Compute()->setSpriteType(static_cast<uint32_t>(fixVdp2Regs->SPCTL & 0x3F));
+  }
+
   msbShadowCount[drawframe] = 0;
 
-  YglSprite sprite;
   piplelines.clear();
-  sprite.vertices[0] = (s16)(Vdp1Regs->systemclipX1) * vdp1wratio;
-  sprite.vertices[1] = (s16)(Vdp1Regs->systemclipY1) * vdp1hratio;
-  sprite.vertices[2] = (s16)(Vdp1Regs->systemclipX2 + 1) * vdp1wratio;
-  sprite.vertices[3] = (s16)(Vdp1Regs->systemclipY1) * vdp1hratio;
-  sprite.vertices[4] = (s16)(Vdp1Regs->systemclipX2 + 1) * vdp1wratio;
-  sprite.vertices[5] = (s16)(Vdp1Regs->systemclipY2 + 1) * vdp1hratio;
-  sprite.vertices[6] = (s16)Vdp1Regs->systemclipX1 * vdp1wratio;
-  sprite.vertices[7] = (s16)(Vdp1Regs->systemclipY2 + 1) * vdp1hratio;
-  sprite.blendmode = VDP1_SYSTEM_CLIP;
-  genPolygon(&sprite, NULL, NULL, NULL, 0);
+  // Sentinel system / user clip polygons are needed only by the graphics
+  // pipeline -- they populate currentPipeLine so drawEnd does not take the
+  // L1121 "currentPipeLine == nullptr" fast path. In compute mode both
+  // drawEnd paths (L1121 and L1136) call runComputeDispatchIfNeeded() and
+  // return, so these sentinel genPolygon calls are pure CPU waste. Compute
+  // mode also feeds system / user clip to the rasterizer via the dedicated
+  // SystemClipping / UserClipping per-cmd handlers (see L2334 / L2378).
+  if (vulkan->getCurrentPolygonMode() != COMPUTE_RASTERIZER) {
+    YglSprite sprite;
+    sprite.vertices[0] = (s16)(Vdp1Regs->systemclipX1) * vdp1wratio;
+    sprite.vertices[1] = (s16)(Vdp1Regs->systemclipY1) * vdp1hratio;
+    sprite.vertices[2] = (s16)(Vdp1Regs->systemclipX2 + 1) * vdp1wratio;
+    sprite.vertices[3] = (s16)(Vdp1Regs->systemclipY1) * vdp1hratio;
+    sprite.vertices[4] = (s16)(Vdp1Regs->systemclipX2 + 1) * vdp1wratio;
+    sprite.vertices[5] = (s16)(Vdp1Regs->systemclipY2 + 1) * vdp1hratio;
+    sprite.vertices[6] = (s16)Vdp1Regs->systemclipX1 * vdp1wratio;
+    sprite.vertices[7] = (s16)(Vdp1Regs->systemclipY2 + 1) * vdp1hratio;
+    sprite.blendmode = VDP1_SYSTEM_CLIP;
+    genPolygon(&sprite, NULL, NULL, NULL, 0);
 
-  sprite.vertices[0] = (s16)(Vdp1Regs->userclipX1) * vdp1wratio;
-  sprite.vertices[1] = (s16)(Vdp1Regs->userclipY1) * vdp1hratio;
-  sprite.vertices[2] = (s16)(Vdp1Regs->userclipX2 + 1) * vdp1wratio;
-  sprite.vertices[3] = (s16)(Vdp1Regs->userclipY1) * vdp1hratio;
-  sprite.vertices[4] = (s16)(Vdp1Regs->userclipX2 + 1) * vdp1wratio;
-  sprite.vertices[5] = (s16)(Vdp1Regs->userclipY2 + 1) * vdp1hratio;
-  sprite.vertices[6] = (s16)Vdp1Regs->userclipX1 * vdp1wratio;
-  sprite.vertices[7] = (s16)(Vdp1Regs->userclipY2 + 1) * vdp1hratio;
-  sprite.blendmode = VDP1_USER_CLIP;
-  genPolygon(&sprite, NULL, NULL, NULL, 0);
+    sprite.vertices[0] = (s16)(Vdp1Regs->userclipX1) * vdp1wratio;
+    sprite.vertices[1] = (s16)(Vdp1Regs->userclipY1) * vdp1hratio;
+    sprite.vertices[2] = (s16)(Vdp1Regs->userclipX2 + 1) * vdp1wratio;
+    sprite.vertices[3] = (s16)(Vdp1Regs->userclipY1) * vdp1hratio;
+    sprite.vertices[4] = (s16)(Vdp1Regs->userclipX2 + 1) * vdp1wratio;
+    sprite.vertices[5] = (s16)(Vdp1Regs->userclipY2 + 1) * vdp1hratio;
+    sprite.vertices[6] = (s16)Vdp1Regs->userclipX1 * vdp1wratio;
+    sprite.vertices[7] = (s16)(Vdp1Regs->userclipY2 + 1) * vdp1hratio;
+    sprite.blendmode = VDP1_USER_CLIP;
+    genPolygon(&sprite, NULL, NULL, NULL, 0);
+  }
 
-  Vdp1DrawCommands(Vdp1Ram, Vdp1Regs, NULL);
+  // DebugUI replay: when set, the caller (DebugUI::dispatchGraphicsUpTo)
+  // performs its own bounded walk to dispatch only commands [0, N]. Live
+  // emulation always leaves this false.
+  if (!skipAutoCommandWalk_) {
+    Vdp1DrawCommands(Vdp1Ram, Vdp1Regs, NULL);
+  }
+}
+
+void Vdp1Renderer::clearCurrentOffscreenForReplay() {
+  // Synchronous clear of offscreenPass.color[drawframe] to transparent.
+  // Used by DebugUI's GPU_TESSERATION step replay so step N shows ONLY
+  // pixels touched by snapshot commands [0..N], not whatever pixels the
+  // previous live frame (or previous step replay) left in the image.
+  VkDevice device = vulkan->getDevice();
+
+  VkCommandBufferAllocateInfo cbai{};
+  cbai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+  cbai.commandPool = _command_pool;
+  cbai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+  cbai.commandBufferCount = 1;
+  VkCommandBuffer cb = VK_NULL_HANDLE;
+  if (vkAllocateCommandBuffers(device, &cbai, &cb) != VK_SUCCESS) return;
+
+  VkCommandBufferBeginInfo bi{};
+  bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+  bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+  vkBeginCommandBuffer(cb, &bi);
+
+  VkImageSubresourceRange range = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+
+  // Transition from whatever the renderer thinks the current layout is
+  // (COLOR_ATTACHMENT_OPTIMAL after drawEnd, SHADER_READ_ONLY_OPTIMAL
+  // after a previous replay clear) to TRANSFER_DST_OPTIMAL.
+  VkImageMemoryBarrier toClear{};
+  toClear.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  toClear.oldLayout = offscreenPass.color[drawframe].layout;
+  toClear.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  toClear.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  toClear.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  toClear.image = offscreenPass.color[drawframe].image;
+  toClear.subresourceRange = range;
+  toClear.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                          VK_ACCESS_SHADER_READ_BIT;
+  toClear.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  vkCmdPipelineBarrier(cb,
+      VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+          VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+      VK_PIPELINE_STAGE_TRANSFER_BIT,
+      0, 0, nullptr, 0, nullptr, 1, &toClear);
+
+  VkClearColorValue clearColor = {};
+  clearColor.float32[0] = 0.0f;
+  clearColor.float32[1] = 0.0f;
+  clearColor.float32[2] = 0.0f;
+  clearColor.float32[3] = 0.0f;
+  vkCmdClearColorImage(cb, offscreenPass.color[drawframe].image,
+      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clearColor, 1, &range);
+
+  // Park the image in SHADER_READ_ONLY_OPTIMAL so drawEnd's barrier code
+  // (lines around 963-989 of this file) sees a consistent srcAccessMask =
+  // SHADER_READ_BIT, srcStage = FRAGMENT_SHADER input.
+  VkImageMemoryBarrier toShader{};
+  toShader.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  toShader.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  toShader.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  toShader.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  toShader.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  toShader.image = offscreenPass.color[drawframe].image;
+  toShader.subresourceRange = range;
+  toShader.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  toShader.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  vkCmdPipelineBarrier(cb,
+      VK_PIPELINE_STAGE_TRANSFER_BIT,
+      VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+      0, 0, nullptr, 0, nullptr, 1, &toShader);
+
+  vkEndCommandBuffer(cb);
+
+  VkSubmitInfo si{};
+  si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+  si.commandBufferCount = 1;
+  si.pCommandBuffers = &cb;
+  vkQueueSubmit(vulkan->getVulkanQueue(), 1, &si, VK_NULL_HANDLE);
+  vkQueueWaitIdle(vulkan->getVulkanQueue());
+  vkFreeCommandBuffers(device, _command_pool, 1, &cb);
+
+  offscreenPass.color[drawframe].layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 }
 
 void Vdp1Renderer::erase() {
@@ -671,7 +879,13 @@ void Vdp1Renderer::erase() {
     imageBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
     imageBarrier.oldLayout = offscreenPass.color[readframe].layout;
     imageBarrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    imageBarrier.srcAccessMask = 0;
+    // This image was sampled by the previous frame's VDP2 composite pass
+    // (getFrameBufferImage returned it as the displayed framebuffer). The
+    // layout transition must wait for those fragment/compute shader reads;
+    // with srcStage=TOP_OF_PIPE / srcAccess=0 the transition (and the clear
+    // behind it) may be reordered ahead of a still-executing composite and
+    // wipe the frame it is sampling (write-after-read hazard).
+    imageBarrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
     imageBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
     imageBarrier.image = offscreenPass.color[readframe].image;
     imageBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -679,7 +893,8 @@ void Vdp1Renderer::erase() {
     imageBarrier.subresourceRange.levelCount = 1;
     imageBarrier.subresourceRange.baseArrayLayer = 0;
     imageBarrier.subresourceRange.layerCount = 1;
-    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, nullptr, 0, nullptr, 1, &imageBarrier);
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, nullptr, 0, nullptr, 1, &imageBarrier);
     offscreenPass.color[readframe].layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
   }
 
@@ -716,7 +931,7 @@ void Vdp1Renderer::erase() {
   }
 
   
-  float bottom = (vulkan->vdp2height - ((Vdp1Regs->EWRR & 0x1FF) * vdp1hratio * interlace)) * hrate;
+  float bottom = (vulkan->vdp2height - (((Vdp1Regs->EWRR & 0x1FF) + 1) * vdp1hratio * interlace)) * hrate;
   float right = (((Vdp1Regs->EWRR >> 9) & 0x7F) << 3) * vdp1wratio * wrate;
   float top = (vulkan->vdp2height - ((Vdp1Regs->EWLR & 0x1FF) * vdp1hratio * interlace)) * hrate;
   float left = (((Vdp1Regs->EWLR >> 9) & 0x7F) << 3) * vdp1wratio * wrate;
@@ -741,8 +956,34 @@ void Vdp1Renderer::erase() {
     height = offscreenPass.height;
 
 
+  // Rows below `bottom` map to VDP1 FB lines beyond the visible display
+  // area when vdp1hratio < 1 (the offscreen image holds a taller FB than
+  // the display; e.g. the BIOS license screen keeps a 224-line erase
+  // window while the FB layout spans 240 lines, leaving a 16-line band
+  // the windowed erase never touches). Real hardware never scans those
+  // lines out, but composite paths that sample the full offscreen image
+  // (VDP2 debugger replay, scaled Android output) surface the stale
+  // pixels as an afterimage. When the game erases down to the display
+  // bottom, also wipe the never-displayed band. Partial erase windows
+  // (EWRR above the display bottom) are left untouched so games that
+  // rely on FB persistence inside the display keep working.
+  // Use the VDP2 TVMD vertical resolution for the "erased down to the
+  // display bottom" test instead of vulkan->vdp2height: the latter can lag
+  // at 240 while the Saturn is already showing a 224-line screen (observed
+  // on the BIOS license screen), which would keep this extension from ever
+  // firing.
+  {
+    static const int kVres[4] = {224, 240, 256, 256};
+    const int displayLines = kVres[(Vdp2Regs->TVMD >> 4) & 3];
+    if ((int)(Vdp1Regs->EWRR & 0x1FF) >= displayLines - 1 && bottom > 0) {
+      height += (int)bottom;
+      bottom = 0;
+      if (height > offscreenPass.height)
+        height = offscreenPass.height;
+    }
+  }
+
   VkRect2D scissor = vks::initializers::rect2D(width, height, left, bottom);
-  // VkRect2D scissor = vks::initializers::rect2D(offscreenPass.width, offscreenPass.height, 0, 0);
   vkCmdSetScissor(cb, 0, 1, &scissor);
 
   vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, _pipelineLayout, 0, 1, &_descriptorSet[currentDesc], 0,
@@ -794,6 +1035,16 @@ void Vdp1Renderer::erase() {
   ErrorCheck(vkQueueSubmit(vulkan->getVulkanQueue(), 1, &submit_info, fence));
   offscreenPass.color[readframe].renderFences.push(fence);
 
+  // The offscreen render pass exits with finalLayout =
+  // SHADER_READ_ONLY_OPTIMAL (see prepareOffscreen attachment description).
+  // The tracker was left at COLOR_ATTACHMENT_OPTIMAL, so the next consumer
+  // (compute dispatch after the frame swap, or useImageAsShaderRead) chained
+  // its barrier from the wrong oldLayout. A wrong oldLayout lets the driver
+  // discard the image contents -- i.e. the erase result silently disappears
+  // (Adreno does discard; desktop drivers are usually lenient). Keep the
+  // tracker in sync with the actual post-render-pass layout.
+  offscreenPass.color[readframe].layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
   clearCount++;
   currentDesc++;
   currentDesc &= (DESC_COUNT - 1);
@@ -816,8 +1067,164 @@ void Vdp1Renderer::drawEnd(void) {
 
   VkDevice device = vulkan->getDevice();
 
+  // Compute mode: still run the compute dispatch even when the graphics
+  // pipeline is empty (Plan 1 Polygon-only games can leave currentPipeLine
+  // null forever, so handle the compute path before any early return).
+  //
+  // F14 fence pipelining: the previous Plan-1 path stalled the CPU on
+  // vkQueueWaitIdle right after submit. Now we keep one frame in flight by
+  // recycling (cb, fence) entries via _computeInFlight: drain at entry,
+  // submit-and-go at exit. The drain blocks only on the front fence when it
+  // is still unsignalled, which is exactly the gate that prevents
+  // uploadVramCram from racing the GPU's VRAM SSBO read.
+  auto runComputeDispatchIfNeeded = [&]() {
+    if (vulkan->getCurrentPolygonMode() != COMPUTE_RASTERIZER) return;
+    auto* compute = vulkan->getVdp1Compute();
+    if (!compute || compute->getCommandCount() == 0) return;
+    if (!vulkan->graphicsQueueSupportsCompute()) {
+      static bool logged = false;
+      if (!logged) {
+        LOGE("[Vdp1Compute] disabled: selected graphics queue family does not support compute. "
+             "This path records vkCmdDispatch into the graphics command pool.\n");
+        logged = true;
+      }
+      return;
+    }
+
+    // 1. Drain previous frames' in-flight compute work. Blocks only on
+    //    unsignalled entries -- for a typical pipelined run the front entry
+    //    has already finished by the time we reach here, making this a few
+    //    cycles of bookkeeping instead of an idle wait.
+    drainComputeInFlight();
+    // 1.5. F17 -- read previous frame's tile overflow counter and reset,
+    //      then feed it (plus current frame's cmd count / feature flags)
+    //      to the rasterizer's per-frame spike diagnostic. Runs in all
+    //      build configs: overflow readback is one host-visible memcpy and
+    //      logFrameDiagnostic is a few static counters with an occasional
+    //      printf. The cost is negligible compared to detecting why a
+    //      specific scene drops fps.
+    uint32_t tileOverflow = compute->readAndResetTileOverflow();
+    compute->logFrameDiagnostic(tileOverflow);
+    const uint32_t commandCount = static_cast<uint32_t>(compute->getCommandCount());
+
+    // 2. Upload VRAM/CRAM (memcpy on HOST_VISIBLE+COHERENT). Safe now that
+    //    no in-flight compute is reading the SSBO.
+    compute->uploadVramCram(Vdp1Ram, Vdp2ColorRam);
+
+    // 2.5. Mirror the graphics path's pre-draw blit of pending Saturn CPU
+    //      framebuffer writes into the offscreen image. The graphics path
+    //      calls blitCpuWrittenFramebuffer(drawframe) per-pipeline before
+    //      vkCmdDrawIndexed (and resets cpuFramebufferWriteCount). The
+    //      compute path used to skip this entirely, leaving the counter
+    //      latched non-zero forever once any CPU framebuffer write occurred.
+    //      That latched counter then made readFrameBuffer() take the
+    //      "cpuFramebufferWriteCount[drawframe] != 0" early-return at
+    //      L4692 every time, reading Vdp1FrameBuffer (CPU mirror, missing
+    //      every compute-rendered pixel) and never reaching the GPU readback
+    //      path at L4710 -- the symptom the user reports as "compute mode
+    //      readback returns an empty buffer". The call is a cheap no-op when
+    //      cpuFramebufferWriteCount[target] == 0 (early return at L5011).
+    //
+    //      Order rationale: must run AFTER drainComputeInFlight() (so a
+    //      prior frame's compute write to the same image is finished) and
+    //      BEFORE the ccb recording below (blitCpuWrittenFramebuffer issues
+    //      its own command buffer + synchronous fence wait, so it executes
+    //      strictly before the new compute dispatch).
+    //
+    //      Layout tracking: blitCpuWrittenFramebuffer transitions the dst
+    //      image to TRANSFER_DST_OPTIMAL but does NOT update
+    //      offscreenPass.color[drawframe].layout. We must reflect the
+    //      post-blit layout in the tracker before compute->dispatch reads
+    //      it, otherwise the dispatch's barrier transitions from a stale
+    //      tracked layout to GENERAL and Adreno discards the just-blitted
+    //      CPU writes (same class of bug noted in the dispatch switch at
+    //      Vdp1ComputeRasterizer.cpp). We gate on the count to avoid
+    //      mutating the tracker when blitCpuWrittenFramebuffer no-ops
+    //      (L5011 early-return when count == 0).
+    if (cpuFramebufferWriteCount[drawframe] != 0) {
+      // blitCpuWrittenFramebuffer now updates the layout tracker itself (it
+      // may also early-return without any transition when every written
+      // pixel is outside the displayed area).
+      blitCpuWrittenFramebuffer(drawframe);
+    }
+
+    // 3. Record fresh one-shot command buffer.
+    VkCommandBufferAllocateInfo cai{};
+    cai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    cai.commandPool = _command_pool;
+    cai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cai.commandBufferCount = 1;
+    VkCommandBuffer ccb;
+    if (vkAllocateCommandBuffers(device, &cai, &ccb) != VK_SUCCESS) return;
+
+    VkCommandBufferBeginInfo bi{};
+    bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(ccb, &bi);
+    const uint32_t profileSample =
+        vulkan->gpuProfiler().beginSample(ccb, VulkanGpuProfiler::Zone::Vdp1Compute,
+                                          vulkan->getFrameCount());
+    auto stageMarker = [&](const char* name) {
+        vulkan->gpuProfiler().markStage(ccb, profileSample, name);
+    };
+    compute->dispatch(ccb,
+        offscreenPass.color[drawframe].image,
+        offscreenPass.color[drawframe].view,
+        offscreenPass.color[drawframe].layout,
+        drawframe,
+        stageMarker);
+    vulkan->gpuProfiler().endSample(ccb, profileSample);
+    vulkan->gpuProfiler().setVdp1Stats(profileSample, commandCount,
+                                       compute->getLastDispatchStats(),
+                                       tileOverflow);
+    vkEndCommandBuffer(ccb);
+
+    // 4. Submit with a per-frame fence and queue (cb, fence) for the next
+    //    frame's drain. No WaitIdle here -- order with the subsequent VDP2
+    //    composite is guaranteed by single-queue submission order.
+    VkFenceCreateInfo fci{};
+    fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    VkFence cfence;
+    if (vkCreateFence(device, &fci, nullptr, &cfence) != VK_SUCCESS) {
+      vkFreeCommandBuffers(device, _command_pool, 1, &ccb);
+      return;
+    }
+
+    VkSubmitInfo si{};
+    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.commandBufferCount = 1; si.pCommandBuffers = &ccb;
+    if (vkQueueSubmit(vulkan->getVulkanQueue(), 1, &si, cfence) != VK_SUCCESS) {
+      vkDestroyFence(device, cfence, nullptr);
+      vkFreeCommandBuffers(device, _command_pool, 1, &ccb);
+      return;
+    }
+    _computeInFlight.push({ccb, cfence, profileSample});
+
+    offscreenPass.color[drawframe].updated = true;
+    // Invalidate the cached host-mapped readback pointer so the next
+    // Vdp1ReadFrameBuffer() picks up the freshly dispatched compute writes.
+    // Mirrors the graphics path reset in drawEnd() after vkQueueSubmit.
+    offscreenPass.color[drawframe].readed = false;
+    offscreenPass.color[drawframe].layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  };
+
   if (currentPipeLine == nullptr) {
     int fi = drawframe;
+    runComputeDispatchIfNeeded();   // run compute even when graphics is empty
+    return;
+  }
+
+  // Compute mode: skip the graphics render pass entirely. system/user clip
+  // polygons (genPolygon at L621 / L632) populate `currentPipeLine` even in
+  // compute mode, but Vdp1ComputeRasterizer handles clipping via its own
+  // state machine -- the graphics render pass would only re-process the same
+  // clip rectangles into the same offscreen image, racing the compute writes
+  // and producing the descriptor / image-layout in-flight violations seen on
+  // Adreno (validation log: "expects COLOR_ATTACHMENT -- current SHADER_READ_ONLY",
+  // descriptor set / pool / fence "in use"). Skipping is safe because the
+  // compute path already emitted everything the frame needs to draw.
+  if (vulkan->getCurrentPolygonMode() == COMPUTE_RASTERIZER) {
+    runComputeDispatchIfNeeded();
     return;
   }
 
@@ -876,8 +1283,14 @@ void Vdp1Renderer::drawEnd(void) {
 
   // tm->updateTextureImage();
 
-  vkCmdBeginRenderPass(cb, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
-
+  // Layout transition MUST be issued OUTSIDE the render pass. Vulkan spec
+  // VUID-vkCmdPipelineBarrier-oldLayout-01181 forbids `oldLayout != newLayout`
+  // image barriers within a render pass instance. Adreno is strict about this
+  // and silently drops attachment writes when the rule is broken -- which was
+  // the actual root cause of the "compute mode renders nothing" regression
+  // (the drawframe had been left in SHADER_READ_ONLY_OPTIMAL by a prior
+  // compute dispatch / fb-reader sample, and the inside-render-pass barrier
+  // attempt to switch it to COLOR_ATTACHMENT_OPTIMAL was rejected).
   if (offscreenPass.color[drawframe].layout != VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) {
 
     VkImageMemoryBarrier barrier_from_readonly_to_attachment = {};
@@ -894,7 +1307,7 @@ void Vdp1Renderer::drawEnd(void) {
     barrier_from_readonly_to_attachment.subresourceRange.layerCount = 1;
     barrier_from_readonly_to_attachment.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
     barrier_from_readonly_to_attachment.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    
+
     vkCmdPipelineBarrier(cb,
       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
       VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
@@ -903,9 +1316,11 @@ void Vdp1Renderer::drawEnd(void) {
       0, nullptr,
       1, &barrier_from_readonly_to_attachment
     );
-      
+
     offscreenPass.color[drawframe].layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
   }
+
+  vkCmdBeginRenderPass(cb, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
 
   /*
   imageMemoryBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -1149,6 +1564,12 @@ void Vdp1Renderer::drawEnd(void) {
   offscreenPass.color[drawframe].renderFences.push(fence);
   offscreenPass.color[drawframe].updated = true;
   offscreenPass.color[drawframe].readed = false;
+  // Keep the layout tracker in sync with the render pass finalLayout
+  // (SHADER_READ_ONLY_OPTIMAL) -- same reasoning as the erase() tracker fix:
+  // a stale COLOR_ATTACHMENT_OPTIMAL here makes the next barrier chain from
+  // the wrong oldLayout, which permits the driver to discard the just-drawn
+  // frame contents.
+  offscreenPass.color[drawframe].layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
   /*
   while (offscreenPass.color[drawframe].renderFences.size() > 0) {
     ErrorCheck(vkWaitForFences(device, 1, &offscreenPass.color[drawframe].renderFences.front(), VK_TRUE, UINT64_MAX));
@@ -1165,6 +1586,11 @@ void Vdp1Renderer::drawEnd(void) {
 
   // transitionImageLayout(offscreenPass.color.image, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED,
   // VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+  // In compute mode, invoke Vdp1ComputeRasterizer's dispatch and submit
+  // it (same shape as the graphics path: overlay compute after the
+  // graphics drawEnd has finished).
+  runComputeDispatchIfNeeded();
 
   updated = true;
 }
@@ -1238,6 +1664,41 @@ void Vdp1Renderer::NormalSpriteDraw(u8 *ram, Vdp1 *regs, u8 *back_framebuffer) {
     CMDYA |= 0xE000;
   else
     CMDYA &= ~(0xE000);
+
+  // Compute mode hook (Plan 2 F12). Local coordinate is applied by the
+  // state machine inside Vdp1ComputeRasterizer, so we pass raw post-sext12
+  // CMDXA/CMDYA scaled into offscreen-image pixel space here.
+  if (vulkan->getCurrentPolygonMode() == COMPUTE_RASTERIZER && vulkan->getVdp1Compute()) {
+    int w = ((cmd.CMDSIZE >> 8) & 0x3F) * 8;
+    int h = cmd.CMDSIZE & 0xFF;
+    if (w == 0 || h == 0) return;
+    const float sX = computeFbScaleX();
+    const float sY = computeFbScaleY();
+    // Cell-inclusive: BR vertex sits at the START of the last cell, not the
+    // exclusive end (CMDXA + w would be one cell past). The compute shader
+    // extends BR by 1 Saturn cell so the last cell is rendered. Adding +w
+    // here AND shader extension would double-extend by 1 cell, cloning the
+    // texture's last row/column over an extra screen cell. Same convention
+    // as DistortedSpriteDraw (Phase 2B raw-vert).
+    int x0 = (int)((float)CMDXA * vdp1wratio * sX);
+    int y0 = (int)((float)CMDYA * vdp1hratio * sY);
+    int x1 = (int)((float)(CMDXA + w - 1) * vdp1wratio * sX);
+    int y1 = (int)((float)(CMDYA + h - 1) * vdp1hratio * sY);
+    glm::uvec2 charSize(static_cast<uint32_t>(w), static_cast<uint32_t>(h));
+    u16 pmod  = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x4);
+    u32 flipBits = (cmd.CMDCTRL >> 4) & 0x3;
+    u32 gouraudAddr = ((u32)T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x1C)) << 3;
+    Vdp1Cmd vc{};
+    u16 color = fillComputeVdp2Attrs(&cmd, vc);
+    auto encoded = vdp1c::encodeNormalSprite(x0, y0, x1 - x0, y1 - y0,
+                                             cmd.CMDSRCA, charSize, color, pmod,
+                                             glm::ivec2(0, 0), flipBits, gouraudAddr);
+    encoded.priority  = vc.priority;
+    encoded.colorcl   = vc.colorcl;
+    encoded.vdp2Attrs = vc.vdp2Attrs;
+    vulkan->getVdp1Compute()->appendCommand(encoded);
+    return;
+  }
 
   x = CMDXA + localX;
   y = CMDYA + localY;
@@ -1344,9 +1805,13 @@ void Vdp1Renderer::ScaledSpriteDraw(u8 *ram, Vdp1 *regs, u8 *back_framebuffer) {
   int i;
 
   Vdp1ReadCommand(&cmd, Vdp1Regs->addr, Vdp1Ram);
-  if (cmd.CMDSIZE == 0) {
-    return; // BAD Command
-  }
+  // CMDSIZE == 0 is intentionally NOT a BAD-Command early return for
+  // ScaledSprite -- vidogl (vidogl.c:4785) and the graphics fallback path
+  // below both treat it as a 1x1 character pattern, used by some Saturn
+  // games as a solid-color filler over a scaled rect (e.g. the dialog-box
+  // chrome at end of a scene). Returning here regressed those scenes
+  // relative to vidogl. The compute hook and graphics path each apply
+  // their own (w==0 || h==0) -> 1 fallback below.
 
   sprite.dst = 0;
   sprite.blendmode = VDP1_COLOR_CL_REPLACE;
@@ -1369,10 +1834,88 @@ void Vdp1Renderer::ScaledSpriteDraw(u8 *ram, Vdp1 *regs, u8 *back_framebuffer) {
   else
     cmd.CMDYD &= ~(0xE000);
 
+  // Compute mode hook (Plan 2 F12). Resolve the CMDCTRL zoom-point bits
+  // into 4 explicit vertices (Saturn standard order) without adding
+  // localX/localY -- the state machine inside Vdp1ComputeRasterizer
+  // applies local coord during appendCommand. We mirror the zoom switch
+  // below so compute and graphics paths agree on geometry; only the
+  // local-coord baseline differs.
+  if (vulkan->getCurrentPolygonMode() == COMPUTE_RASTERIZER && vulkan->getVdp1Compute()) {
+    int xc = (s16)cmd.CMDXA;
+    int yc = (s16)cmd.CMDYA;
+    int w = ((cmd.CMDSIZE >> 8) & 0x3F) * 8;
+    int h = cmd.CMDSIZE & 0xFF;
+    // CMDSIZE == 0 fallback (mirrors vidogl.c:4785). Sprite samples a
+    // single texel from CMDSRCA which the shader stretches over the full
+    // destination rect -- equivalent to a uniform-color quad.
+    if (w == 0 || h == 0) {
+      w = 1;
+      h = 1;
+    }
+    // Cell-inclusive vertices: pass raw CMDXA..CMDXC (zoom mode 0) / CMDXB
+    // (zoom mode 5+) without any +1 trick. The compute shader (forward and
+    // tile_shade) extends BR by 1 Saturn cell so the last cell on the +X/+Y
+    // screen-space edge is fully covered. Same convention as
+    // DistortedSpriteDraw (Phase 2B 2026-05-08: "removed the +1 vertex
+    // trick"). Vidogl / vidsoft apply +1 because their OpenGL / scanline
+    // rasterizers treat the BR vertex as the EXCLUSIVE end of the half-open
+    // quad; the compute path's strict-inside test + per-axis BR dilation
+    // expresses cell coverage geometrically and would double-extend if we
+    // also added +1 here -- visible as the last texel row/column rendered
+    // twice on shrunk scaled sprites (e.g. cmd 21 in NiGHTS title flag).
+    //
+    // Negative rw/rh is also Saturn-legal: 2-point zoom with CMDXC<CMDXA
+    // (or CMDYC<CMDYA) means horizontally / vertically flipped. The
+    // reversed-winding quad is rendered by the inverseBilinear UV solver
+    // with mirrored s/t naturally; no extra shift is needed.
+    int rw = 0, rh = 0;
+    switch ((cmd.CMDCTRL & 0xF00) >> 8) {
+      case 0x0: rw = (s16)cmd.CMDXC - xc; rh = (s16)cmd.CMDYC - yc; break;
+      case 0x5: rw = (s16)cmd.CMDXB;     rh = (s16)cmd.CMDYB;     break;
+      case 0x6: rw = (s16)cmd.CMDXB;     rh = (s16)cmd.CMDYB;     xc -= rw / 2; break;
+      case 0x7: rw = (s16)cmd.CMDXB;     rh = (s16)cmd.CMDYB;     xc -= rw;     break;
+      case 0x9: rw = (s16)cmd.CMDXB;     rh = (s16)cmd.CMDYB;     yc -= rh / 2; break;
+      case 0xA: rw = (s16)cmd.CMDXB;     rh = (s16)cmd.CMDYB;     xc -= rw / 2; yc -= rh / 2; break;
+      case 0xB: rw = (s16)cmd.CMDXB;     rh = (s16)cmd.CMDYB;     xc -= rw;     yc -= rh / 2; break;
+      case 0xD: rw = (s16)cmd.CMDXB;     rh = (s16)cmd.CMDYB;     yc -= rh;     break;
+      case 0xE: rw = (s16)cmd.CMDXB;     rh = (s16)cmd.CMDYB;     xc -= rw / 2; yc -= rh;     break;
+      case 0xF: rw = (s16)cmd.CMDXB;     rh = (s16)cmd.CMDYB;     xc -= rw;     yc -= rh;     break;
+      default: break;
+    }
+    const float sX = computeFbScaleX();
+    const float sY = computeFbScaleY();
+    auto sxF = [this, sX](int v) -> int { return (int)((float)v * vdp1wratio * sX); };
+    auto syF = [this, sY](int v) -> int { return (int)((float)v * vdp1hratio * sY); };
+    std::array<glm::ivec2, 4> verts = {{
+      glm::ivec2(sxF(xc),      syF(yc)),
+      glm::ivec2(sxF(xc + rw), syF(yc)),
+      glm::ivec2(sxF(xc + rw), syF(yc + rh)),
+      glm::ivec2(sxF(xc),      syF(yc + rh))
+    }};
+    glm::uvec2 charSize(static_cast<uint32_t>(w), static_cast<uint32_t>(h));
+    u16 pmod  = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x4);
+    u32 flipBits = (cmd.CMDCTRL >> 4) & 0x3;
+    u32 gouraudAddr = ((u32)T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x1C)) << 3;
+    Vdp1Cmd vc{};
+    u16 color = fillComputeVdp2Attrs(&cmd, vc);
+    auto encoded = vdp1c::encodeScaledSprite(verts, cmd.CMDSRCA, charSize, color, pmod,
+                                             glm::ivec2(0, 0), flipBits, gouraudAddr);
+    encoded.priority  = vc.priority;
+    encoded.colorcl   = vc.colorcl;
+    encoded.vdp2Attrs = vc.vdp2Attrs;
+    vulkan->getVdp1Compute()->appendCommand(encoded);
+    return;
+  }
+
   x = cmd.CMDXA + localX;
   y = cmd.CMDYA + localY;
   sprite.w = ((cmd.CMDSIZE >> 8) & 0x3F) * 8;
   sprite.h = cmd.CMDSIZE & 0xFF;
+  // CMDSIZE == 0 -> 1x1 fallback, mirroring vidogl.c:4785.
+  if (cmd.CMDSIZE == 0) {
+    sprite.w = 1;
+    sprite.h = 1;
+  }
   sprite.flip = (cmd.CMDCTRL & 0x30) >> 4;
 
   // Setup Zoom Point
@@ -1586,6 +2129,60 @@ void Vdp1Renderer::DistortedSpriteDraw(u8 *ram, Vdp1 *regs, u8 *back_framebuffer
   Vdp1ReadCommand(&cmd, Vdp1Regs->addr, Vdp1Ram);
   if (cmd.CMDSIZE == 0) {
     return; // BAD Command
+  }
+
+  // Compute mode hook (Plan 2B-5)
+  if (vulkan->getCurrentPolygonMode() == COMPUTE_RASTERIZER && vulkan->getVdp1Compute()) {
+    auto sext12 = [](u16 v) -> s16 {
+        return (v & 0x1000) ? (s16)(v | 0xE000) : (s16)(v & ~0xE000);
+    };
+    // Compute mode writes physical pixel coords; scale Saturn coords so that
+    // the entire offscreen image gets covered (graphics mode uses an
+    // orthographic projection for the same effect).
+    const float sX = computeFbScaleX();
+    const float sY = computeFbScaleY();
+    glm::uvec2 charSize(((cmd.CMDSIZE >> 8) & 0x3F) * 8, cmd.CMDSIZE & 0xFF);
+    if (charSize.x == 0 || charSize.y == 0) return;
+    glm::vec2 A((float)(s16)cmd.CMDXA, (float)sext12(cmd.CMDYA));
+    glm::vec2 B((float)(s16)cmd.CMDXB, (float)sext12(cmd.CMDYB));
+    glm::vec2 C((float)(s16)cmd.CMDXC, (float)sext12(cmd.CMDYC));
+    glm::vec2 D((float)(s16)cmd.CMDXD, (float)sext12(cmd.CMDYD));
+
+    // Spec 2026-05-08 Phase 2B: removed the +1 vertex trick. Saturn's
+    // cell-inclusive convention (vertex_range = charSize - 1 cells) is
+    // absorbed inside the forward shader by applying an edge-direction
+    // extension. Doing axis-aligned / isSquare detection on the host
+    // had a latent bug: rotated orthogonal quads were misclassified and
+    // got an unnatural +1 along x or y. We now pass raw Saturn verts and
+    // let the shader extend the BR side by one cell when
+    // cmdType == DISTORTED_SPRITE, using
+    // edge_u = (v1-v0)/(charSize.x-1) and edge_v = (v3-v0)/(charSize.y-1).
+
+    auto sxF = [this, sX](float v) -> int { return (int)(v * vdp1wratio * sX); };
+    auto syF = [this, sY](float v) -> int { return (int)(v * vdp1hratio * sY); };
+    std::array<glm::ivec2, 4> verts = {{
+        glm::ivec2(sxF(A.x), syF(A.y)),
+        glm::ivec2(sxF(B.x), syF(B.y)),
+        glm::ivec2(sxF(C.x), syF(C.y)),
+        glm::ivec2(sxF(D.x), syF(D.y))
+    }};
+    u16 pmod  = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x4);
+    // CMDCTRL bits 4-5: bit4=Hflip, bit5=Vflip
+    u32 flipBits = (cmd.CMDCTRL >> 4) & 0x3;
+    u32 gouraudAddr = ((u32)T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x1C)) << 3;
+    Vdp1Cmd vc{};
+    u16 color = fillComputeVdp2Attrs(&cmd, vc);
+    // inclusiveVerts defaults to false. The forward shader (default in
+    // Phase 1C) produces cell-inclusive coverage from raw vertices via its
+    // lerp denominator. The tile_shade fallback path still consults
+    // inclusiveVerts/DILATE flags for its per-pixel pull rasterizer, but
+    // the fallback is debug-only (useForwardMapping=false).
+    auto encoded = vdp1c::encodeDistortedSprite(verts, cmd.CMDSRCA, charSize, color, pmod, glm::ivec2(0, 0), flipBits, gouraudAddr);
+    encoded.priority  = vc.priority;
+    encoded.colorcl   = vc.colorcl;
+    encoded.vdp2Attrs = vc.vdp2Attrs;
+    vulkan->getVdp1Compute()->appendCommand(encoded);
+    return;
   }
 
   sprite.blendmode = VDP1_COLOR_CL_REPLACE;
@@ -1830,6 +2427,17 @@ void Vdp1Renderer::DistortedSpriteDraw(u8 *ram, Vdp1 *regs, u8 *back_framebuffer
 }
 
 void Vdp1Renderer::SystemClipping(u8 *ram, Vdp1 *regs) {
+  if (vulkan->getCurrentPolygonMode() == COMPUTE_RASTERIZER && vulkan->getVdp1Compute()) {
+    Vdp1Regs->systemclipX1 = 0;
+    Vdp1Regs->systemclipY1 = 0;
+    Vdp1Regs->systemclipX2 = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x14);
+    Vdp1Regs->systemclipY2 = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x16);
+    // Store RAW Saturn coords; applyState scales by the current HD factor
+    // (issue #106 -- resolution-independent persistent state).
+    vulkan->getVdp1Compute()->setSystemClip((s16)Vdp1Regs->systemclipX2,
+                                            (s16)Vdp1Regs->systemclipY2);
+    return;
+  }
 
   YglSprite sprite = {};
 
@@ -1862,6 +2470,19 @@ void Vdp1Renderer::SystemClipping(u8 *ram, Vdp1 *regs) {
 }
 
 void Vdp1Renderer::UserClipping(u8 *ram, Vdp1 *regs) {
+  if (vulkan->getCurrentPolygonMode() == COMPUTE_RASTERIZER && vulkan->getVdp1Compute()) {
+    Vdp1Regs->userclipX1 = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0xC);
+    Vdp1Regs->userclipY1 = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0xE);
+    Vdp1Regs->userclipX2 = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x14);
+    Vdp1Regs->userclipY2 = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x16);
+    // Store RAW Saturn coords; applyState scales by the current HD factor
+    // (issue #106 -- resolution-independent persistent state).
+    vulkan->getVdp1Compute()->setUserClip((s16)Vdp1Regs->userclipX1,
+                                          (s16)Vdp1Regs->userclipY1,
+                                          (s16)Vdp1Regs->userclipX2,
+                                          (s16)Vdp1Regs->userclipY2);
+    return;
+  }
 
   YglSprite sprite = {};
 
@@ -1894,6 +2515,49 @@ void Vdp1Renderer::UserClipping(u8 *ram, Vdp1 *regs) {
 }
 
 void Vdp1Renderer::PolygonDraw(u8 *ram, Vdp1 *regs, u8 *back_framebuffer) {
+
+  if (vulkan->getCurrentPolygonMode() == COMPUTE_RASTERIZER && vulkan->getVdp1Compute()) {
+    // Read CMDXA..CMDXD from VDP1 RAM and pack into a Vdp1Cmd.
+    vdp1cmd_struct cmd;
+    Vdp1ReadCommand(&cmd, Vdp1Regs->addr, Vdp1Ram);
+    // Same as the existing graphics PolygonDraw:
+    //   Y uses 12-bit sign-extension; X is just an (s16) cast.
+    //   (X is positive in real games; only Y uses a negative offset.)
+    auto sext12y = [](u16 v) -> s16 {
+        return (v & 0x1000) ? (s16)(v | 0xE000) : (s16)(v & ~0xE000);
+    };
+    const float sX = computeFbScaleX();
+    const float sY = computeFbScaleY();
+    // The Saturn-cell-inclusive -> fb-pixel-exclusive conversion is done
+    // in the shader (per-edge dilation in insideStrict / insideTriangle /
+    // insideOrOnEdge plus applyState's bbox dilation). The old approach
+    // of adding +1 along B-A / D-A on the vertex side broke for triangles,
+    // degenerate quads, and twisted quads where A's role was ambiguous,
+    // so it was abandoned.
+    glm::vec2 A((float)(s16)cmd.CMDXA, (float)sext12y(cmd.CMDYA));
+    glm::vec2 B((float)(s16)cmd.CMDXB, (float)sext12y(cmd.CMDYB));
+    glm::vec2 C((float)(s16)cmd.CMDXC, (float)sext12y(cmd.CMDYC));
+    glm::vec2 D((float)(s16)cmd.CMDXD, (float)sext12y(cmd.CMDYD));
+    auto sxF = [this, sX](float v) -> int { return (int)(v * vdp1wratio * sX); };
+    auto syF = [this, sY](float v) -> int { return (int)(v * vdp1hratio * sY); };
+    std::array<glm::ivec2, 4> verts = {{
+        glm::ivec2(sxF(A.x), syF(A.y)),
+        glm::ivec2(sxF(B.x), syF(B.y)),
+        glm::ivec2(sxF(C.x), syF(C.y)),
+        glm::ivec2(sxF(D.x), syF(D.y))
+    }};
+    u16 pmod  = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x4);
+    u32 gouraudAddr = ((u32)T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x1C)) << 3;
+    Vdp1Cmd attrs{};
+    u16 color = fillComputeVdp2Attrs(&cmd, attrs);
+    Vdp1Cmd vc = vdp1c::encodePolygon(
+        verts, glm::ivec2(0, 0), color, pmod, gouraudAddr);
+    vc.priority  = attrs.priority;
+    vc.colorcl   = attrs.colorcl;
+    vc.vdp2Attrs = attrs.vdp2Attrs;
+    vulkan->getVdp1Compute()->appendCommand(vc);
+    return;   // skip the legacy vertex pipeline
+  }
 
   u16 color;
   u16 CMDPMOD;
@@ -2307,16 +2971,16 @@ void Vdp1Renderer::genClearPipeline() {
   std::string hashval = std::to_string(hash_value);
   string file_path = mempath + hashval + ".spv";
 
-  // バイナリファイルを読み込む
+  // Load the binary file.
   std::ifstream file(file_path, std::ios::binary);
   if (file) {
 
-    // ファイルサイズを取得する
+    // Query the file size.
     file.seekg(0, std::ios::end);
     std::size_t file_size = file.tellg();
     file.seekg(0, std::ios::beg);
 
-    // ファイルの内容を読み込む
+    // Read the file contents.
     fshaderData.resize(file_size / sizeof(uint32_t));
     file.read(reinterpret_cast<char*>(fshaderData.data()), file_size);
     file.close();
@@ -2340,10 +3004,10 @@ void Vdp1Renderer::genClearPipeline() {
       throw std::runtime_error("failed to create shader module!");
     }
 
-    // データを書き込む
+    // Write the payload.
     file.write(reinterpret_cast<char*>(fshaderData.data()), fshaderData.size() * sizeof(uint32_t));
 
-    // ファイルを閉じる
+    // Close the file.
     file.close();
   }
 //#endif
@@ -2636,6 +3300,44 @@ void Vdp1Renderer::PolylineDraw(u8 *ram, Vdp1 *regs, u8 *back_framebuffer) {
   polygon.blendmode = VDP1_COLOR_CL_REPLACE;
   polygon.linescreen = 0;
   polygon.dst = 0;
+
+  // Compute mode hook (Plan 2 F12). State machine handles localCoord, so
+  // we read the 4 raw vertices and let appendCommand bake in the offset.
+  // Y is sign-extended (12-bit) like other VDP1 commands; X uses a plain
+  // s16 cast (Saturn games rarely use negative X for Polyline).
+  if (vulkan->getCurrentPolygonMode() == COMPUTE_RASTERIZER && vulkan->getVdp1Compute()) {
+    auto sext12y = [](u16 v) -> s16 {
+      return (v & 0x1000) ? (s16)(v | 0xE000) : (s16)(v & ~0xE000);
+    };
+    const float sX = computeFbScaleX();
+    const float sY = computeFbScaleY();
+    auto sxF = [this, sX](s16 v) -> int { return (int)((float)v * vdp1wratio * sX); };
+    auto syF = [this, sY](s16 v) -> int { return (int)((float)v * vdp1hratio * sY); };
+    std::array<glm::ivec2, 4> verts = {{
+      glm::ivec2(sxF((s16)T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x0C)),
+                 syF(sext12y(T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x0E)))),
+      glm::ivec2(sxF((s16)T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x10)),
+                 syF(sext12y(T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x12)))),
+      glm::ivec2(sxF((s16)T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x14)),
+                 syF(sext12y(T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x16)))),
+      glm::ivec2(sxF((s16)T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x18)),
+                 syF(sext12y(T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x1A))))
+    }};
+    u16 pmod   = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x4);
+    u32 gouraudAddr = ((u32)T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x1C)) << 3;
+    // Polyline does not have CMDSRCA/CMDSIZE so readPriority is happy with
+    // just CMDCOLR + CMDPMOD; we still need a populated vdp1cmd_struct.
+    Vdp1ReadCommand(&cmd, Vdp1Regs->addr, Vdp1Ram);
+    Vdp1Cmd attrs{};
+    u16 colorW = fillComputeVdp2Attrs(&cmd, attrs);
+    auto vc = vdp1c::encodePolyline(verts, colorW, pmod, glm::ivec2(0, 0), gouraudAddr);
+    vc.priority  = attrs.priority;
+    vc.colorcl   = attrs.colorcl;
+    vc.vdp2Attrs = attrs.vdp2Attrs;
+    vulkan->getVdp1Compute()->appendCommand(vc);
+    return;
+  }
+
   v[0] = localX + (T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x0C));
   v[1] = localY + (T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x0E));
   v[2] = localX + (T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x10));
@@ -2896,6 +3598,33 @@ void Vdp1Renderer::LineDraw(u8 *ram, Vdp1 *regs, u8 *back_framebuffer) {
   polygon.blendmode = VDP1_COLOR_CL_REPLACE;
   polygon.linescreen = 0;
   polygon.dst = 0;
+
+  // Compute mode hook (Plan 2 F12). State machine handles localCoord.
+  if (vulkan->getCurrentPolygonMode() == COMPUTE_RASTERIZER && vulkan->getVdp1Compute()) {
+    auto sext12y = [](u16 v) -> s16 {
+      return (v & 0x1000) ? (s16)(v | 0xE000) : (s16)(v & ~0xE000);
+    };
+    const float sX = computeFbScaleX();
+    const float sY = computeFbScaleY();
+    auto sxF = [this, sX](s16 v) -> int { return (int)((float)v * vdp1wratio * sX); };
+    auto syF = [this, sY](s16 v) -> int { return (int)((float)v * vdp1hratio * sY); };
+    glm::ivec2 v0(sxF((s16)T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x0C)),
+                  syF(sext12y(T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x0E))));
+    glm::ivec2 v1(sxF((s16)T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x10)),
+                  syF(sext12y(T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x12))));
+    u16 pmod   = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x4);
+    u32 gouraudAddr = ((u32)T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x1C)) << 3;
+    Vdp1ReadCommand(&cmd, Vdp1Regs->addr, Vdp1Ram);
+    Vdp1Cmd attrs{};
+    u16 colorW = fillComputeVdp2Attrs(&cmd, attrs);
+    auto vc = vdp1c::encodeLine(v0, v1, colorW, pmod, glm::ivec2(0, 0), gouraudAddr);
+    vc.priority  = attrs.priority;
+    vc.colorcl   = attrs.colorcl;
+    vc.vdp2Attrs = attrs.vdp2Attrs;
+    vulkan->getVdp1Compute()->appendCommand(vc);
+    return;
+  }
+
   v[0] = localX + (T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x0C));
   v[1] = localY + (T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x0E));
   v[2] = localX + (T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x10));
@@ -2973,8 +3702,58 @@ void Vdp1Renderer::LineDraw(u8 *ram, Vdp1 *regs, u8 *back_framebuffer) {
 }
 
 void Vdp1Renderer::LocalCoordinate(u8 *ram, Vdp1 *regs) {
+  if (vulkan->getCurrentPolygonMode() == COMPUTE_RASTERIZER && vulkan->getVdp1Compute()) {
+    auto sext12 = [](u16 v) -> s16 {
+        return (v & 0x1000) ? (s16)(v | 0xE000) : (s16)(v & ~0xE000);
+    };
+    u16 cmdxa = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0xC);
+    u16 cmdya = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0xE);
+    // Store RAW Saturn coords; applyState scales by the current HD factor.
+    // Keeping the persistent state resolution-independent fixes the shift
+    // after a resolution change when the game omits LocalCoordinate on a
+    // later frame (issue #106).
+    vulkan->getVdp1Compute()->setLocalCoord(sext12(cmdxa), sext12(cmdya));
+    return;
+  }
   localX = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0xC);
   localY = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0xE);
+}
+
+// F18: Bake VDP2 sprite-priority / color-calc / shadow / sprite-window
+// metadata into the compute command. This is what the CPU's readTexture path
+// passes to VDP1COLOR(...) when filling the offscreen framebuffer; the
+// compute shader needs the same fields so the FB reader (yglshaderes.c
+// `Yglprg_vdp2_drawfb_cram_vulkan_f`) can decode priority slot, alpha index,
+// shadow bit and sprite-window bit from the alpha+B bytes. NOTE:
+// readPriority MUTATES cmd->CMDCOLR for sprite types 0-7 (strips the
+// priority/colorcl bits that overlap colorBank); callers must re-read the
+// (mutated) CMDCOLR for the encode color argument.
+uint16_t Vdp1Renderer::fillComputeVdp2Attrs(vdp1cmd_struct *cmd, Vdp1Cmd &vc) {
+  int priority = 0;
+  int colorcl = 0;
+  int normal_shadow = 0;
+  readPriority(cmd, &priority, &colorcl, &normal_shadow);
+
+  bool msbShadow = (cmd->CMDPMOD & 0x8000u) != 0u;
+  bool spriteWindow = false;
+  // Mirrors readTexture's sprite-window gating exactly (Vdp1Renderer.cpp
+  // ~3739): SPCTL bit 4 enabled, sprite type 2..7, CMDCOLR bit 15, color mode
+  // not LUT (1) and not 16bpp (5). Sprite window suppresses MSB shadow.
+  if ((fixVdp2Regs->SPCTL & 0x10) &&
+      ((fixVdp2Regs->SPCTL & 0xF) >= 2 && (fixVdp2Regs->SPCTL & 0xF) < 8) &&
+      (cmd->CMDCOLR & 0x8000) &&
+      (((cmd->CMDPMOD >> 3) & 0x7) != 1 && ((cmd->CMDPMOD >> 3) & 0x7) != 5)) {
+    spriteWindow = true;
+    msbShadow = false;
+  }
+
+  vc.priority = static_cast<uint32_t>(priority & 0x7);
+  vc.colorcl  = static_cast<uint32_t>(colorcl & 0x7);
+  uint32_t attrs = 0u;
+  if (msbShadow)    attrs |= VDP1C_ATTR_MSB_SHADOW;
+  if (spriteWindow) attrs |= VDP1C_ATTR_SPRITE_WINDOW;
+  vc.vdp2Attrs = (static_cast<uint32_t>(normal_shadow) & 0xFFFFu) | (attrs << 16);
+  return cmd->CMDCOLR;
 }
 
 void Vdp1Renderer::readPriority(vdp1cmd_struct *cmd, int *priority, int *colorcl, int *normal_shadow) {
@@ -3751,7 +4530,7 @@ u32 Vdp1Renderer::readPolygonColor(vdp1cmd_struct *cmd) {
 VkImageView Vdp1Renderer::getFrameBufferImage() {
   blitCpuWrittenFramebuffer(readframe);
   VkDevice device = vulkan->getDevice();
-#if 0    
+#if 0
     while( offscreenPass.color[readframe].renderFences.size() > 0 ){
       ErrorCheck( vkWaitForFences( device, 1, &offscreenPass.color[readframe].renderFences.front() , VK_TRUE, UINT64_MAX ) );
       vkDestroyFence(device, offscreenPass.color[readframe].renderFences.front(), nullptr);
@@ -3759,6 +4538,19 @@ VkImageView Vdp1Renderer::getFrameBufferImage() {
     }
 #endif
   return offscreenPass.color[readframe].view;
+}
+
+// Debug UI helper: return the offscreen image / view that the compute
+// rasterizer writes into for the current frame. drawframe is the slot that
+// drawEnd()'s compute dispatch targets (see compute->dispatch(...
+// offscreenPass.color[drawframe].image, offscreenPass.color[drawframe].view)
+// in Vdp1Renderer::drawEnd()).
+VkImage Vdp1Renderer::getCurrentOffscreenImage() const {
+  return offscreenPass.color[drawframe].image;
+}
+
+VkImageView Vdp1Renderer::getCurrentOffscreenImageView() const {
+  return offscreenPass.color[drawframe].view;
 }
 
 
@@ -4038,6 +4830,7 @@ void Vdp1Renderer::readFrameBuffer(u32 type, u32 addr, void *out) {
 
   const int Line = y;
   const int Pix = x;
+
   if (cpuFramebufferWriteCount[drawframe] || (Pix >= Vdp1Regs->systemclipX2 || Line >= Vdp1Regs->systemclipY2)) {
     switch (type) {
     case 0:
@@ -4117,7 +4910,6 @@ void Vdp1Renderer::readFrameBuffer(u32 type, u32 addr, void *out) {
 
         // Create the image
         VK_CHECK_RESULT(vkCreateImage(device, &imageCreateCI, nullptr, &dstDeviceImage));
-        printf("dstDeviceImage = %llx\n", dstDeviceImage);
         vkDebugNameObject(device, VK_OBJECT_TYPE_IMAGE, (uint64_t)dstDeviceImage, "dstDeviceImage");
         // Create memory to back up the image
         VkMemoryRequirements memRequirements;
@@ -4149,7 +4941,6 @@ void Vdp1Renderer::readFrameBuffer(u32 type, u32 addr, void *out) {
 
       // Create the image
       VK_CHECK_RESULT(vkCreateImage(device, &imageCreateCI, nullptr, &dstImage));
-      printf("dstImage = %llx\n", dstImage);
       vkDebugNameObject(device, VK_OBJECT_TYPE_IMAGE, (uint64_t)dstImage, "dstImage");
       // Create memory to back up the image
       VkMemoryRequirements memRequirements;
@@ -4179,11 +4970,35 @@ void Vdp1Renderer::readFrameBuffer(u32 type, u32 addr, void *out) {
                                          VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                                          VkImageSubresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1});
 
-    // Transition swapchain image from present to transfer source layout
-    vks::tools::insertImageMemoryBarrier(cmdBuffer, srcImage, VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT,
-                                         VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                                         VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+    // Transition the offscreen color image from its tracked layout to
+    // TRANSFER_SRC. Hardcoding PRESENT_SRC_KHR as oldLayout was wrong:
+    // desktop drivers silently ignore the mismatch but Adreno/Mali treat it
+    // like UNDEFINED and discard image contents -- the same class of bug
+    // already noted in Vdp1ComputeRasterizer.cpp's layout switch.
+    VkImageLayout offscreenOldLayout = offscreenPass.color[drawframe].layout;
+    VkAccessFlags        offscreenSrcAccess = 0u;
+    VkPipelineStageFlags offscreenSrcStage  = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    switch (offscreenOldLayout) {
+      case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
+        offscreenSrcAccess = VK_ACCESS_SHADER_READ_BIT;
+        offscreenSrcStage  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        break;
+      case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
+        offscreenSrcAccess = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        offscreenSrcStage  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        break;
+      case VK_IMAGE_LAYOUT_GENERAL:
+        offscreenSrcAccess = VK_ACCESS_SHADER_WRITE_BIT;
+        offscreenSrcStage  = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+        break;
+      default:
+        break;
+    }
+    vks::tools::insertImageMemoryBarrier(cmdBuffer, srcImage, offscreenSrcAccess, VK_ACCESS_TRANSFER_READ_BIT,
+                                         offscreenOldLayout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                         offscreenSrcStage, VK_PIPELINE_STAGE_TRANSFER_BIT,
                                          VkImageSubresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1});
+    offscreenPass.color[drawframe].layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
 
     // Define the region to blit (we will blit the whole swapchain image)
     VkImageBlit imageBlitRegion{};
@@ -4208,10 +5023,12 @@ void Vdp1Renderer::readFrameBuffer(u32 type, u32 addr, void *out) {
                                          VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                                          VkImageSubresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1});
 
-    // Transition swapchain image from present to transfer source layout
+    // dstDeviceImage was just written by vkCmdBlitImage above, so its true
+    // layout is TRANSFER_DST_OPTIMAL -- not PRESENT_SRC_KHR. Same Adreno
+    // discard-on-mismatch hazard as the srcImage barrier above.
     vks::tools::insertImageMemoryBarrier(
-        cmdBuffer, dstDeviceImage, VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT,
-        VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        cmdBuffer, dstDeviceImage, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT,
         VK_PIPELINE_STAGE_TRANSFER_BIT, VkImageSubresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1});
 
     // Otherwise use image copy (requires us to manually flip components)
@@ -4339,6 +5156,45 @@ void Vdp1Renderer::blitCpuWrittenFramebuffer(int target) {
   cpuFramebufferWriteCount[target] = 0;
   // cpuFramebufferWriteCount[1] = 0;
 
+  // Consume the CPU-written dirty rect (Saturn fb pixel coords) up front and
+  // restrict the upload to that region. Blitting the whole cpuWriteBuffer
+  // used to overwrite every GPU-rendered pixel with mostly stale / empty
+  // data whenever the game CPU-wrote even a few words after the frame was
+  // rendered -- Shining Force III battle cutscenes write ~92 words per frame
+  // post-draw and the full blit wiped the completed compute frame to black
+  // at VDP2 sample time (getFrameBufferImage).
+  int dirtyX0 = cpuDirtyX0[target];
+  int dirtyY0 = cpuDirtyY0[target];
+  int dirtyX1 = cpuDirtyX1[target];  // exclusive
+  int dirtyY1 = cpuDirtyY1[target];  // inclusive
+  cpuDirtyX0[target] = 0x7FFFFFFF;
+  cpuDirtyY0[target] = 0x7FFFFFFF;
+  cpuDirtyX1[target] = -1;
+  cpuDirtyY1[target] = -1;
+  if (dirtyX1 < 0 || dirtyY1 < 0 || dirtyX0 >= dirtyX1) {
+    // No tracked rect (shouldn't happen when the counter was non-zero) --
+    // fall back to the legacy full blit rather than dropping the writes.
+    dirtyX0 = 0; dirtyY0 = 0; dirtyX1 = vdp2Width; dirtyY1 = vdp2Height - 1;
+  }
+  // Clamp to the intersection of the visible area (vdp2Width/Height) and the
+  // staging image (writeWidth/Height, sized below from the system clip).
+  // Games write FB rows beyond the display (scratch rows y >= 240); an
+  // unclamped rect produces negative blit offsets, which is undefined
+  // behavior and takes the device down (VK_ERROR_DEVICE_LOST on NVIDIA).
+  {
+    const int limW = (vdp2Width < Vdp1Regs->systemclipX2 + 1) ? vdp2Width : Vdp1Regs->systemclipX2 + 1;
+    const int limH = (vdp2Height < Vdp1Regs->systemclipY2 + 1) ? vdp2Height : Vdp1Regs->systemclipY2 + 1;
+    if (dirtyX0 < 0) dirtyX0 = 0;
+    if (dirtyY0 < 0) dirtyY0 = 0;
+    if (dirtyX1 > limW) dirtyX1 = limW;
+    if (dirtyY1 > limH - 1) dirtyY1 = limH - 1;
+  }
+  if (dirtyX0 >= dirtyX1 || dirtyY0 > dirtyY1) {
+    // Every written pixel is outside the displayed framebuffer area; nothing
+    // to overlay (counter already consumed above, no GPU work recorded).
+    return;
+  }
+
   VkImage dstImage = offscreenPass.color[target].image;
   if (writeImage == VK_NULL_HANDLE || writeWidth < Vdp1Regs->systemclipX2 + 1 ||
       writeHeight < Vdp1Regs->systemclipY2 + 1) {
@@ -4411,7 +5267,6 @@ void Vdp1Renderer::blitCpuWrittenFramebuffer(int target) {
 
       // Create the image
       VK_CHECK_RESULT(vkCreateImage(device, &imageCreateCI, nullptr, &writeImage));
-      printf("writeImage = %llx\n", writeImage);
       vkDebugNameObject(device, VK_OBJECT_TYPE_IMAGE, (uint64_t)writeImage, "writeImage");
       // Create memory to back up the image
       VkMemoryRequirements memRequirements;
@@ -4455,11 +5310,46 @@ void Vdp1Renderer::blitCpuWrittenFramebuffer(int target) {
   VkCommandBufferBeginInfo cmdBufInfo = vks::initializers::commandBufferBeginInfo();
   VK_CHECK_RESULT(vkBeginCommandBuffer(cmdBuffer, &cmdBufInfo));
 
-  // Transition destination image to transfer destination layout
-  vks::tools::insertImageMemoryBarrier(cmdBuffer, dstImage, 0, VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
-                                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                       VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                       VkImageSubresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1});
+  // Transition destination image to transfer destination layout.
+  // oldLayout must be the REAL tracked layout: UNDEFINED tells the driver it
+  // may discard the existing image content, but this blit now updates only
+  // the CPU-written sub-rect and relies on every other pixel (the
+  // GPU-rendered frame) surviving the transition.
+  {
+    VkImageLayout dstOldLayout = offscreenPass.color[target].layout;
+    VkAccessFlags        dstSrcAccess = 0u;
+    VkPipelineStageFlags dstSrcStage  = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    switch (dstOldLayout) {
+      case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
+        dstSrcAccess = VK_ACCESS_SHADER_READ_BIT;
+        dstSrcStage  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        break;
+      case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
+        dstSrcAccess = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        dstSrcStage  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        break;
+      case VK_IMAGE_LAYOUT_GENERAL:
+        dstSrcAccess = VK_ACCESS_SHADER_WRITE_BIT;
+        dstSrcStage  = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+        break;
+      case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
+        dstSrcAccess = VK_ACCESS_TRANSFER_WRITE_BIT;
+        dstSrcStage  = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        break;
+      case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
+        dstSrcAccess = VK_ACCESS_TRANSFER_READ_BIT;
+        dstSrcStage  = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        break;
+      default:
+        dstOldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        break;
+    }
+    vks::tools::insertImageMemoryBarrier(cmdBuffer, dstImage, dstSrcAccess, VK_ACCESS_TRANSFER_WRITE_BIT,
+                                         dstOldLayout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                         dstSrcStage, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                         VkImageSubresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1});
+    offscreenPass.color[target].layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  }
 
   // Transition swapchain image from present to transfer source layout
   vks::tools::insertImageMemoryBarrier(cmdBuffer, writeImage, VK_ACCESS_MEMORY_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT,
@@ -4467,18 +5357,50 @@ void Vdp1Renderer::blitCpuWrittenFramebuffer(int target) {
                                        VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                                        VkImageSubresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1});
 
-  // Define the region to blit (we will blit the whole swapchain image)
+  // Blit ONLY the CPU-written region (dirty rect consumed at function entry).
+  // writeImage stores Saturn line y at row (writeHeight-1-y) (bottom-up, same
+  // convention as the offscreen image), so the dirty rect's Y span maps to
+  // flipped rows.
+  const int dx0 = dirtyX0;
+  const int dy0 = dirtyY0;
+  const int dx1 = dirtyX1;                      // exclusive
+  const int dy1 = dirtyY1;                      // inclusive
+  const int srcY0 = writeHeight - 1 - dy1;      // flipped rows, inclusive top
+  const int srcY1 = writeHeight - dy0;          // exclusive bottom
+  // Destination rows must be flipped in DISPLAY space (vdp2Height), not in
+  // staging-image space. writeHeight comes from the system clip, which can be
+  // taller than the displayed framebuffer (Virtua Fighter 2 (PAL) sets the
+  // system clip to 704x512 while displaying 352x256); scaling the staging row
+  // index (srcY0 * sy) then pushes dstOffsets[0].y past the offscreen image
+  // height (e.g. 1132 > 600) -- an out-of-range blit offset is undefined
+  // behavior and takes the device down (VK_ERROR_DEVICE_LOST on NVIDIA).
+  // When writeHeight == vdp2Height this is identical to the old srcY math.
+  const int dstFlipY0 = vdp2Height - 1 - dy1;   // flipped display rows, inclusive top
+  const int dstFlipY1 = vdp2Height - dy0;       // exclusive bottom
+  const float sx = (float)offscreenPass.width / (float)vdp2Width;
+  const float sy = (float)offscreenPass.height / (float)vdp2Height;
+
   VkImageBlit imageBlitRegion{};
   imageBlitRegion.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
   imageBlitRegion.srcSubresource.layerCount = 1;
-  imageBlitRegion.srcOffsets[1].x = writeWidth * ((float)vdp2Width / (float)writeWidth);
-  imageBlitRegion.srcOffsets[1].y = writeHeight * ((float)vdp2Height / (float)writeHeight);
+  imageBlitRegion.srcOffsets[0].x = dx0;
+  imageBlitRegion.srcOffsets[0].y = srcY0;
+  imageBlitRegion.srcOffsets[0].z = 0;
+  imageBlitRegion.srcOffsets[1].x = dx1;
+  imageBlitRegion.srcOffsets[1].y = srcY1;
   imageBlitRegion.srcOffsets[1].z = 1;
   imageBlitRegion.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
   imageBlitRegion.dstSubresource.layerCount = 1;
-  imageBlitRegion.dstOffsets[1].x = offscreenPass.width;
-  imageBlitRegion.dstOffsets[1].y = offscreenPass.height;
+  imageBlitRegion.dstOffsets[0].x = (int)(dx0 * sx);
+  imageBlitRegion.dstOffsets[0].y = (int)(dstFlipY0 * sy);
+  imageBlitRegion.dstOffsets[0].z = 0;
+  imageBlitRegion.dstOffsets[1].x = (int)ceilf(dx1 * sx);
+  imageBlitRegion.dstOffsets[1].y = (int)ceilf(dstFlipY1 * sy);
   imageBlitRegion.dstOffsets[1].z = 1;
+  if (imageBlitRegion.dstOffsets[1].x > offscreenPass.width)
+    imageBlitRegion.dstOffsets[1].x = offscreenPass.width;
+  if (imageBlitRegion.dstOffsets[1].y > offscreenPass.height)
+    imageBlitRegion.dstOffsets[1].y = offscreenPass.height;
 
   // Issue the blit command
   vkCmdBlitImage(cmdBuffer, writeImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dstImage,
@@ -4516,6 +5438,17 @@ void Vdp1Renderer::writeFrameBuffer(u32 type, u32 addr, u32 val) {
     break;
   }
 
+  // Track the CPU-written region (Saturn fb pixel coords, inclusive) so
+  // blitCpuWrittenFramebuffer() can restrict its copy to the touched area
+  // instead of stomping the whole GPU-rendered offscreen image. +1 on X
+  // covers the 2-pixel writes (32bit 16bpp stores / byte-pair 8bpp stores).
+  auto markCpuDirty = [&](int px, int py) {
+    if (px < cpuDirtyX0[drawframe]) cpuDirtyX0[drawframe] = px;
+    if (px + 1 > cpuDirtyX1[drawframe]) cpuDirtyX1[drawframe] = px + 1;
+    if (py < cpuDirtyY0[drawframe]) cpuDirtyY0[drawframe] = py;
+    if (py > cpuDirtyY1[drawframe]) cpuDirtyY1[drawframe] = py;
+  };
+
   int tvmode = (Vdp1Regs->TVMR & 0x7);
   switch (tvmode) {
   case 0: // 16bit 512x256
@@ -4536,6 +5469,7 @@ void Vdp1Renderer::writeFrameBuffer(u32 type, u32 addr, u32 val) {
     if (x >= cpuWidth || y >= cpuHeight) {
       return;
     }
+    markCpuDirty((int)x, (int)y);
     u32 texaddr = cpuWidth * (cpuHeight - y - 1) + x;
 
     switch (type) {
@@ -4592,6 +5526,7 @@ void Vdp1Renderer::writeFrameBuffer(u32 type, u32 addr, u32 val) {
     if (x >= cpuWidth || y >= cpuHeight) {
       return;
     }
+    markCpuDirty((int)x, (int)y);
     u32 texaddr = cpuWidth * (cpuHeight - y - 1) + x;
     switch (type) {
     case 0:
@@ -4624,6 +5559,7 @@ void Vdp1Renderer::writeFrameBuffer(u32 type, u32 addr, u32 val) {
     if (x >= cpuWidth || y >= cpuHeight) {
       return;
     }
+    markCpuDirty((int)x, (int)y);
     u32 texaddr = cpuWidth * (cpuHeight - y - 1) + x;
     switch (type) {
     case 0:

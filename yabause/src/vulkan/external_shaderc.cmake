@@ -1,5 +1,14 @@
 include(ExternalProject)
 
+# Keep the desktop-built shaderc in step with the Android NDK snapshot rather
+# than the much older upstream v2020.x release. Android NDK r29 is 29.0.14033849.
+set(SHADERC_GIT_REPOSITORY
+    "https://android.googlesource.com/platform/external/shaderc/shaderc"
+    CACHE STRING "shaderc repository used by the Vulkan runtime compiler")
+set(SHADERC_GIT_TAG
+    "ndk-r29"
+    CACHE STRING "shaderc revision/tag, aligned with Android NDK")
+
 if(ANDROID)
 get_filename_component(TOOL_CHAIN_ABSOLUTE_PATH "${CMAKE_TOOLCHAIN_FILE}"
                        REALPATH BASE_DIR "${CMAKE_BINARY_DIR}")
@@ -18,8 +27,8 @@ endif()
 ExternalProject_Add(
     shaderc 
     PREFIX shaderc
-    GIT_REPOSITORY https://github.com/google/shaderc.git
-    GIT_TAG v2020.5
+    GIT_REPOSITORY ${SHADERC_GIT_REPOSITORY}
+    GIT_TAG ${SHADERC_GIT_TAG}
     CMAKE_ARGS
         -DSHADERC_SKIP_INSTALL=OFF
         -DSHADERC_SKIP_TESTS=ON

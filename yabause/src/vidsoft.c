@@ -4091,7 +4091,9 @@ void VIDSoftVdp2SetResolution(u16 TVMD)
       case 2:
          rbg0height = vdp2height = 256;
          break;
-      default: break;
+      default:
+         rbg0height = vdp2height = 256;
+         break;
    }
 
    // Check for interlace

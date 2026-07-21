@@ -18,20 +18,36 @@
     along with YabaSanshiro; if not, write to the Free Software
     Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 -->
-<androidx.drawerlayout.widget.DrawerLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
-    xmlns:tools="http://schemas.android.com/tools"
-    android:id="@+id/drawer_layout_game_select"
+    android:id="@+id/parent"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000"
-    tools:openDrawer="start"
-    >
+    android:background="#000000">
+
+    <com.google.android.material.navigationrail.NavigationRailView
+        android:id="@+id/navigation_rail"
+        android:layout_width="wrap_content"
+        android:layout_height="0dp"
+        android:background="@color/colorPrimaryDark"
+        app:menu="@menu/bottom_navigation_menu"
+        app:labelVisibilityMode="labeled"
+        app:itemIconTint="@color/bottom_nav_item_color"
+        app:itemTextColor="@color/bottom_nav_item_color"
+        app:menuGravity="center"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        android:nextFocusRight="@id/recycler_view_games" />
 
     <androidx.coordinatorlayout.widget.CoordinatorLayout
-        android:id="@+id/parent"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent">
+        android:id="@+id/content_container"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        app:layout_constraintStart_toEndOf="@id/navigation_rail"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent">
 
         <com.google.android.material.appbar.AppBarLayout
             android:id="@+id/main_appbar"
@@ -60,11 +76,11 @@
             app:layout_behavior="@string/appbar_scrolling_view_behavior">
 
             <LinearLayout
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="0.8"
-            android:orientation="vertical"
-            android:padding="0dp">
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="0.8"
+                android:orientation="vertical"
+                android:padding="0dp">
 
                 <LinearLayout
                     android:layout_width="match_parent"
@@ -105,13 +121,13 @@
 
                 </LinearLayout>
 
-
-            <!-- Game list area (slimmer) -->
+                <!-- Game list area -->
                 <androidx.recyclerview.widget.RecyclerView
                     android:id="@+id/recycler_view_games"
                     android:layout_width="match_parent"
                     android:layout_height="match_parent"
-                    android:background="@color/default_background" />
+                    android:background="@color/default_background"
+                    android:nextFocusLeft="@id/navigation_rail" />
 
             </LinearLayout>
 
@@ -119,21 +135,18 @@
                 android:id="@+id/empty_message_parent"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
-                android:layout_above="@id/fab"
                 android:isScrollContainer="false"
                 android:padding="16dp"
-                android:layout_marginBottom="110dp"
                 app:layout_behavior="@string/appbar_scrolling_view_behavior">
 
                 <TextView
                     android:id="@+id/empty_message"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/welcome" />
+                    android:text="" />
             </ScrollView>
 
-
-            <!-- Game info area (new middle section) -->
+            <!-- Game info area -->
             <LinearLayout
                 android:id="@+id/game_info_section"
                 android:layout_width="0dp"
@@ -162,7 +175,6 @@
                         android:textColor="@color/colorAccent"
                         android:textSize="14sp" />
 
-
                     <!-- Play button -->
                     <ImageButton
                         android:id="@+id/play_game_button"
@@ -185,7 +197,7 @@
                         android:background="?attr/selectableItemBackgroundBorderless"
                         android:contentDescription="@string/game_menu"
                         app:srcCompat="@drawable/ic_more_vert_black_24dp"
-                        app:tint="@color/lb_default_brand_color" />
+                        app:tint="@color/colorAccent" />
 
                 </LinearLayout>
 
@@ -226,48 +238,20 @@
 
                 </FrameLayout>
 
-
             </LinearLayout>
 
         </LinearLayout>
 
+        <FrameLayout
+            android:id="@+id/ext_fragment"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
 
-        <com.google.android.material.floatingactionbutton.FloatingActionButton
-            android:id="@+id/fab"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="end|bottom"
-            android:src="@drawable/baseline_add_black_24"
-            android:contentDescription="@string/add_a_game"
-            android:layout_margin="16dp"
-            />
-
-
+        <include
+            android:id="@+id/llProgressBar"
+            android:visibility="gone"
+            layout="@layout/layout_progress_bar_with_text"/>
 
     </androidx.coordinatorlayout.widget.CoordinatorLayout>
 
-    <FrameLayout
-        android:id="@+id/ext_fragment"
-        android:layout_weight="2"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent" />
-
-
-
-    <include
-        android:id="@+id/llProgressBar"
-        android:visibility="gone"
-        layout="@layout/layout_progress_bar_with_text"/>
-
-    <com.google.android.material.navigation.NavigationView
-        android:id="@+id/nav_view"
-        android:layout_width="wrap_content"
-        android:layout_height="match_parent"
-        android:layout_gravity="start"
-        android:background="@color/lb_error_background_color_opaque"
-        android:fitsSystemWindows="false"
-        app:headerLayout="@layout/nav_header_main"
-        app:insetForeground="#0000"
-        app:menu="@menu/game_select_menu" />
-
-</androidx.drawerlayout.widget.DrawerLayout>
+</androidx.constraintlayout.widget.ConstraintLayout>

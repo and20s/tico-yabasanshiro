@@ -20,14 +20,11 @@ package org.uoyabause.android
 
 import androidx.room.ColumnInfo
 import androidx.room.Dao
-import androidx.room.Database
 import androidx.room.Entity
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
-import androidx.room.RoomDatabase
-import androidx.room.TypeConverters
 import androidx.room.Update
 import java.util.Date
 
@@ -70,8 +67,8 @@ data class GameStatus(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     @ColumnInfo(name = "product_number", index = true) var product_number: String = "",
     @ColumnInfo(name = "update_at") var update_at: Date? = null,
-    @ColumnInfo(name = "image_url") var image_url:String = "",
-    @ColumnInfo(name = "rating") var rating: Int = -1
+    @ColumnInfo(name = "image_url") var image_url: String = "",
+    @ColumnInfo(name = "rating") var rating: Int = -1,
 ) {
     constructor(product_number: String, update_at: Date, image_url: String, rating: Int) : this() {
         this.product_number = product_number

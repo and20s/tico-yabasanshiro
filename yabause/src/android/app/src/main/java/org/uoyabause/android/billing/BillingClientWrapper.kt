@@ -25,11 +25,13 @@ import com.android.billingclient.api.BillingClient
 import com.android.billingclient.api.BillingClientStateListener
 import com.android.billingclient.api.BillingFlowParams
 import com.android.billingclient.api.BillingResult
+import com.android.billingclient.api.PendingPurchasesParams
 import com.android.billingclient.api.ProductDetails
 import com.android.billingclient.api.ProductDetailsResponseListener
 import com.android.billingclient.api.Purchase
 import com.android.billingclient.api.PurchasesUpdatedListener
 import com.android.billingclient.api.QueryProductDetailsParams
+import com.android.billingclient.api.QueryProductDetailsResult
 import com.android.billingclient.api.QueryPurchasesParams
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -40,9 +42,9 @@ import kotlinx.coroutines.flow.asStateFlow
  *
  */
 class BillingClientWrapper(
-    context: Context
-) : PurchasesUpdatedListener, ProductDetailsResponseListener {
-
+    context: Context,
+) : PurchasesUpdatedListener,
+    ProductDetailsResponseListener {
     // New Subscription ProductDetails
     private val _productWithProductDetails =
         MutableStateFlow<Map<String, ProductDetails>>(emptyMap())
@@ -60,32 +62,35 @@ class BillingClientWrapper(
     val isNewPurchaseAcknowledged = _isNewPurchaseAcknowledged.asStateFlow()
 
     // Initialize the BillingClient.
-    private val billingClient = BillingClient.newBuilder(context)
-        .setListener(this)
-        .enablePendingPurchases()
-        .build()
+    private val billingClient =
+        BillingClient
+            .newBuilder(context)
+            .setListener(this)
+            .enablePendingPurchases(PendingPurchasesParams.newBuilder().enableOneTimeProducts().build())
+            .build()
 
     // Establish a connection to Google Play.
     fun startBillingConnection(billingConnectionState: MutableLiveData<Boolean>) {
-
-        billingClient.startConnection(object : BillingClientStateListener {
-            override fun onBillingSetupFinished(billingResult: BillingResult) {
-                if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
-                    Log.d(TAG, "Billing response OK")
-                    // The BillingClient is ready. You can query purchases and product details here
-                    queryPurchases()
-                    queryProductDetails()
-                    billingConnectionState.postValue(true)
-                } else {
-                    Log.e(TAG, billingResult.debugMessage)
+        billingClient.startConnection(
+            object : BillingClientStateListener {
+                override fun onBillingSetupFinished(billingResult: BillingResult) {
+                    if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
+                        Log.d(TAG, "Billing response OK")
+                        // The BillingClient is ready. You can query purchases and product details here
+                        queryPurchases()
+                        queryProductDetails()
+                        billingConnectionState.postValue(true)
+                    } else {
+                        Log.e(TAG, billingResult.debugMessage)
+                    }
                 }
-            }
 
-            override fun onBillingServiceDisconnected() {
-                Log.i(TAG, "Billing connection disconnected")
-                startBillingConnection(billingConnectionState)
-            }
-        })
+                override fun onBillingServiceDisconnected() {
+                    Log.i(TAG, "Billing connection disconnected")
+                    startBillingConnection(billingConnectionState)
+                }
+            },
+        )
     }
 
     // Query Google Play Billing for existing purchases.
@@ -96,15 +101,31 @@ class BillingClientWrapper(
         }
         // Query for existing subscription products that have been purchased.
         billingClient.queryPurchasesAsync(
-            QueryPurchasesParams.newBuilder().setProductType(BillingClient.ProductType.SUBS).build()
+            QueryPurchasesParams.newBuilder().setProductType(BillingClient.ProductType.SUBS).build(),
         ) { billingResult, purchaseList ->
             if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
                 if (!purchaseList.isNullOrEmpty()) {
                     _purchases.value = purchaseList
+                    for (purchase in purchaseList) {
+                        Log.i(
+                            TAG,
+                            "queryPurchases: products=${purchase.products}, " +
+                                "state=${purchase.purchaseState}, " +
+                                "acknowledged=${purchase.isAcknowledged}, " +
+                                "autoRenewing=${purchase.isAutoRenewing}",
+                        )
+                        // Acknowledge any unacknowledged purchases found on startup
+                        if (!purchase.isAcknowledged &&
+                            purchase.purchaseState == Purchase.PurchaseState.PURCHASED
+                        ) {
+                            Log.i(TAG, "queryPurchases: acknowledging unacknowledged purchase")
+                            acknowledgePurchases(purchase)
+                        }
+                    }
                 } else {
+                    Log.i(TAG, "queryPurchases: no purchases found")
                     _purchases.value = emptyList()
                 }
-
             } else {
                 Log.e(TAG, billingResult.debugMessage)
             }
@@ -116,12 +137,12 @@ class BillingClientWrapper(
         val params = QueryProductDetailsParams.newBuilder()
         val productList = mutableListOf<QueryProductDetailsParams.Product>()
         for (product in LIST_OF_PRODUCTS) {
-
             productList.add(
-                QueryProductDetailsParams.Product.newBuilder()
+                QueryProductDetailsParams.Product
+                    .newBuilder()
                     .setProductId(product)
                     .setProductType(BillingClient.ProductType.SUBS)
-                    .build()
+                    .build(),
             )
         }
         params.setProductList(productList).let { productDetailsParams ->
@@ -135,10 +156,11 @@ class BillingClientWrapper(
     // to [_productWithProductDetails].
     override fun onProductDetailsResponse(
         billingResult: BillingResult,
-        productDetailsList: MutableList<ProductDetails>
+        queryProductDetailsResult: QueryProductDetailsResult,
     ) {
         val responseCode = billingResult.responseCode
         val debugMessage = billingResult.debugMessage
+        val productDetailsList = queryProductDetailsResult.productDetailsList
         when (responseCode) {
             BillingClient.BillingResponseCode.OK -> {
                 var newMap = emptyMap<String, ProductDetails>()
@@ -146,14 +168,15 @@ class BillingClientWrapper(
                     Log.e(
                         TAG,
                         "onProductDetailsResponse: " +
-                                "Found null or empty ProductDetails. " +
-                                "Check to see if the Products you requested are correctly " +
-                                "published in the Google Play Console."
+                            "Found null or empty ProductDetails. " +
+                            "Check to see if the Products you requested are correctly " +
+                            "published in the Google Play Console.",
                     )
                 } else {
-                    newMap = productDetailsList.associateBy {
-                        it.productId
-                    }
+                    newMap =
+                        productDetailsList.associateBy {
+                            it.productId
+                        }
                 }
                 _productWithProductDetails.value = newMap
             }
@@ -164,21 +187,24 @@ class BillingClientWrapper(
     }
 
     // Launch Purchase flow
-    fun launchBillingFlow(activity: Activity, params: BillingFlowParams) {
+    fun launchBillingFlow(
+        activity: Activity,
+        params: BillingFlowParams,
+    ) {
         if (!billingClient.isReady) {
             Log.e(TAG, "launchBillingFlow: BillingClient is not ready")
+            return
         }
         billingClient.launchBillingFlow(activity, params)
-
     }
 
     // PurchasesUpdatedListener that helps handle new purchases returned from the API
     override fun onPurchasesUpdated(
         billingResult: BillingResult,
-        purchases: List<Purchase>?
+        purchases: List<Purchase>?,
     ) {
-        if (billingResult.responseCode == BillingClient.BillingResponseCode.OK
-            && !purchases.isNullOrEmpty()
+        if (billingResult.responseCode == BillingClient.BillingResponseCode.OK &&
+            !purchases.isNullOrEmpty()
         ) {
             // Post new purchase List to _purchases
             _purchases.value = purchases
@@ -199,17 +225,23 @@ class BillingClientWrapper(
     private fun acknowledgePurchases(purchase: Purchase?) {
         purchase?.let {
             if (!it.isAcknowledged) {
-                val params = AcknowledgePurchaseParams.newBuilder()
-                    .setPurchaseToken(it.purchaseToken)
-                    .build()
+                val params =
+                    AcknowledgePurchaseParams
+                        .newBuilder()
+                        .setPurchaseToken(it.purchaseToken)
+                        .build()
 
                 billingClient.acknowledgePurchase(
-                    params
+                    params,
                 ) { billingResult ->
                     if (billingResult.responseCode == BillingClient.BillingResponseCode.OK &&
                         it.purchaseState == Purchase.PurchaseState.PURCHASED
                     ) {
                         _isNewPurchaseAcknowledged.value = true
+                        // Re-query purchases to get updated isAcknowledged state
+                        queryPurchases()
+                    } else {
+                        Log.e(TAG, "acknowledgePurchase failed: ${billingResult.responseCode} ${billingResult.debugMessage}")
                     }
                 }
             }
@@ -226,9 +258,8 @@ class BillingClientWrapper(
         private const val TAG = "BillingClient"
 
         // List of subscription product offerings
-        private const val BASIC_SUB = "cloud_functions"
-        private const val PREMIUM_SUB = "up_premium_sub"
+        const val PRO_ANNUAL_SUB = "premium"
 
-        private val LIST_OF_PRODUCTS = listOf(BASIC_SUB)
+        private val LIST_OF_PRODUCTS = listOf(PRO_ANNUAL_SUB)
     }
 }

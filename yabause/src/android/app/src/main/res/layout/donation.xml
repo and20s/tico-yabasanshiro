@@ -88,15 +88,15 @@
 	    >
 
             <Button
-        	android:onClick="onDonate"
+		    android:id="@+id/btn_donate"
 		    android:layout_width="wrap_content"
-		    android:layout_height="wrap_content"        	
+		    android:layout_height="wrap_content"
         	android:text="@string/do_donation" />
-        	
+
     	<Button
-        	android:onClick="onDoNotDonate"
+		    android:id="@+id/btn_do_not_donate"
 		    android:layout_width="wrap_content"
-		    android:layout_height="wrap_content"        	
+		    android:layout_height="wrap_content"
         	android:text="@string/no_thank_you" />
 
 		</LinearLayout>

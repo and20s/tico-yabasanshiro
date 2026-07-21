@@ -17,6 +17,7 @@ extern "C"{
 #include "sndCoreAudio.h"
 #include "ygl.h"
 #include "chd.h"
+#include "../retroachievements/yabause_ra_integration_cwrapper.h"
 }
 
 #include <cstdio>
@@ -243,8 +244,8 @@ void update_pad_mode()
     }
 }
 
-extern "C" void onBackupWrite(const char *fname, char *before, char *after, int size);
-extern "C" void BiosSetOnBackupWrite(void (*callback)(const char *, char *, char *, int));
+extern "C" void onBackupWrite(const char *fname, int deviceId, char *before, char *after, int size);
+extern "C" void BiosSetOnBackupWrite(void (*callback)(const char *, int, char *, char *, int));
 
 int start_emulation( int originx, int originy, int width, int height ){
 	int i;
@@ -376,6 +377,10 @@ int start_emulation( int originx, int originy, int width, int height ){
     {
         SetOSDToggle(g_EnagleFPS);
         OSDDisplayMessages(NULL,0,0);
+        
+        // Process RetroAchievements frame update
+        YabauseRA_DoFrame();
+        
         swapAglBuffer();
 
     }
@@ -407,7 +412,10 @@ int start_emulation( int originx, int originy, int width, int height ){
                 break;
             case MSG_RESET:
                 YUI_LOG("MSG_RESET\n");
-                YabauseReset();
+                
+                // Use YabauseRA_Reset which handles both emulator reset and rc_client_reset
+                YabauseRA_Reset();
+                
                 break;
             case MSG_OPEN_TRAY:
                 YUI_LOG("MSG_OPEN_TRAY\n");
@@ -501,10 +509,10 @@ extern "C" {
   }
 
   // バックアップ書き込み時のコールバック
-  void onBackupWrite(const char *fname, char *before, char *after, int size) {
+  void onBackupWrite(const char *fname, int deviceId, char *before, char *after, int size) {
     // Objective-Cのメソッドを呼び出す
-    extern void YSOnBackupWrite(const char *fname, const void *before, const void *after, int size);
-    YSOnBackupWrite(fname, before, after, size);
+    extern void YSOnBackupWrite(const char *fname, int deviceId, const void *before, const void *after, int size);
+    YSOnBackupWrite(fname, deviceId, before, after, size);
   }
 
   //void glMemoryBarrier( int a ){

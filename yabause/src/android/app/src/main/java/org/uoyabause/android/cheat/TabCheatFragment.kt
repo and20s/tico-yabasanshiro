@@ -24,43 +24,35 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.fragment.app.Fragment
-import androidx.fragment.app.FragmentManager
-import androidx.fragment.app.FragmentStatePagerAdapter
-import androidx.viewpager.widget.ViewPager
+import androidx.viewpager2.adapter.FragmentStateAdapter
+import androidx.viewpager2.widget.ViewPager2
+import com.google.android.material.appbar.MaterialToolbar
 import com.google.android.material.tabs.TabLayout
-import java.util.ArrayList
-import java.util.HashSet
+import com.google.android.material.tabs.TabLayoutMediator
 import org.devmiyax.yabasanshiro.R
 import org.uoyabause.android.Yabause
-import org.uoyabause.android.cheat.CloudCheatItemFragment.Companion.newInstance
-import org.uoyabause.android.cheat.LocalCheatItemFragment.Companion.newInstance
+import java.util.ArrayList
 
-internal class ViewPagerAdapter(fm: FragmentManager?) : FragmentStatePagerAdapter(
-    fm!!) {
-    var gameid_: String? = null
-    fun setGmaeid(gameid: String?) {
-        gameid_ = gameid
+internal class CheatViewPagerAdapter(
+    fragment: Fragment,
+    private val gameId: String?,
+) : FragmentStateAdapter(fragment) {
+    override fun getItemCount(): Int = 2
+
+    override fun createFragment(position: Int): Fragment = when (position) {
+        PAGE_LOCAL -> LocalCheatItemFragment.newInstance(gameId, 1)
+        PAGE_CLOUD -> CloudCheatItemFragment.newInstance(gameId, 1)
+        else -> Fragment()
     }
 
-    override fun getItem(position: Int): Fragment {
-        when (position) {
-            PAGE_LOCAL -> return LocalCheatItemFragment.newInstance(gameid_, 1)
-            PAGE_CLOUD -> return CloudCheatItemFragment.newInstance(gameid_, 1)
-        }
-        return Fragment()
-    }
-
-    override fun getCount(): Int {
-        return 2
-    }
-
-    override fun getPageTitle(position: Int): CharSequence? {
-        when (position) {
-            PAGE_LOCAL -> return "Local"
-            PAGE_CLOUD -> return "Shared"
-        }
-        return ""
+    fun getPageTitle(position: Int): CharSequence = when (position) {
+        PAGE_LOCAL -> "Local"
+        PAGE_CLOUD -> "Shared"
+        else -> ""
     }
 
     companion object {
@@ -70,38 +62,39 @@ internal class ViewPagerAdapter(fm: FragmentManager?) : FragmentStatePagerAdapte
 }
 
 class TabCheatFragment : Fragment() {
-    private var mGameid: String? = null
-    private var mListener: OnFragmentInteractionListener? = null
-    lateinit var active_cheats_: ArrayList<String>
-    var mainv_: View? = null
-    var tablayout_: TabLayout? = null
+    private var gameId: String? = null
+    private var listener: OnFragmentInteractionListener? = null
+    lateinit var activeCheats: ArrayList<String>
+    var mainView: View? = null
+    var tabLayout: TabLayout? = null
+    private var viewPager: ViewPager2? = null
+    private var tabLayoutMediator: TabLayoutMediator? = null
+    private var toolbar: MaterialToolbar? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        active_cheats_ = ArrayList()
-        mGameid = requireArguments().getString(ARG_GAME_ID)
-        val current_cheat_code = requireArguments().getStringArray(ARG_CURRENT_CHEAT)
-        if (current_cheat_code != null) {
-            for (i in current_cheat_code.indices) {
-                active_cheats_.add(current_cheat_code[i])
+        activeCheats = ArrayList()
+        gameId = requireArguments().getString(ARG_GAME_ID)
+        val currentCheatCode = requireArguments().getStringArray(ARG_CURRENT_CHEAT)
+        if (currentCheatCode != null) {
+            for (i in currentCheatCode.indices) {
+                activeCheats.add(currentCheatCode[i])
             }
         }
     }
 
-    fun AddActiveCheat(v: String) {
-        active_cheats_.add(v)
-        val set: MutableSet<String> = HashSet()
-        set.addAll(active_cheats_)
-        active_cheats_.addAll(set)
+    fun addActiveCheat(v: String) {
+        if (!activeCheats.contains(v)) {
+            activeCheats.add(v)
+        }
     }
 
-    fun RemoveActiveCheat(v: String) {
-        active_cheats_.remove(v)
-        active_cheats_.remove(v)
+    fun removeActiveCheat(v: String) {
+        activeCheats.remove(v)
     }
 
     fun isActive(v: String): Boolean {
-        for (string in active_cheats_) {
+        for (string in activeCheats) {
             if (string == v) {
                 return true
             }
@@ -109,13 +102,32 @@ class TabCheatFragment : Fragment() {
         return false
     }
 
+    fun switchToPreviousTab() {
+        viewPager?.let { it.currentItem = it.currentItem - 1 }
+    }
+
+    fun switchToNextTab() {
+        viewPager?.let { it.currentItem = it.currentItem + 1 }
+    }
+
+    fun moveCursor(direction: Int) {
+        getCurrentFragment()?.moveCursor(direction)
+    }
+
+    fun selectCurrentItem() {
+        getCurrentFragment()?.selectCurrentItem()
+    }
+
+    private fun getCurrentFragment(): BaseCheatItemFragment? =
+        childFragmentManager.findFragmentByTag("f${viewPager?.currentItem}") as? BaseCheatItemFragment
+
     fun sendCheatListToYabause() {
-        val cntChoice = active_cheats_.size
+        val cntChoice = activeCheats.size
         if (cntChoice > 0) {
             val cheatitem = arrayOfNulls<String>(cntChoice)
             var cindex = 0
             for (i in 0 until cntChoice) {
-                cheatitem[cindex] = active_cheats_[cindex]
+                cheatitem[cindex] = activeCheats[cindex]
                 cindex++
             }
             val activity = activity as Yabause?
@@ -129,52 +141,72 @@ class TabCheatFragment : Fragment() {
     override fun onCreateView(
         inflater: LayoutInflater,
         container: ViewGroup?,
-        savedInstanceState: Bundle?
+        savedInstanceState: Bundle?,
     ): View? {
-        mainv_ = inflater.inflate(R.layout.fragment_tab_cheat, container, false)
-        if (mainv_ == null) {
+        mainView = inflater.inflate(R.layout.fragment_tab_cheat, container, false)
+        if (mainView == null) {
             return null
         }
 
-        tablayout_ = mainv_?.findViewById<View>(R.id.tab_cheat_source) as TabLayout
-        val viewPager_ = mainv_?.findViewById<View>(R.id.view_pager_cheat) as ViewPager
-        val adapter = ViewPagerAdapter(requireActivity().supportFragmentManager)
-        adapter.setGmaeid(mGameid)
-        viewPager_.adapter = adapter
-        tablayout_!!.setupWithViewPager(viewPager_)
-        return mainv_
+        toolbar = mainView?.findViewById(R.id.toolbar_cheat)
+        toolbar?.setNavigationOnClickListener {
+            requireActivity().onBackPressedDispatcher.onBackPressed()
+        }
+
+        tabLayout = mainView?.findViewById<View>(R.id.tab_cheat_source) as TabLayout
+        viewPager = mainView?.findViewById<View>(R.id.view_pager_cheat) as ViewPager2
+        viewPager?.defaultFocusHighlightEnabled = false
+        // Disable focus highlight on ViewPager2's internal RecyclerView
+        val innerRecyclerView = viewPager?.getChildAt(0)
+        innerRecyclerView?.defaultFocusHighlightEnabled = false
+
+        val adapter = CheatViewPagerAdapter(this, gameId)
+        viewPager?.adapter = adapter
+
+        tabLayoutMediator =
+            TabLayoutMediator(tabLayout!!, viewPager!!) { tab, position ->
+                tab.text = adapter.getPageTitle(position)
+            }
+        tabLayoutMediator?.attach()
+
+        return mainView
     }
 
     fun onButtonPressed(uri: Uri?) {
-        if (mListener != null) {
-            mListener!!.onFragmentInteraction(uri)
+        if (listener != null) {
+            listener!!.onFragmentInteraction(uri)
         }
     }
 
     fun enableFullScreen() {
-        val decorView = requireActivity().findViewById<View>(R.id.drawer_layout)
-        if (decorView != null) {
-            decorView.systemUiVisibility = (View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                    or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                    or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                    or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                    or View.SYSTEM_UI_FLAG_FULLSCREEN
-                    or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY)
-        }
+        val window = requireActivity().window
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        val controller = WindowInsetsControllerCompat(window, window.decorView)
+        controller.hide(WindowInsetsCompat.Type.systemBars())
+        controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
     }
 
     fun disableFullScreen() {
-        val decorView = requireActivity().findViewById<View>(R.id.drawer_layout)
-        if (decorView != null) {
-            decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-        }
+        val window = requireActivity().window
+        WindowCompat.setDecorFitsSystemWindows(window, true)
+        val controller = WindowInsetsControllerCompat(window, window.decorView)
+        controller.show(WindowInsetsCompat.Type.systemBars())
+    }
+
+    override fun onDestroyView() {
+        tabLayoutMediator?.detach()
+        tabLayoutMediator = null
+        viewPager?.adapter = null
+        viewPager = null
+        toolbar = null
+        super.onDestroyView()
     }
 
     override fun onAttach(context: Context) {
         // disableFullScreen();
         super.onAttach(context)
         if (context is OnFragmentInteractionListener) {
-            mListener = context
+            listener = context
         } else {
         }
     }
@@ -183,7 +215,7 @@ class TabCheatFragment : Fragment() {
         // enableFullScreen();
         sendCheatListToYabause()
         super.onDetach()
-        mListener = null
+        listener = null
     }
 
     interface OnFragmentInteractionListener {
@@ -191,14 +223,18 @@ class TabCheatFragment : Fragment() {
     }
 
     companion object {
-        const val TAG = "TabBackupFragment"
+        const val TAG = "TabCheatFragment"
         private const val ARG_GAME_ID = "gameid"
         private const val ARG_CURRENT_CHEAT = "current_cheats"
-        fun newInstance(gameid: String?, current_cheat_code: Array<String?>?): TabCheatFragment {
+
+        fun newInstance(
+            gameid: String?,
+            currentCheatCode: Array<String?>?,
+        ): TabCheatFragment {
             val fragment = TabCheatFragment()
             val args = Bundle()
             args.putString(ARG_GAME_ID, gameid)
-            args.putStringArray(ARG_CURRENT_CHEAT, current_cheat_code)
+            args.putStringArray(ARG_CURRENT_CHEAT, currentCheatCode)
             fragment.arguments = args
             return fragment
         }

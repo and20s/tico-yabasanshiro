@@ -15,8 +15,10 @@
     You should have received a copy of the GNU General Public License
     along with Yabause; if not, write to the Free Software
     Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
-*/
-/*  Copyright 2019 devMiyax(smiyaxdev@gmail.com)
+
+    ============================================================================
+
+    Copyright 2019 devMiyax(smiyaxdev@gmail.com)
 
     This file is part of YabaSanshiro.
 
@@ -36,8 +38,10 @@
 */
 package org.uoyabause.android
 
-class PadEvent(val action: Int, val key: Int) {
-
+class PadEvent(
+    val action: Int,
+    val key: Int,
+) {
     companion object {
         const val BUTTON_UP = 0
         const val BUTTON_RIGHT = 1

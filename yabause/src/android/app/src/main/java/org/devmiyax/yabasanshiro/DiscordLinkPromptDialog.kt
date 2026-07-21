@@ -1,10 +1,7 @@
 package org.devmiyax.yabasanshiro
 
-import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
-import android.content.DialogInterface
-import org.devmiyax.yabasanshiro.R
 
 /**
  * Discord連携を促すダイアログ
@@ -15,23 +12,23 @@ class DiscordLinkPromptDialog {
          * ダイアログを表示する
          */
         fun show(context: Context): AlertDialog {
-            val listener = if (context is DiscordLinkPromptListener) {
-                context
-            } else {
-                null
-            }
-            
-            return AlertDialog.Builder(context)
+            val listener =
+                if (context is DiscordLinkPromptListener) {
+                    context
+                } else {
+                    null
+                }
+
+            return AlertDialog
+                .Builder(context)
                 .setTitle(R.string.discord_link_prompt_title)
                 .setMessage(R.string.discord_link_prompt_message)
                 .setIcon(R.drawable.ic_discord_logo)
                 .setPositiveButton(R.string.discord_link_prompt_yes) { _, _ ->
                     listener?.onDiscordLinkAccepted()
-                }
-                .setNegativeButton(R.string.discord_link_prompt_no) { _, _ ->
+                }.setNegativeButton(R.string.discord_link_prompt_no) { _, _ ->
                     listener?.onDiscordLinkDeclined()
-                }
-                .setCancelable(false)
+                }.setCancelable(false)
                 .show()
         }
     }

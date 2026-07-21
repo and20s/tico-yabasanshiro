@@ -27,19 +27,19 @@ data class CheatItem(
     var gameid: String = "",
     var description: String = "",
     var cheat_code: String = "",
-    var star_count: Int = 0
+    var star_count: Int = 0,
+    var user_id: String = "",
 ) {
     var enable: Boolean = false
     var sharedKey = ""
 
     @Exclude
-    fun toMap(): Map<String, Any?> {
-        return mapOf(
-            "gameid" to gameid,
-            "description" to description,
-            "cheat_code" to cheat_code,
-            "star_count" to star_count,
-            "key" to key
-        )
-    }
+    fun toMap(): Map<String, Any?> = mapOf(
+        "gameid" to gameid,
+        "description" to description,
+        "cheat_code" to cheat_code,
+        "star_count" to star_count,
+        "key" to key,
+        "user_id" to user_id,
+    )
 }

@@ -280,7 +280,16 @@ void FramebufferRenderer::updateVdp2Reg(Vdp2 * fixVdp2Regs) {
 
   for (i = 0; i < 8; i++) {
     ubo.alpha[i * 4] = (float)(0xFF - (((cclist[i] & 0x1F) << 3) & 0xF8)) / 255.0f;
-    ubo.pri[i * 4] = ((float)(prilist[i] & 0x7) / 10.0f) + 0.05f;
+    // Sprite pixels whose priority register resolves to 0 are transparent on
+    // real hardware (titan.c TitanPutPixel returns immediately for priority
+    // 0; Vdp2SpriteDecoder discards them too). The drawfb shaders gate with
+    // `depth < u_from || depth > u_to`, and the first fb pass runs with
+    // u_from = 0.0, so the previous +0.05 bias let priority-0 pixels through
+    // -- stale VDP1 framebuffer content (e.g. the BIOS boot-screen leftovers
+    // on the license screen) became visible where the real console shows
+    // nothing. Park priority-0 slots below every [from, to) window instead.
+    int prival = prilist[i] & 0x7;
+    ubo.pri[i * 4] = (prival == 0) ? -1.0f : ((float)prival / 10.0f) + 0.05f;
   }
   ubo.cctl = ((float)((fixVdp2Regs->SPCTL >> 8) & 0x07) / 10.0f) + 0.05f;
 
@@ -1159,16 +1168,16 @@ VkPipeline FramebufferRenderer::compileShader(const char * code, const char * na
   std::string hashval = std::to_string(hash_value);
   string file_path = mempath + hashval + ".spv";
 
-  // バイナリファイルを読み込む
+  // Load the binary file.
   std::ifstream file(file_path, std::ios::binary);
   if (file) {
 
-    // ファイルサイズを取得する
+    // Query the file size.
     file.seekg(0, std::ios::end);
     std::size_t file_size = file.tellg();
     file.seekg(0, std::ios::beg);
 
-    // ファイルの内容を読み込む
+    // Read the file contents.
     data.resize(file_size / sizeof(uint32_t));
     file.read(reinterpret_cast<char*>(data.data()), file_size);
 
@@ -1200,10 +1209,10 @@ VkPipeline FramebufferRenderer::compileShader(const char * code, const char * na
         throw std::runtime_error("failed to create shader module!");
     }
 
-    // データを書き込む
+    // Write the payload.
     file.write(reinterpret_cast<char*>(data.data()), data.size()* sizeof(uint32_t));
 
-    // ファイルを閉じる
+    // Close the file.
     file.close();
   }
 //#endif
@@ -1528,16 +1537,16 @@ void FramebufferRenderer::createDescriptorSets() {
   std::string hashval = std::to_string(hash_value);
   string file_path = mempath + hashval + ".spv";
 
-  // バイナリファイルを読み込む
+  // Load the binary file.
   std::ifstream file(file_path, std::ios::binary);
   if (file) {
 
-    // ファイルサイズを取得する
+    // Query the file size.
     file.seekg(0, std::ios::end);
     std::size_t file_size = file.tellg();
     file.seekg(0, std::ios::beg);
 
-    // ファイルの内容を読み込む
+    // Read the file contents.
     data.resize(file_size / sizeof(uint32_t));
     file.read(reinterpret_cast<char*>(data.data()), file_size);
     file.close();
@@ -1567,10 +1576,10 @@ void FramebufferRenderer::createDescriptorSets() {
         throw std::runtime_error("failed to create shader module!");
     }
 
-    // データを書き込む
+    // Write the payload.
     file.write(reinterpret_cast<char*>(data.data()), data.size() * sizeof(uint32_t));
 
-    // ファイルを閉じる
+    // Close the file.
     file.close();    
   }
 //#endif

@@ -668,7 +668,7 @@ static void yui_sh_editedMbp( GtkCellRendererText *cellrenderertext,
     }
     
     if ( !flags ) flags = BREAK_BYTEREAD|BREAK_WORDREAD|BREAK_LONGREAD|BREAK_BYTEWRITE|BREAK_WORDWRITE|BREAK_LONGWRITE;
-    SH2AddMemoryBreakpoint(sh2->debugsh, addr, flags);
+    SH2AddMemoryBreakpoint(sh2->debugsh, addr, flags, 0, 0);
   }
 
   SH2UpdateMemoryBreakpointList(sh2);
@@ -710,7 +710,7 @@ static void yui_sh_editedMbpFlags( GtkCellRendererText *cellrenderertext,
       endptr++;
   }
     
-  SH2AddMemoryBreakpoint(sh2->debugsh, addr, flags);
+  SH2AddMemoryBreakpoint(sh2->debugsh, addr, flags, 0, 0);
 
   SH2UpdateMemoryBreakpointList(sh2);
 }
@@ -885,7 +885,7 @@ static void yui_sh_mbp_add(GtkEntry * entry, gpointer user_data) {
 
 	sscanf(address_s, "%8X", &address);
 
-	SH2AddMemoryBreakpoint(sh2->debugsh, address, BREAK_BYTEREAD|BREAK_WORDREAD|BREAK_LONGREAD|BREAK_BYTEWRITE|BREAK_WORDWRITE|BREAK_LONGWRITE);
+	SH2AddMemoryBreakpoint(sh2->debugsh, address, BREAK_BYTEREAD|BREAK_WORDREAD|BREAK_LONGREAD|BREAK_BYTEWRITE|BREAK_WORDWRITE|BREAK_LONGWRITE, 0, 0);
 
 	gtk_entry_set_text(entry, "");
 
@@ -1005,7 +1005,7 @@ void yui_sh_mbp_toggle_flag(GtkWidget * menuitem, gpointer user_data) {
 	  if (menuitem == sh2->mbp_menu_item[4]) flags = (flags & ~BREAK_WORDWRITE) | (~flags & BREAK_WORDWRITE);
 	  if (menuitem == sh2->mbp_menu_item[5]) flags = (flags & ~BREAK_LONGWRITE) | (~flags & BREAK_LONGWRITE);
 
-          SH2AddMemoryBreakpoint(sh2->debugsh, address, flags);
+          SH2AddMemoryBreakpoint(sh2->debugsh, address, flags, 0, 0);
 
 	SH2UpdateMemoryBreakpointList(sh2);
 }

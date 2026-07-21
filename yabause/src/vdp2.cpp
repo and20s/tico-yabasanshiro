@@ -219,8 +219,8 @@ void FASTCALL Vdp2RamWriteLong(u32 addr, u32 val) {
   addr &= 0x7FFFF;
 #if VRAM_WRITE_CHECK
   if (yabsys.LineCount != prelinev) {
-    LOG("VRAM: write long @%d, cycle_a=%d cycle_b=%d A0=%04X%04X A1=%04X%04X B0=%04X%04X B1=%04X%04X ", 
-      yabsys.LineCount, 
+    LOG("VRAM: write long @%d, cycle_a=%d cycle_b=%d A0=%04X%04X A1=%04X%04X B0=%04X%04X B1=%04X%04X ",
+      yabsys.LineCount,
       Vdp2External.cpu_cycle_a, Vdp2External.cpu_cycle_b,
       Vdp2Regs->CYCA0L, Vdp2Regs->CYCA0U, Vdp2Regs->CYCA0L, Vdp2Regs->CYCA0U, Vdp2Regs->CYCB0L, Vdp2Regs->CYCB0U, Vdp2Regs->CYCB1L, Vdp2Regs->CYCB1U );
     prelinev = yabsys.LineCount;
@@ -368,7 +368,7 @@ int Vdp2Init(void) {
    evqueue = YabThreadCreateQueue(32);
    vdp_proc_running = 1;
    YabThreadStart(YAB_THREAD_VDP, "vdp", VdpProc, NULL);
-#endif   
+#endif
    return 0;
 
 }
@@ -772,6 +772,7 @@ void frameSkipAndLimit() {
     }
 
     // just wait for next vsync
+    int waited = 0;
     targetTime -= 1000;
     if ( (onesecondticks + diffticks) < targetTime )
     {
@@ -791,10 +792,21 @@ void frameSkipAndLimit() {
       }
       //u64 realstime = YabauseGetTicks() - xcurticks;
       //yprintf("req time %d,real time %d diff = %d", (u32)sleeptime, (u32)realstime, realstime-sleeptime);
+      waited = 1;
     }
 
     onesecondticks += diffticks;
     lastticks = curticks;
+
+    // Anti-drift: pin onesecondticks to the busy-wait exit target so that
+    // per-frame poll-granularity overshoot does not accumulate. targetTime
+    // here is already (origTargetTime - 1000), matching the wait loop's
+    // exit condition. Pinning to the pre--1000 value would over-inflate
+    // onesecondticks by ~1000 ticks/frame and shrink the real second to
+    // ~940ms on Android (tickfreq=1MHz), producing ~64fps.
+    if (waited) {
+      onesecondticks = (s64)targetTime;
+    }
   }
 
 }
@@ -822,7 +834,7 @@ void vdp2VBlankIN(void) {
    FrameProfileAdd("VIN flag");
    FRAMELOG("**** VIN(T) *****\n");
    YabAddEventQueue(rcv_evqueue, 0);
-   
+
 
 }
 
@@ -879,6 +891,21 @@ void Vdp2VBlankIN(void) {
 
 //////////////////////////////////////////////////////////////////////////////
 
+// Assert the TVSTAT HBLANK status bit ahead of the HBlankIN interrupt point.
+// On real hardware horizontal blanking lasts about a quarter of a line, while
+// the HBLANK-IN interrupt is raised once at its start. If the status bit were
+// only raised together with the interrupt it would stay set for a single
+// deciline (~17 SH2 cycles), and the CPU spends that whole window entering the
+// HBLANK interrupt handler. A game that busy-polls TVSTAT for an HBLANK edge
+// would then never observe the bit and would hang forever. Raising the status
+// bit a few decilines early gives such polling loops a realistic window while
+// leaving the interrupt timing and the per-line register latch untouched.
+void Vdp2HBlankStatusIN(void) {
+  if (yabsys.LineCount < yabsys.VBlankLineCount) {
+    Vdp2Regs->TVSTAT |= 0x0004;
+  }
+}
+
 void Vdp2HBlankIN(void) {
 
   if (yabsys.LineCount < yabsys.VBlankLineCount) {
@@ -898,7 +925,7 @@ void Vdp2HBlankOUT(void) {
   if (yabsys.LineCount < yabsys.VBlankLineCount)
   {
     ScuRemoveHBlankIN();
-    
+
     Vdp2Regs->TVSTAT &= ~0x0004;
     u32 cell_scroll_table_start_addr = (Vdp2Regs->VCSTA.all & 0x7FFFE) << 1;
     memcpy(Vdp2Lines + yabsys.LineCount, Vdp2Regs, sizeof(Vdp2));
@@ -1015,7 +1042,7 @@ void Vdp2HBlankOUT(void) {
       vdp_proc_running = 1;
       YabThreadStart(YAB_THREAD_VDP, "vdp", VdpProc, NULL);
     }
-*/    
+*/
     if (Vdp1External.swap_frame_buffer == 1)
     {
       Vdp1Regs->EDSR >>= 1;
@@ -1048,17 +1075,17 @@ void Vdp2HBlankOUT(void) {
     YabClearEventQueue(vdp1_rcv_evqueue);
     FRAMELOG("**WAIT END**");
     yabsys.wait_line_count = -1;
-    FrameProfileAdd("DirectDraw sync");        
+    FrameProfileAdd("DirectDraw sync");
     if (Vdp1External.status == VDP1_STATUS_IDLE) {
       FRAMELOG("Vdp1Draw end at %d line EDSR=%02X", yabsys.LineCount, Vdp1Regs->EDSR);
       Vdp1Regs->EDSR |= 2;
       ScuSendDrawEnd();
-    }  
+    }
   }
 #else
     vdp2VBlankOUT();
   }
-  
+
   if (yabsys.wait_line_count != -1 && yabsys.LineCount == yabsys.wait_line_count) {
     //Vdp1Regs->COPR = Vdp1Regs->addr >> 3;
     //printf("COPR = %d at %d\n", Vdp1Regs->COPR, __LINE__);
@@ -1074,7 +1101,7 @@ void Vdp2HBlankOUT(void) {
     }
     //VIDCore->Vdp1DrawEnd();
   }
-  
+
 #endif
   Vdp1_onHblank();
 }
@@ -1095,7 +1122,7 @@ static void FPSDisplay(void)
   static u64 fpsticks;
   //yprintf("%02d/%02d FPS skip=%d vdp1=%02d", fps, yabsys.IsPal ? 50 : 60, show_skipped_frame, show_vdp1_frame);
 #if 1 // FPS only
-   OSDPushMessage(OSDMSG_FPS, 1, "%02d/%02d FPS skip=%d vdp1=%02d", fps, yabsys.IsPal ? 50 : 60, show_skipped_frame, show_vdp1_frame);
+   OSDPushMessage(OSDMSG_FPS, 1, "%02d/%02d FPS skip=%d vdp1=%02d, %d", fps, yabsys.IsPal ? 50 : 60, show_skipped_frame, show_vdp1_frame, yabsys.frame_count);
    //printf("\033[%d;%dH %02d/%02d FPS skip=%d vdp1=%02d \n", 0, 0, fps, yabsys.IsPal ? 50 : 60, show_skipped_frame, show_vdp1_frame);
 #else
   FILE * fp = NULL;
@@ -1137,7 +1164,7 @@ static void FPSDisplay(void)
     , fps, yabsys.IsPal ? 50 : 60, gpu_f / 1000000,
     cpu_f[0] / 1000, cpu_f[1] / 1000, cpu_f[2] / 1000, cpu_f[3] / 1000,
     cpu_f[4] / 1000, cpu_f[5] / 1000, cpu_f[6] / 1000, cpu_f[7] / 1000);
-#endif   
+#endif
   //OSDPushMessage(OSDMSG_DEBUG, 1, "%d %d %s %s", framecounter, lagframecounter, MovieStatus, InputDisplayString);
   fpsframecount++;
   if (YabauseGetTicks() >= fpsticks + yabsys.tickfreq)
@@ -1224,7 +1251,7 @@ void vdp2VBlankOUT(void) {
     dumpvram();
     Vdp2GenerateCCode();
   }
-#endif 
+#endif
 
   if (pre_swap_frame_buffer == 0 && skipnextframe && Vdp1External.swap_frame_buffer ){
     skipnextframe = 0;
@@ -1245,7 +1272,7 @@ void vdp2VBlankOUT(void) {
   {
     skipped_frame++;
     saved = VIDCore;
-    
+
     previous_skipped = 1;
     VIDCore->Vdp2DrawStart = VIDDummy.Vdp2DrawStart;
     VIDCore->Vdp2DrawEnd   = VIDDummy.Vdp2DrawEnd;
@@ -1283,9 +1310,9 @@ void vdp2VBlankOUT(void) {
   }
 
   VIDCore->Vdp2DrawStart();
-  
+
   // VBlank Erase
-  if (Vdp1External.vbalnk_erase ||  // VBlank Erace (VBE1) 
+  if (Vdp1External.vbalnk_erase ||  // VBlank Erace (VBE1)
     ((Vdp1Regs->FBCR & 2) == 0)) {  // One cycle mode
     VIDCore->Vdp1EraseWrite();
   }
@@ -1354,8 +1381,32 @@ void vdp2VBlankOUT(void) {
      FRAMELOG("Vdp1DrawEnd %d", yabsys.LineCount);
     VIDCore->Vdp1DrawEnd();
 #if !defined(YAB_ASYNC_RENDERING)
-    yabsys.wait_line_count += 45;
-    yabsys.wait_line_count %= yabsys.VBlankLineCount;
+    // Delay the draw-end interrupt by an estimate of the real VDP1 draw
+    // time instead of a flat 45 lines. On real hardware a frame-change
+    // plot starts at the frame swap (VBlank-IN), which is a whole VBlank
+    // period before this VBlank-OUT anchored code runs, so a draw that
+    // fits into VBlank has already finished by the time we get here.
+    {
+      const int est = Vdp1EstimateDrawLines(Vdp1Ram, Vdp1Regs);
+      int lines = est - (yabsys.MaxLineCount - yabsys.VBlankLineCount);
+      if (lines <= 0 && Vdp1External.status == VDP1_STATUS_IDLE) {
+        // Draw already complete. Raising the interrupt right here would
+        // put it immediately after the VBlank-OUT interrupt, so mainline
+        // code gets no window at all between VBlank-OUT and draw-end -
+        // Jikkyou Oshaberi Parodius drives its main loop off exactly that
+        // window (draw-end -> VBlank-IN -> VBlank-OUT -> mainline) and
+        // never resumes. Schedule it at the phase hardware uses instead,
+        // just before the next VBlank-IN, which keeps it ahead of the
+        // mainline resume that Die Hard Trilogy depends on.
+        yabsys.wait_line_count =
+            (yabsys.VBlankLineCount + est) % yabsys.MaxLineCount;
+      }
+      else {
+        if (lines <= 0) lines = 1;
+        yabsys.wait_line_count += lines;
+        yabsys.wait_line_count %= yabsys.VBlankLineCount;
+      }
+    }
 #endif
   }
 
@@ -1376,7 +1427,7 @@ void vdp2VBlankOUT(void) {
    {
       framestoskip--;
 
-      if (framestoskip < 1) 
+      if (framestoskip < 1)
          skipnextframe = 0;
       else
          skipnextframe = 1;
@@ -1387,18 +1438,40 @@ void vdp2VBlankOUT(void) {
 #endif
    VdpUnLockVram();
 #if PROFILE_RENDERING
-   static FILE * framefp = NULL;
-   if( framefp == NULL ){
+   {
+       // 1 Hz aggregation. Per-frame logging floods logcat / frame.csv on
+       // Adreno where each frame may emit several MB of profiler output.
+       // Accumulate frames + render time over yabsys.tickfreq (= 1 second
+       // in YabauseGetTicks units) and emit one summary line.
+       static s64  s_windowStart = 0;
+       static u32  s_frames      = 0;
+       static u64  s_renderAccum = 0;
+       static u32  s_renderMax   = 0;
+       s64 endTicks   = YabauseGetTicks();
+       u32 frameTime  = (u32)(endTicks - starttime);
+       if (s_windowStart == 0) s_windowStart = endTicks;
+       s_frames++;
+       s_renderAccum += frameTime;
+       if (frameTime > s_renderMax) s_renderMax = frameTime;
+       if ((u64)(endTicks - s_windowStart) >= yabsys.tickfreq) {
+           u32 avg = (u32)(s_renderAccum / s_frames);
 #if defined(ANDROID)
-     framefp = fopen("/mnt/sdcard/frame.csv", "w");
+           printf("YAB_PROFILE fps=%u frame=%d avgRender=%u maxRender=%u\n",
+                  s_frames, g_frame_count, avg, s_renderMax);
 #else
-     framefp = fopen("frame.csv","w");
+           static FILE * framefp = NULL;
+           if (framefp == NULL) framefp = fopen("frame.csv", "w");
+           if (framefp != NULL) {
+               fprintf(framefp, "%d,%u,%u,%u\n",
+                       g_frame_count, s_frames, avg, s_renderMax);
+               fflush(framefp);
+           }
 #endif
-   }
-
-   if( framefp != NULL ){
-      fprintf(framefp,"%d,%d\n", g_frame_count, (u32)(YabauseGetTicks()-starttime) );
-      fflush(framefp);
+           s_windowStart = endTicks;
+           s_frames = 0;
+           s_renderAccum = 0;
+           s_renderMax = 0;
+       }
    }
 #endif
 }
@@ -1527,413 +1600,413 @@ u16 FASTCALL Vdp2ReadWord(u32 addr) {
      return Vdp2Regs->RAMCTL;
    case 0x010:
      return Vdp2Regs->CYCA0L ;
-     
+
    case 0x012:
      return Vdp2Regs->CYCA0U ;
-     
+
    case 0x014:
      return Vdp2Regs->CYCA1L ;
-     
+
    case 0x016:
      return Vdp2Regs->CYCA1U ;
-     
+
    case 0x018:
      return Vdp2Regs->CYCB0L ;
-     
+
    case 0x01A:
      return Vdp2Regs->CYCB0U ;
-     
+
    case 0x01C:
      return Vdp2Regs->CYCB1L ;
-     
+
    case 0x01E:
      return Vdp2Regs->CYCB1U ;
-     
+
    case 0x020:
      return Vdp2Regs->BGON ;
-     
+
    case 0x022:
      return Vdp2Regs->MZCTL ;
-     
+
    case 0x024:
      return Vdp2Regs->SFSEL ;
-     
+
    case 0x026:
      return Vdp2Regs->SFCODE ;
-     
+
    case 0x028:
      return Vdp2Regs->CHCTLA ;
-     
+
    case 0x02A:
      return Vdp2Regs->CHCTLB ;
-     
+
    case 0x02C:
      return Vdp2Regs->BMPNA ;
-     
+
    case 0x02E:
      return Vdp2Regs->BMPNB ;
-     
+
    case 0x030:
      return Vdp2Regs->PNCN0 ;
-     
+
    case 0x032:
      return Vdp2Regs->PNCN1 ;
-     
+
    case 0x034:
      return Vdp2Regs->PNCN2 ;
-     
+
    case 0x036:
      return Vdp2Regs->PNCN3 ;
-     
+
    case 0x038:
      return Vdp2Regs->PNCR ;
-     
+
    case 0x03A:
      return Vdp2Regs->PLSZ ;
-     
+
    case 0x03C:
      return Vdp2Regs->MPOFN ;
-     
+
    case 0x03E:
      return Vdp2Regs->MPOFR ;
-     
+
    case 0x040:
      return Vdp2Regs->MPABN0 ;
-     
+
    case 0x042:
      return Vdp2Regs->MPCDN0 ;
-     
+
    case 0x044:
      return Vdp2Regs->MPABN1 ;
-     
+
    case 0x046:
      return Vdp2Regs->MPCDN1 ;
-     
+
    case 0x048:
      return Vdp2Regs->MPABN2 ;
-     
+
    case 0x04A:
      return Vdp2Regs->MPCDN2 ;
-     
+
    case 0x04C:
      return Vdp2Regs->MPABN3 ;
-     
+
    case 0x04E:
      return Vdp2Regs->MPCDN3 ;
-     
+
    case 0x050:
      return Vdp2Regs->MPABRA ;
-     
+
    case 0x052:
      return Vdp2Regs->MPCDRA ;
-     
+
    case 0x054:
      return Vdp2Regs->MPEFRA ;
-     
+
    case 0x056:
      return Vdp2Regs->MPGHRA ;
-     
+
    case 0x058:
      return Vdp2Regs->MPIJRA ;
-     
+
    case 0x05A:
      return Vdp2Regs->MPKLRA ;
-     
+
    case 0x05C:
      return Vdp2Regs->MPMNRA ;
-     
+
    case 0x05E:
      return Vdp2Regs->MPOPRA ;
-     
+
    case 0x060:
      return Vdp2Regs->MPABRB ;
-     
+
    case 0x062:
      return Vdp2Regs->MPCDRB ;
-     
+
    case 0x064:
      return Vdp2Regs->MPEFRB ;
-     
+
    case 0x066:
      return Vdp2Regs->MPGHRB ;
-     
+
    case 0x068:
      return Vdp2Regs->MPIJRB ;
-     
+
    case 0x06A:
      return Vdp2Regs->MPKLRB ;
-     
+
    case 0x06C:
      return Vdp2Regs->MPMNRB ;
-     
+
    case 0x06E:
      return Vdp2Regs->MPOPRB ;
-     
+
    case 0x070:
      return Vdp2Regs->SCXIN0 ;
-     
+
    case 0x072:
      return Vdp2Regs->SCXDN0 ;
-     
+
    case 0x074:
      return Vdp2Regs->SCYIN0 ;
-     
+
    case 0x076:
      return Vdp2Regs->SCYDN0 ;
-     
+
    case 0x078:
      return Vdp2Regs->ZMXN0.part.I ;
-     
+
    case 0x07A:
      return Vdp2Regs->ZMXN0.part.D ;
-     
+
    case 0x07C:
      return Vdp2Regs->ZMYN0.part.I ;
-     
+
    case 0x07E:
      return Vdp2Regs->ZMYN0.part.D ;
-     
+
    case 0x080:
      return Vdp2Regs->SCXIN1 ;
-     
+
    case 0x082:
      return Vdp2Regs->SCXDN1 ;
-     
+
    case 0x084:
      return Vdp2Regs->SCYIN1 ;
-     
+
    case 0x086:
      return Vdp2Regs->SCYDN1 ;
-     
+
    case 0x088:
      return Vdp2Regs->ZMXN1.part.I ;
-     
+
    case 0x08A:
      return Vdp2Regs->ZMXN1.part.D ;
-     
+
    case 0x08C:
      return Vdp2Regs->ZMYN1.part.I ;
-     
+
    case 0x08E:
      return Vdp2Regs->ZMYN1.part.D ;
-     
+
    case 0x090:
      return Vdp2Regs->SCXN2 ;
-     
+
    case 0x092:
      return Vdp2Regs->SCYN2 ;
-     
+
    case 0x094:
      return Vdp2Regs->SCXN3 ;
-     
+
    case 0x096:
      return Vdp2Regs->SCYN3 ;
-     
+
    case 0x098:
      return Vdp2Regs->ZMCTL ;
-     
+
    case 0x09A:
      return Vdp2Regs->SCRCTL ;
-     
+
    case 0x09C:
      return Vdp2Regs->VCSTA.part.U ;
-     
+
    case 0x09E:
      return Vdp2Regs->VCSTA.part.L ;
-     
+
    case 0x0A0:
      return Vdp2Regs->LSTA0.part.U ;
-     
+
    case 0x0A2:
      return Vdp2Regs->LSTA0.part.L ;
-     
+
    case 0x0A4:
      return Vdp2Regs->LSTA1.part.U ;
-     
+
    case 0x0A6:
      return Vdp2Regs->LSTA1.part.L ;
-     
+
    case 0x0A8:
      return Vdp2Regs->LCTA.part.U ;
-     
+
    case 0x0AA:
      return Vdp2Regs->LCTA.part.L ;
-     
+
    case 0x0AC:
      return Vdp2Regs->BKTAU ;
-     
+
    case 0x0AE:
      return Vdp2Regs->BKTAL ;
-     
+
    case 0x0B0:
      return Vdp2Regs->RPMD ;
-     
+
    case 0x0B2:
      return Vdp2Regs->RPRCTL ;
-     
+
    case 0x0B4:
      return Vdp2Regs->KTCTL ;
-     
+
    case 0x0B6:
      return Vdp2Regs->KTAOF ;
-     
+
    case 0x0B8:
      return Vdp2Regs->OVPNRA ;
-     
+
    case 0x0BA:
      return Vdp2Regs->OVPNRB ;
-     
+
    case 0x0BC:
      return Vdp2Regs->RPTA.part.U ;
-     
+
    case 0x0BE:
      return Vdp2Regs->RPTA.part.L ;
-     
+
    case 0x0C0:
      return Vdp2Regs->WPSX0 ;
-     
+
    case 0x0C2:
      return Vdp2Regs->WPSY0 ;
-     
+
    case 0x0C4:
      return Vdp2Regs->WPEX0 ;
-     
+
    case 0x0C6:
      return Vdp2Regs->WPEY0 ;
-     
+
    case 0x0C8:
      return Vdp2Regs->WPSX1 ;
-     
+
    case 0x0CA:
      return Vdp2Regs->WPSY1 ;
-     
+
    case 0x0CC:
      return Vdp2Regs->WPEX1 ;
-     
+
    case 0x0CE:
      return Vdp2Regs->WPEY1 ;
-     
+
    case 0x0D0:
      return Vdp2Regs->WCTLA ;
-     
+
    case 0x0D2:
      return Vdp2Regs->WCTLB ;
-     
+
    case 0x0D4:
      return Vdp2Regs->WCTLC ;
-     
+
    case 0x0D6:
      return Vdp2Regs->WCTLD ;
-     
+
    case 0x0D8:
      return Vdp2Regs->LWTA0.part.U ;
-     
+
    case 0x0DA:
      return Vdp2Regs->LWTA0.part.L ;
-     
+
    case 0x0DC:
      return Vdp2Regs->LWTA1.part.U ;
-     
+
    case 0x0DE:
      return Vdp2Regs->LWTA1.part.L ;
-     
+
    case 0x0E0:
      return Vdp2Regs->SPCTL ;
-     
+
    case 0x0E2:
      return Vdp2Regs->SDCTL ;
-     
+
    case 0x0E4:
      return Vdp2Regs->CRAOFA ;
-     
+
    case 0x0E6:
      return Vdp2Regs->CRAOFB ;
-     
+
    case 0x0E8:
      return Vdp2Regs->LNCLEN ;
-     
+
    case 0x0EA:
      return Vdp2Regs->SFPRMD ;
-     
+
    case 0x0EC:
      return Vdp2Regs->CCCTL ;
-     
+
    case 0x0EE:
      return Vdp2Regs->SFCCMD ;
-     
+
    case 0x0F0:
      return Vdp2Regs->PRISA ;
-     
+
    case 0x0F2:
      return Vdp2Regs->PRISB ;
-     
+
    case 0x0F4:
      return Vdp2Regs->PRISC ;
-     
+
    case 0x0F6:
      return Vdp2Regs->PRISD ;
-     
+
    case 0x0F8:
      return Vdp2Regs->PRINA ;
-     
+
    case 0x0FA:
      return Vdp2Regs->PRINB ;
-     
+
    case 0x0FC:
      return Vdp2Regs->PRIR ;
-     
+
    case 0x0FE:
      // Reserved
      return 0;
-     
+
    case 0x100:
      return Vdp2Regs->CCRSA ;
-     
+
    case 0x102:
      return Vdp2Regs->CCRSB ;
-     
+
    case 0x104:
      return Vdp2Regs->CCRSC ;
-     
+
    case 0x106:
      return Vdp2Regs->CCRSD ;
-     
+
    case 0x108:
      return Vdp2Regs->CCRNA ;
-     
+
    case 0x10A:
      return Vdp2Regs->CCRNB ;
-     
+
    case 0x10C:
      return Vdp2Regs->CCRR ;
-     
+
    case 0x10E:
      return Vdp2Regs->CCRLB ;
-     
+
    case 0x110:
      return Vdp2Regs->CLOFEN ;
-     
+
    case 0x112:
      return Vdp2Regs->CLOFSL ;
-     
+
    case 0x114:
      return Vdp2Regs->COAR ;
-     
+
    case 0x116:
      return Vdp2Regs->COAG ;
-     
+
    case 0x118:
      return Vdp2Regs->COAB ;
-     
+
    case 0x11A:
      return Vdp2Regs->COBR ;
-     
+
    case 0x11C:
      return Vdp2Regs->COBG ;
-     
+
    case 0x11E:
      return Vdp2Regs->COBB ;
-     
+
    default:
    {
      LOG("Unhandled VDP2 word write: %08X\n", addr);
@@ -1969,7 +2042,12 @@ void FASTCALL Vdp2WriteWord(u32 addr, u16 val) {
    {
       case 0x000:
          Vdp2Regs->TVMD = val;
-         yabsys.VBlankLineCount = 225+(val & 0x30);
+         {
+           int vreso = (val >> 4) & 0x3;
+           // VRESO=3 is prohibited per hardware spec, treat as 256 lines
+           if (vreso == 3) vreso = 2;
+           yabsys.VBlankLineCount = 225 + (vreso << 4);
+         }
 
          switch( val&0x07){
            case 0:
@@ -1997,7 +2075,7 @@ void FASTCALL Vdp2WriteWord(u32 addr, u16 val) {
              yabsys.Hcount = 704 / 9;
              break;
          }
-         
+
          return;
       case 0x002:
          Vdp2Regs->EXTEN = val;
@@ -2025,7 +2103,7 @@ void FASTCALL Vdp2WriteWord(u32 addr, u16 val) {
              VIDCore->OnUpdateColorRamWord(i);
            }
          }
-         
+
          return;
       case 0x010:
          Vdp2Regs->CYCA0L = val;
@@ -2350,7 +2428,7 @@ void FASTCALL Vdp2WriteWord(u32 addr, u16 val) {
          return;
       case 0x0E6:
          Vdp2Regs->CRAOFB = val;
-         return;     
+         return;
       case 0x0E8:
          Vdp2Regs->LNCLEN = val;
          return;
@@ -2359,7 +2437,7 @@ void FASTCALL Vdp2WriteWord(u32 addr, u16 val) {
          return;
       case 0x0EC:
          Vdp2Regs->CCCTL = val;
-         return;     
+         return;
       case 0x0EE:
          Vdp2Regs->SFCCMD = val;
          return;
@@ -2446,7 +2524,7 @@ void FASTCALL Vdp2WriteWord(u32 addr, u16 val) {
 //////////////////////////////////////////////////////////////////////////////
 
 void FASTCALL Vdp2WriteLong(u32 addr, u32 val) {
-   
+
    Vdp2WriteWord(addr,val>>16);
    Vdp2WriteWord(addr+2,val&0xFFFF);
    return;
@@ -2605,7 +2683,7 @@ volatile Uint16* const frame_dst = (Uint16*)0x25C00000;
 #define N3ON 0x08
 #define R0ON 0x10
 #define R1ON 0x20
-  
+
 void ss_main(void)
 {
 	int i;
@@ -2624,7 +2702,7 @@ void ss_main(void)
 
     for (i = 7; i < (0x11E>>1); i++) {
 			vreg_dst[i] = vreg[i];
-		}		
+		}
 
     slSynch();
 	}

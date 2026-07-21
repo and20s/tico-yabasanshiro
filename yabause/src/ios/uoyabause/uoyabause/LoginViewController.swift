@@ -3,8 +3,12 @@ import UIKit
 import FirebaseCore
 import AuthenticationServices
 import GoogleSignIn
+import GameController
 
 @objc public class LoginViewController: UIViewController {
+    
+    // MARK: - GameController Support
+    private var gameController: GCController?
     
     var completionHandler: ((Bool) -> Void)?
     private var loginSucceeded: Bool = false
@@ -38,6 +42,7 @@ import GoogleSignIn
         setupUI()
         setupActions()
         setupNavigationBar()
+        setupGameController()
     }
     
     private func setupNavigationBar() {
@@ -149,6 +154,81 @@ import GoogleSignIn
             
             self?.present(alert, animated: true)
         }
+    }
+    
+    // MARK: - GameController Support
+    
+    private func setupGameController() {
+        // 既に接続されているコントローラーがあるかチェック
+        if let controller = GCController.controllers().first {
+            gameController = controller
+            setupControllerInputHandlers(controller)
+        }
+        
+        // コントローラー接続の監視
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(controllerDidConnect),
+            name: .GCControllerDidConnect,
+            object: nil
+        )
+        
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(controllerDidDisconnect),
+            name: .GCControllerDidDisconnect,
+            object: nil
+        )
+    }
+    
+    @objc private func controllerDidConnect(_ notification: Notification) {
+        guard let controller = notification.object as? GCController else { return }
+        gameController = controller
+        setupControllerInputHandlers(controller)
+    }
+    
+    @objc private func controllerDidDisconnect(_ notification: Notification) {
+        guard let controller = notification.object as? GCController,
+              controller == gameController else { return }
+        gameController = nil
+    }
+    
+    private func setupControllerInputHandlers(_ controller: GCController) {
+        // Extended gamepadの場合
+        if let extendedGamepad = controller.extendedGamepad {
+            // B button (キャンセル/戻る)
+            extendedGamepad.buttonB.pressedChangedHandler = { [weak self] (button, value, pressed) in
+                if pressed {
+                    DispatchQueue.main.async {
+                        self?.closeButtonTapped()
+                    }
+                }
+            }
+            
+            // Menu button (閉じる)
+            extendedGamepad.buttonMenu.pressedChangedHandler = { [weak self] (button, value, pressed) in
+                if pressed {
+                    DispatchQueue.main.async {
+                        self?.closeButtonTapped()
+                    }
+                }
+            }
+        }
+        // Micro gamepadの場合
+        else if let microGamepad = controller.microGamepad {
+            // X button (キャンセル/戻る)
+            microGamepad.buttonX.pressedChangedHandler = { [weak self] (button, value, pressed) in
+                if pressed {
+                    DispatchQueue.main.async {
+                        self?.closeButtonTapped()
+                    }
+                }
+            }
+        }
+    }
+    
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 }
 

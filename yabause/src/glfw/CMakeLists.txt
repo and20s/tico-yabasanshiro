@@ -19,7 +19,7 @@ else()
 
     ExternalProject_Add(glfw PREFIX glfw
         GIT_REPOSITORY https://github.com/glfw/glfw.git
-        GIT_TAG 244d6d782375f4277123e43c5dc2ede7d41aa4f0
+        GIT_TAG 7b6aead9fb88b3623e3b3725ebb42670cbe4c579
 
         UPDATE_COMMAND ""
 

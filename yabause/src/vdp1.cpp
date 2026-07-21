@@ -409,6 +409,118 @@ extern "C" u32 FASTCALL Vdp1ReadLong(u32 addr) {
 
 //////////////////////////////////////////////////////////////////////////////
 
+// Estimate how many scanlines the real VDP1 would need to process the
+// command table currently in VRAM. The legacy code used a flat 50-line
+// delay before raising the draw-end interrupt, which is far too late for
+// small command lists: e.g. Die Hard Trilogy kicks a tiny draw (PTMR=1)
+// during VBlank and requires the draw-end IRQ to be delivered before its
+// main loop starts a slave-SH2 restart handshake right after VBlank-OUT;
+// a flat 50-line delay lands the IRQ inside that handshake window and
+// deadlocks the boot. Walk the table the same way Vdp1DrawCommands does,
+// sum an approximate cycle cost (fixed fetch overhead plus filled
+// bounding-box area) and convert it to scanlines. The result is clamped
+// to the legacy 50 lines so large scenes keep the previous timing.
+extern "C" int Vdp1EstimateDrawLines(u8 * ram, Vdp1 * regs) {
+   const u32 CYCLES_PER_LINE = 1700; // ~26.8MHz / (263 lines * 60Hz)
+   const u32 MAX_LINES = 50;         // legacy flat delay
+   u32 addr = (Vdp1External.status == VDP1_STATUS_IDLE) ? 0 : (regs->addr & 0x7FFFF);
+   u32 returnAddr = 0xFFFFFFFF;
+   u32 cycles = 0;
+   int count = 0;
+
+   while (count < 2000) {
+      u16 command = T1ReadWord(ram, addr);
+      if (command & 0x8000)
+         break;
+      if (!(command & 0x4000)) { // if (!skip)
+         u32 area = 0;
+         cycles += 70; // rough per-command fetch/setup cost
+         switch (command & 0x000F) {
+         case 0:   // normal sprite: texture size
+         case 1: { // scaled sprite: approximate with texture size / vertex box
+            u16 size = T1ReadWord(ram, addr + 0xA);
+            u32 w = ((size >> 8) & 0x3F) * 8;
+            u32 h = size & 0xFF;
+            area = w * h;
+            if ((command & 0x000F) == 0)
+               break;
+         }
+         /* fall through: scaled sprite also checks the vertex box */
+         case 2: case 3: case 4:   // distorted sprite / polygon: vertex bounding box
+         case 5: case 6: case 7: { // polyline / line: bounding box perimeter
+            s32 minx = 0x7FFFFFFF, maxx = -0x7FFFFFFF, miny = 0x7FFFFFFF, maxy = -0x7FFFFFFF;
+            u32 bbox;
+            int i;
+            int nvert = ((command & 0x000F) == 1 || (command & 0x000F) == 6) ? 2 : 4;
+            for (i = 0; i < nvert; i++) {
+               s16 x = (s16)T1ReadWord(ram, addr + 0xC + i * 4);
+               s16 y = (s16)T1ReadWord(ram, addr + 0xE + i * 4);
+               if (x < minx) minx = x;
+               if (x > maxx) maxx = x;
+               if (y < miny) miny = y;
+               if (y > maxy) maxy = y;
+            }
+            if ((command & 0x000F) == 5 || (command & 0x000F) == 6 || (command & 0x000F) == 7)
+               bbox = ((u32)(maxx - minx) + (u32)(maxy - miny)) * 4; // outline only
+            else
+               bbox = (u32)(maxx - minx + 1) * (u32)(maxy - miny + 1);
+            if (bbox > area)
+               area = bbox;
+            break;
+         }
+         default: // clipping / local coordinates: fetch cost only
+            break;
+         }
+         cycles += area; // ~1 VDP1 cycle per filled texel (rough)
+         if (cycles >= MAX_LINES * CYCLES_PER_LINE)
+            return (int)MAX_LINES; // early out: saturated to legacy delay
+      }
+      // Next, determine where to go next (mirrors Vdp1DrawCommands)
+      switch ((command & 0x3000) >> 12) {
+      case 0: // NEXT
+         addr += 0x20;
+         break;
+      case 1: // ASSIGN
+         addr = T1ReadWord(ram, addr + 2) * 8;
+         if (addr == 0)
+            goto walk_done;
+         break;
+      case 2: // CALL
+         if (returnAddr == 0xFFFFFFFF)
+            returnAddr = addr + 0x20;
+         addr = T1ReadWord(ram, addr + 2) * 8;
+         if (addr == 0)
+            goto walk_done;
+         break;
+      case 3: // RETURN
+         if (returnAddr != 0xFFFFFFFF) {
+            addr = returnAddr;
+            returnAddr = 0xFFFFFFFF;
+         }
+         else
+            addr += 0x20;
+         if (addr == 0)
+            goto walk_done;
+         break;
+      }
+      addr &= 0x7FFFF;
+      count++;
+   }
+walk_done:
+   {
+      // No +1 floor: a tiny list must complete on the very line it was
+      // kicked so that a draw-end-chained render loop drains its queue
+      // before the interrupted mainline code gets to run again (games
+      // rely on this ordering, e.g. Die Hard Trilogy's slave restart).
+      u32 lines = cycles / CYCLES_PER_LINE;
+      if (lines > MAX_LINES)
+         lines = MAX_LINES;
+      return (int)lines;
+   }
+}
+
+//////////////////////////////////////////////////////////////////////////////
+
 extern "C" void FASTCALL Vdp1WriteByte(u32 addr, UNUSED u8 val) {
    addr &= 0xFF;
    LOG("trying to byte-write a Vdp1 register - %08X\n", addr);
@@ -456,7 +568,7 @@ extern "C" void FASTCALL Vdp1WriteWord(u32 addr, u16 val) {
           } while (YaGetQueueSize(vdp1_rcv_evqueue) != 0);
         }
         Vdp1Regs->EDSR >>= 1;
-        yabsys.wait_line_count = yabsys.LineCount + 50;
+        yabsys.wait_line_count = yabsys.LineCount + Vdp1EstimateDrawLines(Vdp1Ram, Vdp1Regs);
         yabsys.wait_line_count %= yabsys.MaxLineCount;
         if (yabsys.wait_line_count == 5) { yabsys.wait_line_count = 4; }
         FRAMELOG("SET DIRECT WAIT %d", yabsys.wait_line_count);
@@ -469,8 +581,25 @@ extern "C" void FASTCALL Vdp1WriteWord(u32 addr, u16 val) {
       Vdp1Regs->EDSR >>= 1;
       Vdp1Draw();
       VIDCore->Vdp1DrawEnd();
-      yabsys.wait_line_count = yabsys.LineCount + 50;
-      yabsys.wait_line_count %= yabsys.MaxLineCount;
+      {
+        int lines = Vdp1EstimateDrawLines(Vdp1Ram, Vdp1Regs);
+        if (lines == 0 && Vdp1External.status == VDP1_STATUS_IDLE) {
+          // Tiny command list: the real VDP1 finishes it within the
+          // current line, so raise the draw-end interrupt right away.
+          // Games chain their render loop off this IRQ and expect it to
+          // preempt the CPU before mainline code resumes (Die Hard
+          // Trilogy deadlocks its slave-SH2 restart handshake if the
+          // draw-end arrives a line late).
+          yabsys.wait_line_count = -1;
+          Vdp1Regs->EDSR |= 2;
+          ScuSendDrawEnd();
+        }
+        else {
+          if (lines == 0) lines = 1;
+          yabsys.wait_line_count = yabsys.LineCount + lines;
+          yabsys.wait_line_count %= yabsys.MaxLineCount;
+        }
+      }
       //if (yabsys.wait_line_count == 2) { yabsys.wait_line_count = 3; } // it should not be the same line with render.
       FRAMELOG("VDP1: end line is %d", yabsys.wait_line_count);
     }
@@ -599,11 +728,19 @@ extern "C" void Vdp1DrawCommands(u8 * ram, Vdp1 * regs, u8* back_framebuffer)
       case 1: // ASSIGN, jump to CMDLINK
          regs->addr = T1ReadWord(ram, regs->addr + 2) * 8;
 
-         // Badd adress. it causes infinity loop 
+         // Jump back to the command table head. The real VDP1 just keeps
+         // fetching commands: a list that links to a non-END command at 0
+         // simply never finishes (no CEF, no draw-end interrupt), and a
+         // link to an END command at 0 terminates normally through the
+         // loop-bottom END check below. Treating this as a completed draw
+         // (status IDLE) raised a spurious draw-end IRQ per kick, which
+         // stormed Die Hard Trilogy's draw-end chained render loop while
+         // it wipes VRAM with 0x8000 patterns and deadlocked its
+         // slave-SH2 restart handshake (permanent black screen on boot).
+         // The command_count cap exits with status RUNNING (= still
+         // drawing) for genuinely looping lists.
          if (regs->addr == 0) {
-           LOG("VDP1: BAD jump to 0, forced to finish");
-           Vdp1External.status = VDP1_STATUS_IDLE;
-           return;
+           LOG("VDP1: jump to 0");
          }
 
          break;
@@ -611,11 +748,9 @@ extern "C" void Vdp1DrawCommands(u8 * ram, Vdp1 * regs, u8* back_framebuffer)
          if (returnAddr == 0xFFFFFFFF)
             returnAddr = regs->addr + 0x20;
          regs->addr = T1ReadWord(ram, regs->addr + 2) * 8;
-         // Badd adress. it causes infinity loop 
+         // Same as ASSIGN: a jump to 0 is not a draw end on real VDP1.
          if (regs->addr == 0) {
-           LOG("VDP1: BAD jump to 0, forced to finish");
-           Vdp1External.status = VDP1_STATUS_IDLE;
-           return;
+           LOG("VDP1: call to 0");
          }
          break;
       case 3: // RETURN, return from subroutine
@@ -625,11 +760,9 @@ extern "C" void Vdp1DrawCommands(u8 * ram, Vdp1 * regs, u8* back_framebuffer)
          }
          else
             regs->addr += 0x20;
-         // Badd adress. it causes infinity loop 
+         // Same as ASSIGN: a jump to 0 is not a draw end on real VDP1.
          if (regs->addr == 0) {
-           LOG("VDP1: BAD jump to 0, forced to finish");
-           Vdp1External.status = VDP1_STATUS_IDLE;
-           return;
+           LOG("VDP1: return to 0");
          }
          break;
       }
@@ -841,10 +974,8 @@ extern "C" int Vdp1SaveState(FILE *fp)
 {
    int offset;
    IOCheck_struct check = { 0, 0 };
-#ifdef IMPROVED_SAVESTATES
    int i = 0;
    u16 back_framebuffer[0x20000] = { 0 };
-#endif
 
    offset = StateWriteHeader(fp, "VDP1", 1);
 
@@ -854,7 +985,6 @@ extern "C" int Vdp1SaveState(FILE *fp)
    // Write VDP1 ram
    ywrite(&check, (void *)Vdp1Ram, 0x80000, 1, fp);
 
-#ifdef IMPROVED_SAVESTATES
 
    void(*Vdp1ReadFrameBuffer)(u32 type, u32 addr, void * out) = VIDCore->Vdp1ReadFrameBuffer;
    void(*Vdp1WriteFrameBuffer)(u32 type, u32 addr, u32 val) = VIDCore->Vdp1WriteFrameBuffer;
@@ -869,7 +999,7 @@ extern "C" int Vdp1SaveState(FILE *fp)
    VIDCore->Vdp1WriteFrameBuffer = Vdp1WriteFrameBuffer;
 
    ywrite(&check, (void *)back_framebuffer, 0x40000, 1, fp);
-#endif
+
    return StateFinishHeader(fp, offset);
 }
 
@@ -878,18 +1008,14 @@ extern "C" int Vdp1SaveState(FILE *fp)
 extern "C" int Vdp1LoadState(FILE *fp, UNUSED int version, int size)
 {
    IOCheck_struct check = { 0, 0 };
-#ifdef IMPROVED_SAVESTATES
    int i = 0;
    u16 back_framebuffer[0x20000] = { 0 };
-#endif
 
    // Read registers
    yread(&check, (void *)Vdp1Regs, sizeof(Vdp1), 1, fp);
 
    // Read VDP1 ram
    yread(&check, (void *)Vdp1Ram, 0x80000, 1, fp);
-
-#ifdef IMPROVED_SAVESTATES
 
    void(*Vdp1ReadFrameBuffer)(u32 type, u32 addr, void * out) = VIDCore->Vdp1ReadFrameBuffer;
    void(*Vdp1WriteFrameBuffer)(u32 type, u32 addr, u32 val) = VIDCore->Vdp1WriteFrameBuffer;
@@ -905,7 +1031,6 @@ extern "C" int Vdp1LoadState(FILE *fp, UNUSED int version, int size)
    VIDCore->Vdp1ReadFrameBuffer = Vdp1ReadFrameBuffer;
    VIDCore->Vdp1WriteFrameBuffer = Vdp1WriteFrameBuffer;
 
-#endif
    return size;
 }
 

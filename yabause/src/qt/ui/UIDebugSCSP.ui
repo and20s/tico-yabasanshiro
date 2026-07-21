@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>766</width>
-    <height>417</height>
+    <width>800</width>
+    <height>700</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -34,10 +34,26 @@
           <item>
            <widget class="QSpinBox" name="sbSlotNumber"/>
           </item>
+          <item>
+           <widget class="QCheckBox" name="cbRealtimeUpdate">
+            <property name="text">
+             <string>Real-time Update</string>
+            </property>
+            <property name="toolTip">
+             <string>Enable real-time monitoring of slot state (30 FPS)</string>
+            </property>
+           </widget>
+          </item>
          </layout>
         </item>
         <item>
          <widget class="QPlainTextEdit" name="pteSlotInfo">
+          <property name="minimumSize">
+           <size>
+            <width>0</width>
+            <height>500</height>
+           </size>
+          </property>
           <property name="readOnly">
            <bool>true</bool>
           </property>

@@ -45,6 +45,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 #include <android/native_window_jni.h> // requires ndk r5 or newer
 #include <android/bitmap.h>
 #include <android/log.h>
+#include "../../android_debug_log.h"
 #include "crashlytics.h"
 #include "config.h"
 #include "yabause.h"
@@ -87,6 +88,11 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 #define VIDCORE_VULKAN 0xFF
 #endif
 
+#include "yabause_ra_integration.h"
+
+// Test function declaration for mastery notification
+extern "C" void testMasteryNotification();
+
 JavaVM *yvm;
 static jobject yabause = NULL;
 
@@ -94,6 +100,9 @@ static char mpegpath[256] = "\0";
 static char cartpath[256] = "\0";
 static char screenShotFilename[256] = "\0";
 static char last_state_filename[256] = "\0";
+static char current_game_path[512] = "\0";
+static bool g_skip_ra_change_media = false;
+static crashlytics_context_t *s_crashlytics_context = NULL;
 
 EGLDisplay g_Display = EGL_NO_DISPLAY;
 EGLSurface g_Surface = EGL_NO_SURFACE;
@@ -129,6 +138,7 @@ static int g_scsp_sync_count = 1;
 static int g_cpu_sync_shift = 1;
 static int g_scsp_sync_time_mode = 1;
 static int g_aspect_rate_mode = 0;
+static int g_vdp2_new_composite = 0; // issue #22: 0 = legacy path, 1 = new per-pixel compositor
 static int s_use_cpu_affinity = 1;
 static int s_use_sh2_cache = 1;
 int frameLimitMode = 0;
@@ -506,7 +516,7 @@ extern "C" const char *GetFileDescriptorPath(const char *fileName)
     {
         if (yvm->AttachCurrentThread(&env, NULL) != JNI_OK)
         {
-            __android_log_print(ANDROID_LOG_ERROR, "yabause", "Failed to AttachCurrentThread");
+            MAIN_LOGE("Failed to AttachCurrentThread");
             return NULL;
         }
     }
@@ -530,9 +540,10 @@ extern "C" const char *GetFileDescriptorPath(const char *fileName)
         return env->GetStringUTFChars(message, &dummy);
 }
 
-void onBackupWrite(const char *fname, char *before, char *after, int size)
+void onBackupWrite(const char *fname, int deviceId, char *before, char *after, int size)
 {
-    __android_log_print(ANDROID_LOG_INFO, "yabause", "onBackupWrite is called");
+
+    MAIN_LOGI("onBackupWrite is called");
 
     jclass yclass;
     jmethodID jniOnBackupWrite;
@@ -540,7 +551,7 @@ void onBackupWrite(const char *fname, char *before, char *after, int size)
 
     if (yvm->AttachCurrentThread(&env, NULL) != JNI_OK)
     {
-        __android_log_print(ANDROID_LOG_ERROR, "yabause", "Failed to AttachCurrentThread");
+        MAIN_LOGE("Failed to AttachCurrentThread");
         return;
     }
 
@@ -555,7 +566,7 @@ void onBackupWrite(const char *fname, char *before, char *after, int size)
     jbyteArray jniBefore = env->NewByteArray(size);
     if (jniBefore == NULL)
     {
-        __android_log_print(ANDROID_LOG_ERROR, "yabause", "Failed to NewByteArray for before");
+        MAIN_LOGE("Failed to NewByteArray for before");
         return;
     }
 
@@ -569,7 +580,7 @@ void onBackupWrite(const char *fname, char *before, char *after, int size)
     jbyteArray jniAfter = env->NewByteArray(size);
     if (jniAfter == NULL)
     {
-        __android_log_print(ANDROID_LOG_ERROR, "yabause", "Failed to NewByteArray for after");
+        MAIN_LOGE("Failed to NewByteArray for after");
         return;
     }
 
@@ -583,22 +594,22 @@ void onBackupWrite(const char *fname, char *before, char *after, int size)
     jstring jniFname = env->NewStringUTF(fname);
     if (jniFname == NULL)
     {
-        __android_log_print(ANDROID_LOG_ERROR, "yabause", "Failed to NewStringUTF for fname");
+        MAIN_LOGE("Failed to NewStringUTF for fname");
         return;
     }
 
     yclass = env->GetObjectClass(yabause);
-    jniOnBackupWrite = env->GetMethodID(yclass, "onBackupWrite", "(Ljava/lang/String;[B[B)V");
+    jniOnBackupWrite = env->GetMethodID(yclass, "onBackupWrite", "(Ljava/lang/String;I[B[B)V");
     if (jniOnBackupWrite == NULL)
     {
-        __android_log_print(ANDROID_LOG_ERROR, "yabause", "Failed to GetMethodID for onBackupWrite");
+        MAIN_LOGE("Failed to GetMethodID for onBackupWrite");
         return;
     }
-    env->CallVoidMethod(yabause, jniOnBackupWrite, jniFname, jniBefore, jniAfter);
+    env->CallVoidMethod(yabause, jniOnBackupWrite, jniFname, (jint)deviceId, jniBefore, jniAfter);
 
     if (yvm->DetachCurrentThread() != JNI_OK)
     {
-        __android_log_print(ANDROID_LOG_ERROR, "yabause", "Failed to DetachCurrentThread");
+        MAIN_LOGE("Failed to DetachCurrentThread");
         return;
     }
 
@@ -941,13 +952,33 @@ extern "C" JNIEXPORT void JNICALL Java_org_uoyabause_android_YabauseRunnable_clo
     s_cdpath = GetGamePath();
     pthread_mutex_lock(&g_mtxGlLock);
     yprintf("new cd is %s", s_cdpath);
+    
+    // Store current game path for RetroAchievements
+    if (s_cdpath != nullptr) {
+        strncpy(current_game_path, s_cdpath, sizeof(current_game_path) - 1);
+        current_game_path[sizeof(current_game_path) - 1] = '\0';
+    }
+    
     g_msg = MSG_CLOSE_TRAY;
     pthread_mutex_unlock(&g_mtxGlLock);
+}
+
+extern "C" JNIEXPORT void JNICALL Java_org_uoyabause_android_YabauseRunnable_setSkipRaChangeMedia(JNIEnv *env, jclass type, jboolean skip)
+{
+    g_skip_ra_change_media = (bool)skip;
 }
 
 extern "C" JNIEXPORT jstring JNICALL Java_org_uoyabause_android_YabauseRunnable_getCurrentGameCode(JNIEnv *env)
 {
     return (jstring)env->NewStringUTF((const char *)Cs2GetCurrentGmaecode());
+}
+
+extern "C" JNIEXPORT jstring JNICALL Java_org_uoyabause_android_YabauseRunnable_getCurrentGamePath(JNIEnv *env)
+{
+    if (strlen(current_game_path) > 0) {
+        return (jstring)env->NewStringUTF(current_game_path);
+    }
+    return nullptr;
 }
 
 static int enableautofskip = 0;
@@ -1228,6 +1259,12 @@ extern "C" jint Java_org_uoyabause_android_YabauseRunnable_init(JNIEnv *env, job
     s_vidcoretype = GetVideoInterface();
     s_carttype = GetCartridgeType();
     s_player2Enable = GetPlayer2Device();
+    
+    // Store current game path for RetroAchievements
+    if (s_cdpath != nullptr) {
+        strncpy(current_game_path, s_cdpath, sizeof(current_game_path) - 1);
+        current_game_path[sizeof(current_game_path) - 1] = '\0';
+    }
     s_playdatadir = GetPlayDataDir();
     shaderCachePath = string(GetShaderPath());
 
@@ -1557,7 +1594,13 @@ int YabauseInit()
     yinit.polygon_generation_mode = g_PolygonGenerationMode;
     yinit.use_new_scsp = g_SoundEngine;
     yinit.resolution_mode = g_resolution_mode;
-    yinit.extend_backup = g_extmemory;
+    // Force extend_backup to FALSE when using external BIOS file
+    // because extended backup memory is not compatible with non-builtin BIOS
+    if (s_biospath != NULL) {
+        yinit.extend_backup = 0;
+    } else {
+        yinit.extend_backup = g_extmemory;
+    }
     yinit.rotate_screen = g_rotate_screen;
     yinit.scsp_sync_count_per_frame = g_scsp_sync_count;
     yinit.sync_shift = g_cpu_sync_shift;
@@ -1579,6 +1622,22 @@ int YabauseInit()
     {
         YUI_LOG("Fail to YabauseInit %d", res);
         return -1;
+    }
+
+    // Log game info to Crashlytics for crash diagnostics
+    if (s_crashlytics_context != NULL) {
+        if (current_game_path[0] != '\0') {
+            s_crashlytics_context->set(s_crashlytics_context, "game_path", current_game_path);
+        }
+        char* gameName = Cs2GetCurrentGameName();
+        if (gameName != NULL) {
+            s_crashlytics_context->set(s_crashlytics_context, "game_name", gameName);
+        }
+        char* gameCode = Cs2GetCurrentGmaecode();
+        if (gameCode != NULL) {
+            s_crashlytics_context->set(s_crashlytics_context, "game_code", gameCode);
+        }
+        s_crashlytics_context->log(s_crashlytics_context, "Game loaded");
     }
 
     update_pad_mode();
@@ -1624,6 +1683,16 @@ int YabauseInit()
             return -1;
         }
     }
+
+#if 0 // Mastery test notification
+    // Test Mastery notification on game startup
+    {
+        YUI_LOG("Triggering test Mastery notification...");
+        
+        // Call external function to trigger mastery notification directly
+        testMasteryNotification();
+    }
+#endif // Mastery test
 
     return 0;
 }
@@ -1723,7 +1792,31 @@ extern "C"
         pthread_mutex_lock(&g_mtxGlLock);
         g_msg = MSG_RENDER_LOOP_EXIT;
         pthread_mutex_unlock(&g_mtxGlLock);
-        pthread_join(_threadId,NULL);
+
+        // Poll s_isRunning with timeout to prevent ANR
+        // s_isRunning is set to 0 when renderLoop() exits
+        const int maxWaitMs = 5000;  // 5 second total timeout
+        const int pollIntervalMs = 100;  // Check every 100ms
+        int waitedMs = 0;
+
+        while (s_isRunning && waitedMs < maxWaitMs) {
+            usleep(pollIntervalMs * 1000);
+            waitedMs += pollIntervalMs;
+
+            // Retry signaling halfway through timeout
+            if (waitedMs == maxWaitMs / 2) {
+                YUI_LOG("deinit: thread still running, retrying signal...");
+            }
+        }
+
+        if (s_isRunning) {
+            YUI_LOG("Error: render loop thread did not exit within %dms, skipping join", maxWaitMs);
+            // Thread is stuck - skip join to prevent ANR
+            // This may cause resource leaks but is better than ANR
+        } else {
+            // Thread has exited, safe to join (should return immediately)
+            pthread_join(_threadId, NULL);
+        }
     }
 
     void
@@ -1924,6 +2017,16 @@ extern "C"
     }
 
     void
+    Java_org_uoyabause_android_YabauseRunnable_setVdp2NewComposite(JNIEnv *env, jobject obj, jint enable)
+    {
+        // issue #22: toggle the new per-pixel VDP2 compositor (Vulkan only).
+        // 0 = legacy fixed-function path (default), 1 = new path. Read each
+        // frame in Vdp2DrawEnd(), so it can be switched at runtime.
+        g_vdp2_new_composite = enable;
+        VideoSetSetting(VDP_SETTING_VDP2_NEW_COMPOSITE, g_vdp2_new_composite);
+    }
+
+    void
     Java_org_uoyabause_android_YabauseRunnable_enableFrameskip(JNIEnv *env, jobject obj, jint enable)
     {
         if (enable)
@@ -1936,6 +2039,13 @@ extern "C"
     Java_org_uoyabause_android_YabauseRunnable_setVolume(JNIEnv *env, jobject obj, jint volume)
     {
         ScspSetVolume(volume);
+    }
+
+    void
+    Java_org_uoyabause_android_YabauseRunnable_restartAudioStream(JNIEnv *env, jobject obj)
+    {
+        extern void SNDOboeRestartStream(void);
+        SNDOboeRestartStream();
     }
 
     void Java_org_uoyabause_android_YabauseRunnable_setUseCpuAffinity(JNIEnv *env, jobject obj, jint mode)
@@ -2055,14 +2165,12 @@ Java_org_uoyabause_android_YabauseRunnable_screenshot( JNIEnv* env, jobject obj,
 
     void log_callback(char *message)
     {
-        __android_log_print(ANDROID_LOG_INFO, "yabause", "%s", message);
+        MAIN_LOGI("%s", message);
     }
-
-    crashlytics_context_t *context = NULL;
 
     jint JNI_OnLoad(JavaVM *vm, void *reserved)
     {
-        __android_log_print(ANDROID_LOG_INFO, "yabause", "JNI_OnLoad is called");
+        MAIN_LOGI("JNI_OnLoad is called");
 
         JNIEnv *env = nullptr;
         if (vm->GetEnv(reinterpret_cast<void **>(&env), JNI_VERSION_1_6) != JNI_OK)
@@ -2072,7 +2180,7 @@ Java_org_uoyabause_android_YabauseRunnable_screenshot( JNIEnv* env, jobject obj,
         LogStart();
         LogChangeOutput(DEBUG_CALLBACK, (char *)log_callback);
 
-        context = crashlytics_init();
+        s_crashlytics_context = crashlytics_init();
 
         return JNI_VERSION_1_6;
     }
@@ -2203,11 +2311,14 @@ void renderLoop()
                     commands.clear();
                 }
                 YabauseExec();
+
+                YabauseRA::Integration* rai = YabauseRA::Integration::getInstance();
+                if(rai!=NULL)
+                {
+                    rai->doFrame();
+                }
+                
             }
-        }
-        else
-        {
-            usleep(16666);
         }
 
         pthread_mutex_lock(&g_mtxGlLock);
@@ -2380,8 +2491,17 @@ void renderLoop()
             Cs2ForceOpenTray();
             break;
         case MSG_CLOSE_TRAY:
+        {
             YUI_LOG("MSG_CLOSE_TRAY");
             Cs2ForceCloseTray(CDCORE_ISO, s_cdpath);
+            if (!g_skip_ra_change_media) {
+                YabauseRA::Integration* ra = YabauseRA::Integration::getInstance();
+                if(ra){
+                    ra->changeMedia(s_cdpath);
+                }
+            }
+            g_skip_ra_change_media = false;
+        }
             break;
         case MSG_SCREENSHOT:
         {
@@ -2401,8 +2521,14 @@ void renderLoop()
         }
         break;
         case MSG_RESET:
+        {
             YabauseReset();
-            break;
+            YabauseRA::Integration* ra = YabauseRA::Integration::getInstance();
+            if(ra){
+                ra->reset();
+            }
+        }
+        break;
         case MSG_RECORD:
         {
             PlayRecorder *p = PlayRecorder::getInstance();
@@ -2443,8 +2569,8 @@ void renderLoop()
 
     YUI_LOG("byebye");
 
-    if (context != NULL)
-        crashlytics_free(&context);
+    if (s_crashlytics_context != NULL)
+        crashlytics_free(&s_crashlytics_context);
 
     s_isRunning = 0;
 }

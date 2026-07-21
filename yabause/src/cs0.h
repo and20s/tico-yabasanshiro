@@ -93,6 +93,10 @@ int CartInit(const char *filename, int);
 void CartFlush(void);
 void CartDeInit(void);
 
+// Swap out a configured RAM expansion cart for games known to crash with
+// one inserted (called once the disc's product code is available).
+void CartApplyGameCompat(const char *itemnum);
+
 int CartSaveState(FILE *fp);
 int CartLoadState(FILE *fp, int version, int size);
 

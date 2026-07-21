@@ -34,6 +34,14 @@ yab_port_start()
 include( ${CMAKE_SOURCE_DIR}/CMake/Packages/external_libpng.cmake )
 #include( ${CMAKE_SOURCE_DIR}/CMake/Packages/external_zlib.cmake )
 
+# RetroAchievements support
+option(HAVE_RETROACHIEVEMENTS "Enable RetroAchievements support" ON)
+if(HAVE_RETROACHIEVEMENTS)
+    add_subdirectory(../retroachievements retroachievements)
+endif()
+
+
+
 set( SOURCES 
  jni/SndOboe.h
  jni/SndOboe.cpp
@@ -46,6 +54,14 @@ set( SOURCES
  jni/ChdFileInfo.cpp
  jni/ChdFileInfo.h
 )
+
+# Add RetroAchievements JNI sources
+if(HAVE_RETROACHIEVEMENTS)
+    set( SOURCES ${SOURCES}
+        jni/retroachievements_android.cpp
+        jni/retroachievements_android.h
+    )
+endif()
 
 set (OBOE_DIR ./oboe)
 add_subdirectory (${OBOE_DIR} ./oboe)
@@ -85,6 +101,11 @@ include_directories(
 	${PROJECT_SOURCE_DIR}/../ 
 	${png_INCLUDE_DIR}
 )
+
+# Add RetroAchievements include directories
+if(HAVE_RETROACHIEVEMENTS)
+    include_directories(${RCHEEVOS_INCLUDE_DIRS})
+endif()
 target_link_libraries(${LIBRARY_NAME} yabause ${YABAUSE_LIBRARIES} 
 	${PORT_LIBRARIES}
 	${LIBCHDR_LIBRARIES}	
@@ -95,8 +116,19 @@ target_link_libraries(${LIBRARY_NAME} yabause ${YABAUSE_LIBRARIES}
 	#${zlib_STATIC_LIBRARIES}
 	#    ${PROJECT_SOURCE_DIR}/debuglib/libNvidia_gfx_debugger_stub.a
 )
+
+# Add RetroAchievements libraries
+if(HAVE_RETROACHIEVEMENTS)
+    target_link_libraries(${LIBRARY_NAME} ${RCHEEVOS_LIBRARIES})
+    target_compile_definitions(${LIBRARY_NAME} PRIVATE HAVE_RETROACHIEVEMENTS=1)
+endif()
  
 add_dependencies(${LIBRARY_NAME} libchdr)
 add_dependencies(${LIBRARY_NAME} png)
+
+# Add RetroAchievements dependencies
+if(HAVE_RETROACHIEVEMENTS)
+    add_dependencies(${LIBRARY_NAME} yabause_retroachievements)
+endif()
 
 

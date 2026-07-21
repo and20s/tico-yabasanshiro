@@ -8,7 +8,6 @@
 
 /* Begin PBXBuildFile section */
 		3421AB665A0C244BD5D62CDE /* Pods_YabaSnashiro_Lite.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D9C85C422C77661500B98290 /* Pods_YabaSnashiro_Lite.framework */; };
-		3421AB665A0C244BD5D62CDE /* Pods_YabaSnashiro_Lite.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D9C85C422C77661500B98290 /* Pods_YabaSnashiro_Lite.framework */; };
 		6048E9F865F471B405FC8E1E /* Pods_YabaSnashiroTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3AFB002D17E54BEC336A1DFE /* Pods_YabaSnashiroTests.framework */; };
 		6290C255003441A8128FE03D /* Pods_YabaSnashiro.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C8BA1D770E151F00A6BA938B /* Pods_YabaSnashiro.framework */; };
 		640323881C67575B00DA91D8 /* OpenAL.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 640323861C673BE200DA91D8 /* OpenAL.framework */; };
@@ -41,6 +40,38 @@
 		944F55AB257B0F47005D4814 /* libchdr-static.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 944F55AA257B0F33005D4814 /* libchdr-static.a */; };
 		944F55BA257B1573005D4814 /* GameController.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 944F55B9257B1573005D4814 /* GameController.framework */; };
 		945652003A069BA0F624DE6B /* Pods_YabaSnashiro.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C8BA1D770E151F00A6BA938B /* Pods_YabaSnashiro.framework */; };
+		946A6C6F2EF7A0E9009388D9 /* PadConfigurationDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946A6C5F2EF7A0E9009388D9 /* PadConfigurationDelegate.swift */; };
+		946A6C702EF7A0E9009388D9 /* PadButtons+Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946A6C692EF7A0E9009388D9 /* PadButtons+Extensions.swift */; };
+		946A6C712EF7A0E9009388D9 /* GameViewController+YabausePad.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946A6C682EF7A0E9009388D9 /* GameViewController+YabausePad.swift */; };
+		946A6C722EF7A0E9009388D9 /* DPadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946A6C672EF7A0E9009388D9 /* DPadView.swift */; };
+		946A6C732EF7A0E9009388D9 /* DPadState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946A6C662EF7A0E9009388D9 /* DPadState.swift */; };
+		946A6C742EF7A0E9009388D9 /* UserDefaultsPadConfigurationStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946A6C632EF7A0E9009388D9 /* UserDefaultsPadConfigurationStorage.swift */; };
+		946A6C752EF7A0E9009388D9 /* YabausePadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946A6C6D2EF7A0E9009388D9 /* YabausePadView.swift */; };
+		946A6C762EF7A0E9009388D9 /* ButtonPosition.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946A6C652EF7A0E9009388D9 /* ButtonPosition.swift */; };
+		946A6C772EF7A0E9009388D9 /* PadButtonView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946A6C6A2EF7A0E9009388D9 /* PadButtonView.swift */; };
+		946A6C782EF7A0E9009388D9 /* PadConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946A6C6B2EF7A0E9009388D9 /* PadConfiguration.swift */; };
+		946A6C792EF7A0E9009388D9 /* PadConfigurationStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946A6C622EF7A0E9009388D9 /* PadConfigurationStorage.swift */; };
+		946A6C7A2EF7A0E9009388D9 /* TouchState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946A6C6C2EF7A0E9009388D9 /* TouchState.swift */; };
+		946A6C7B2EF7A0E9009388D9 /* YabausePadDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946A6C602EF7A0E9009388D9 /* YabausePadDelegate.swift */; };
+		946A6C7C2EF7A0E9009388D9 /* PadConfigurationDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946A6C5F2EF7A0E9009388D9 /* PadConfigurationDelegate.swift */; };
+		946A6C7D2EF7A0E9009388D9 /* PadButtons+Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946A6C692EF7A0E9009388D9 /* PadButtons+Extensions.swift */; };
+		946A6C7E2EF7A0E9009388D9 /* GameViewController+YabausePad.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946A6C682EF7A0E9009388D9 /* GameViewController+YabausePad.swift */; };
+		946A6C7F2EF7A0E9009388D9 /* DPadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946A6C672EF7A0E9009388D9 /* DPadView.swift */; };
+		946A6C802EF7A0E9009388D9 /* DPadState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946A6C662EF7A0E9009388D9 /* DPadState.swift */; };
+		946A6C812EF7A0E9009388D9 /* UserDefaultsPadConfigurationStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946A6C632EF7A0E9009388D9 /* UserDefaultsPadConfigurationStorage.swift */; };
+		946A6C822EF7A0E9009388D9 /* YabausePadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946A6C6D2EF7A0E9009388D9 /* YabausePadView.swift */; };
+		946A6C832EF7A0E9009388D9 /* ButtonPosition.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946A6C652EF7A0E9009388D9 /* ButtonPosition.swift */; };
+		946A6C842EF7A0E9009388D9 /* PadButtonView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946A6C6A2EF7A0E9009388D9 /* PadButtonView.swift */; };
+		946A6C852EF7A0E9009388D9 /* PadConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946A6C6B2EF7A0E9009388D9 /* PadConfiguration.swift */; };
+		946A6C862EF7A0E9009388D9 /* PadConfigurationStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946A6C622EF7A0E9009388D9 /* PadConfigurationStorage.swift */; };
+		946A6C872EF7A0E9009388D9 /* TouchState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946A6C6C2EF7A0E9009388D9 /* TouchState.swift */; };
+		946A6C882EF7A0E9009388D9 /* YabausePadDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946A6C602EF7A0E9009388D9 /* YabausePadDelegate.swift */; };
+		946A6C8F2EF7A0E9009388D9 /* PadSettingsViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946A6C8E2EF7A0E9009388D9 /* PadSettingsViewController.swift */; };
+		946A6C902EF7A0E9009388D9 /* PadSettingsViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946A6C8E2EF7A0E9009388D9 /* PadSettingsViewController.swift */; };
+		946A6C922EF7B0E9009388D9 /* PadTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946A6C912EF7B0E9009388D9 /* PadTheme.swift */; };
+		946A6C932EF7B0E9009388D9 /* PadTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946A6C912EF7B0E9009388D9 /* PadTheme.swift */; };
+		946A6C952EF7C0E9009388D9 /* AnalogStickView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946A6C942EF7C0E9009388D9 /* AnalogStickView.swift */; };
+		946A6C962EF7C0E9009388D9 /* AnalogStickView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946A6C942EF7C0E9009388D9 /* AnalogStickView.swift */; };
 		948822252C5F07B000E1580F /* MetalANGLE.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 94FAD1882C5F015800E31F1F /* MetalANGLE.xcframework */; };
 		948822262C5F07B000E1580F /* MetalANGLE.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 94FAD1882C5F015800E31F1F /* MetalANGLE.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		9490862A2C439ECD0061671A /* GameInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = 949086292C439ECD0061671A /* GameInfo.swift */; };
@@ -62,6 +93,34 @@
 		94F215442C4CC9BC00C213F8 /* GameMainViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94F215422C4CC9BC00C213F8 /* GameMainViewController.swift */; };
 		94FAD18A2C5F015800E31F1F /* MetalANGLE.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 94FAD1882C5F015800E31F1F /* MetalANGLE.xcframework */; };
 		CBF917C3CCABDBB63DCB43DF /* Pods_YabaSnashiro.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C8BA1D770E151F00A6BA938B /* Pods_YabaSnashiro.framework */; };
+		D915D75A2E4B2E60008D25C6 /* OtherGame.swift in Sources */ = {isa = PBXBuildFile; fileRef = D915D7582E4B2E60008D25C6 /* OtherGame.swift */; };
+		D915D75B2E4B2E60008D25C6 /* SegaRally.swift in Sources */ = {isa = PBXBuildFile; fileRef = D915D7592E4B2E60008D25C6 /* SegaRally.swift */; };
+		D915D75C2E4B2E60008D25C6 /* OtherGame.swift in Sources */ = {isa = PBXBuildFile; fileRef = D915D7582E4B2E60008D25C6 /* OtherGame.swift */; };
+		D915D75D2E4B2E60008D25C6 /* SegaRally.swift in Sources */ = {isa = PBXBuildFile; fileRef = D915D7592E4B2E60008D25C6 /* SegaRally.swift */; };
+		D915D7602E4B8991008D25C6 /* MessagingManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D915D75E2E4B8991008D25C6 /* MessagingManager.swift */; };
+		D915D7612E4B8991008D25C6 /* NotificationSettingsViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D915D75F2E4B8991008D25C6 /* NotificationSettingsViewController.swift */; };
+		D915D7622E4B8991008D25C6 /* MessagingManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D915D75E2E4B8991008D25C6 /* MessagingManager.swift */; };
+		D915D7632E4B8991008D25C6 /* NotificationSettingsViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D915D75F2E4B8991008D25C6 /* NotificationSettingsViewController.swift */; };
+		D915D7652E4C1CF5008D25C6 /* RetroAchievementsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D915D7642E4C1CF5008D25C6 /* RetroAchievementsManager.swift */; };
+		D915D7662E4C1CF5008D25C6 /* RetroAchievementsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D915D7642E4C1CF5008D25C6 /* RetroAchievementsManager.swift */; };
+		D915D7702E4C1D25008D25C6 /* RetroAchievementsNotificationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D915D76E2E4C1D25008D25C6 /* RetroAchievementsNotificationView.swift */; };
+		D915D7712E4C1D25008D25C6 /* RetroAchievementsLoginViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D915D76C2E4C1D25008D25C6 /* RetroAchievementsLoginViewController.swift */; };
+		D915D7722E4C1D25008D25C6 /* AchievementImageCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = D915D7672E4C1D25008D25C6 /* AchievementImageCache.swift */; };
+		D915D7732E4C1D25008D25C6 /* RetroAchievementsGamePlacardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D915D76B2E4C1D25008D25C6 /* RetroAchievementsGamePlacardView.swift */; };
+		D915D7742E4C1D25008D25C6 /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = D915D7692E4C1D25008D25C6 /* KeychainHelper.swift */; };
+		D915D7752E4C1D25008D25C6 /* AchievementListViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D915D7682E4C1D25008D25C6 /* AchievementListViewController.swift */; };
+		D915D7762E4C1D25008D25C6 /* RetroAchievementsSettingsViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D915D76F2E4C1D25008D25C6 /* RetroAchievementsSettingsViewController.swift */; };
+		D915D7772E4C1D25008D25C6 /* RetroAchievementsAuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D915D76A2E4C1D25008D25C6 /* RetroAchievementsAuthManager.swift */; };
+		D915D7782E4C1D25008D25C6 /* RetroAchievementsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D915D76D2E4C1D25008D25C6 /* RetroAchievementsManager.swift */; };
+		D915D7792E4C1D25008D25C6 /* RetroAchievementsNotificationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D915D76E2E4C1D25008D25C6 /* RetroAchievementsNotificationView.swift */; };
+		D915D77A2E4C1D25008D25C6 /* RetroAchievementsLoginViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D915D76C2E4C1D25008D25C6 /* RetroAchievementsLoginViewController.swift */; };
+		D915D77B2E4C1D25008D25C6 /* AchievementImageCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = D915D7672E4C1D25008D25C6 /* AchievementImageCache.swift */; };
+		D915D77C2E4C1D25008D25C6 /* RetroAchievementsGamePlacardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D915D76B2E4C1D25008D25C6 /* RetroAchievementsGamePlacardView.swift */; };
+		D915D77D2E4C1D25008D25C6 /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = D915D7692E4C1D25008D25C6 /* KeychainHelper.swift */; };
+		D915D77E2E4C1D25008D25C6 /* AchievementListViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D915D7682E4C1D25008D25C6 /* AchievementListViewController.swift */; };
+		D915D77F2E4C1D25008D25C6 /* RetroAchievementsSettingsViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D915D76F2E4C1D25008D25C6 /* RetroAchievementsSettingsViewController.swift */; };
+		D915D7802E4C1D25008D25C6 /* RetroAchievementsAuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D915D76A2E4C1D25008D25C6 /* RetroAchievementsAuthManager.swift */; };
+		D915D7812E4C1D25008D25C6 /* RetroAchievementsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D915D76D2E4C1D25008D25C6 /* RetroAchievementsManager.swift */; };
 		D926983E2D5747E50010093B /* LoginViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D926983D2D5747E50010093B /* LoginViewController.swift */; };
 		D926983F2D5747E50010093B /* LoginViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D926983D2D5747E50010093B /* LoginViewController.swift */; };
 		D92698482D5F91860010093B /* TabCheatViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D92698452D5F91860010093B /* TabCheatViewController.swift */; };
@@ -94,6 +153,15 @@
 		D971100F2DA467010057B574 /* ReportDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = D971100D2DA467010057B574 /* ReportDialog.swift */; };
 		D97110112DA477AF0057B574 /* StarRatingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D97110102DA477AF0057B574 /* StarRatingView.swift */; };
 		D97110122DA477AF0057B574 /* StarRatingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D97110102DA477AF0057B574 /* StarRatingView.swift */; };
+		D978AB892E42844C00BB9D22 /* RetroAchievementsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D978AB852E42844C00BB9D22 /* RetroAchievementsManager.swift */; };
+		D978AB8A2E42844C00BB9D22 /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = D978AB832E42844C00BB9D22 /* KeychainHelper.swift */; };
+		D978AB8B2E42844C00BB9D22 /* RetroAchievementsAuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D978AB842E42844C00BB9D22 /* RetroAchievementsAuthManager.swift */; };
+		D978AB8C2E42844C00BB9D22 /* AchievementListViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D978AB812E42844C00BB9D22 /* AchievementListViewController.swift */; };
+		D978AB8D2E42844C00BB9D22 /* RetroAchievementsSettingsViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D978AB872E42844C00BB9D22 /* RetroAchievementsSettingsViewController.swift */; };
+		D978AB8E2E42844C00BB9D22 /* RetroAchievementsNotificationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D978AB862E42844C00BB9D22 /* RetroAchievementsNotificationView.swift */; };
+		D978AB902E42844C00BB9D22 /* design.md in Resources */ = {isa = PBXBuildFile; fileRef = D978AB822E42844C00BB9D22 /* design.md */; };
+		D978AB9C2E42AA3600BB9D22 /* RetroAchievementsLoginViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D978AB9B2E42AA3600BB9D22 /* RetroAchievementsLoginViewController.swift */; };
+		D978AB9D2E42AA3600BB9D22 /* RetroAchievementsLoginViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D978AB9B2E42AA3600BB9D22 /* RetroAchievementsLoginViewController.swift */; };
 		D97B415B2C8CFC2E0070A81D /* YabaInterface.mm in Sources */ = {isa = PBXBuildFile; fileRef = D97B415A2C8CFC2E0070A81D /* YabaInterface.mm */; };
 		D97B415C2C8CFC2E0070A81D /* YabaInterface.mm in Sources */ = {isa = PBXBuildFile; fileRef = D97B415A2C8CFC2E0070A81D /* YabaInterface.mm */; };
 		D97B415F2C8D07E40070A81D /* BackupFileListViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D97B415E2C8D07E40070A81D /* BackupFileListViewController.swift */; };
@@ -127,6 +195,10 @@
 		D9EE8ED82C5F436100E47A22 /* MetalANGLE.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 94FAD1882C5F015800E31F1F /* MetalANGLE.xcframework */; };
 		D9EE8ED92C5F436100E47A22 /* MetalANGLE.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 94FAD1882C5F015800E31F1F /* MetalANGLE.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		D9EE8EE12C5F464E00E47A22 /* SnapshotHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9EE8EE02C5F464E00E47A22 /* SnapshotHelper.swift */; };
+		D9F40EF32E4718A200470B42 /* RetroAchievementsGamePlacardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9F40EF22E4718A200470B42 /* RetroAchievementsGamePlacardView.swift */; };
+		D9F40EF42E4718A200470B42 /* RetroAchievementsGamePlacardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9F40EF22E4718A200470B42 /* RetroAchievementsGamePlacardView.swift */; };
+		D9F40EF62E472F0C00470B42 /* AchievementImageCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9F40EF52E472F0C00470B42 /* AchievementImageCache.swift */; };
+		D9F40EF72E472F0C00470B42 /* AchievementImageCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9F40EF52E472F0C00470B42 /* AchievementImageCache.swift */; };
 		D9F8DF882D605EA1006EA972 /* LocalCheatTableViewCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9F8DF872D605EA1006EA972 /* LocalCheatTableViewCell.swift */; };
 		D9F8DF892D605EA1006EA972 /* LocalCheatTableViewCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9F8DF872D605EA1006EA972 /* LocalCheatTableViewCell.swift */; };
 /* End PBXBuildFile section */
@@ -257,6 +329,22 @@
 		944F55B4257B122E005D4814 /* liblzma-static.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = "liblzma-static.a"; sourceTree = "<group>"; };
 		944F55B9257B1573005D4814 /* GameController.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = GameController.framework; path = System/Library/Frameworks/GameController.framework; sourceTree = SDKROOT; };
 		945A4D482BC9798500BABC32 /* Products */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Products; path = "MetalANGLE 2024-04-12 23-14-48/Products"; sourceTree = "<group>"; };
+		946A6C5F2EF7A0E9009388D9 /* PadConfigurationDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PadConfigurationDelegate.swift; sourceTree = "<group>"; };
+		946A6C602EF7A0E9009388D9 /* YabausePadDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YabausePadDelegate.swift; sourceTree = "<group>"; };
+		946A6C622EF7A0E9009388D9 /* PadConfigurationStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PadConfigurationStorage.swift; sourceTree = "<group>"; };
+		946A6C632EF7A0E9009388D9 /* UserDefaultsPadConfigurationStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserDefaultsPadConfigurationStorage.swift; sourceTree = "<group>"; };
+		946A6C652EF7A0E9009388D9 /* ButtonPosition.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ButtonPosition.swift; sourceTree = "<group>"; };
+		946A6C662EF7A0E9009388D9 /* DPadState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DPadState.swift; sourceTree = "<group>"; };
+		946A6C672EF7A0E9009388D9 /* DPadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DPadView.swift; sourceTree = "<group>"; };
+		946A6C682EF7A0E9009388D9 /* GameViewController+YabausePad.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GameViewController+YabausePad.swift"; sourceTree = "<group>"; };
+		946A6C692EF7A0E9009388D9 /* PadButtons+Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PadButtons+Extensions.swift"; sourceTree = "<group>"; };
+		946A6C6A2EF7A0E9009388D9 /* PadButtonView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PadButtonView.swift; sourceTree = "<group>"; };
+		946A6C6B2EF7A0E9009388D9 /* PadConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PadConfiguration.swift; sourceTree = "<group>"; };
+		946A6C6C2EF7A0E9009388D9 /* TouchState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TouchState.swift; sourceTree = "<group>"; };
+		946A6C6D2EF7A0E9009388D9 /* YabausePadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YabausePadView.swift; sourceTree = "<group>"; };
+		946A6C8E2EF7A0E9009388D9 /* PadSettingsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PadSettingsViewController.swift; sourceTree = "<group>"; };
+		946A6C912EF7B0E9009388D9 /* PadTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PadTheme.swift; sourceTree = "<group>"; };
+		946A6C942EF7C0E9009388D9 /* AnalogStickView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalogStickView.swift; sourceTree = "<group>"; };
 		949086292C439ECD0061671A /* GameInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameInfo.swift; sourceTree = "<group>"; };
 		9490862C2C43D9870061671A /* secrets.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = secrets.plist; sourceTree = "<group>"; };
 		94C6524A257B3E7500CA7E50 /* YabaSnashiro.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = YabaSnashiro.entitlements; sourceTree = "<group>"; };
@@ -277,6 +365,20 @@
 		C8BA1D770E151F00A6BA938B /* Pods_YabaSnashiro.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_YabaSnashiro.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		CCB1CB6709D254B83DC2B910 /* Pods-uoyabause.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-uoyabause.debug.xcconfig"; path = "Pods/Target Support Files/Pods-uoyabause/Pods-uoyabause.debug.xcconfig"; sourceTree = "<group>"; };
 		CD439AACD73A3F0ECAC8B612 /* Pods-YabaSnashiroUITests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-YabaSnashiroUITests.debug.xcconfig"; path = "Pods/Target Support Files/Pods-YabaSnashiroUITests/Pods-YabaSnashiroUITests.debug.xcconfig"; sourceTree = "<group>"; };
+		D915D7582E4B2E60008D25C6 /* OtherGame.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OtherGame.swift; sourceTree = "<group>"; };
+		D915D7592E4B2E60008D25C6 /* SegaRally.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SegaRally.swift; sourceTree = "<group>"; };
+		D915D75E2E4B8991008D25C6 /* MessagingManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessagingManager.swift; sourceTree = "<group>"; };
+		D915D75F2E4B8991008D25C6 /* NotificationSettingsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationSettingsViewController.swift; sourceTree = "<group>"; };
+		D915D7642E4C1CF5008D25C6 /* RetroAchievementsManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RetroAchievementsManager.swift; sourceTree = "<group>"; };
+		D915D7672E4C1D25008D25C6 /* AchievementImageCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AchievementImageCache.swift; sourceTree = "<group>"; };
+		D915D7682E4C1D25008D25C6 /* AchievementListViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AchievementListViewController.swift; sourceTree = "<group>"; };
+		D915D7692E4C1D25008D25C6 /* KeychainHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainHelper.swift; sourceTree = "<group>"; };
+		D915D76A2E4C1D25008D25C6 /* RetroAchievementsAuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RetroAchievementsAuthManager.swift; sourceTree = "<group>"; };
+		D915D76B2E4C1D25008D25C6 /* RetroAchievementsGamePlacardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RetroAchievementsGamePlacardView.swift; sourceTree = "<group>"; };
+		D915D76C2E4C1D25008D25C6 /* RetroAchievementsLoginViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RetroAchievementsLoginViewController.swift; sourceTree = "<group>"; };
+		D915D76D2E4C1D25008D25C6 /* RetroAchievementsManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RetroAchievementsManager.swift; sourceTree = "<group>"; };
+		D915D76E2E4C1D25008D25C6 /* RetroAchievementsNotificationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RetroAchievementsNotificationView.swift; sourceTree = "<group>"; };
+		D915D76F2E4C1D25008D25C6 /* RetroAchievementsSettingsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RetroAchievementsSettingsViewController.swift; sourceTree = "<group>"; };
 		D926983D2D5747E50010093B /* LoginViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginViewController.swift; sourceTree = "<group>"; };
 		D92698432D5F91860010093B /* CloudCheatViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudCheatViewController.swift; sourceTree = "<group>"; };
 		D92698442D5F91860010093B /* LocalCheatViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalCheatViewController.swift; sourceTree = "<group>"; };
@@ -295,6 +397,14 @@
 		D95CDCE92DC6DC500073D89D /* DiscordWebhook.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscordWebhook.swift; sourceTree = "<group>"; };
 		D971100D2DA467010057B574 /* ReportDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportDialog.swift; sourceTree = "<group>"; };
 		D97110102DA477AF0057B574 /* StarRatingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StarRatingView.swift; sourceTree = "<group>"; };
+		D978AB812E42844C00BB9D22 /* AchievementListViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AchievementListViewController.swift; sourceTree = "<group>"; };
+		D978AB822E42844C00BB9D22 /* design.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = design.md; sourceTree = "<group>"; };
+		D978AB832E42844C00BB9D22 /* KeychainHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainHelper.swift; sourceTree = "<group>"; };
+		D978AB842E42844C00BB9D22 /* RetroAchievementsAuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RetroAchievementsAuthManager.swift; sourceTree = "<group>"; };
+		D978AB852E42844C00BB9D22 /* RetroAchievementsManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RetroAchievementsManager.swift; sourceTree = "<group>"; };
+		D978AB862E42844C00BB9D22 /* RetroAchievementsNotificationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RetroAchievementsNotificationView.swift; sourceTree = "<group>"; };
+		D978AB872E42844C00BB9D22 /* RetroAchievementsSettingsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RetroAchievementsSettingsViewController.swift; sourceTree = "<group>"; };
+		D978AB9B2E42AA3600BB9D22 /* RetroAchievementsLoginViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RetroAchievementsLoginViewController.swift; sourceTree = "<group>"; };
 		D97B415A2C8CFC2E0070A81D /* YabaInterface.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; path = YabaInterface.mm; sourceTree = "<group>"; };
 		D97B415E2C8D07E40070A81D /* BackupFileListViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackupFileListViewController.swift; sourceTree = "<group>"; };
 		D98515952CD1F7BE00055C16 /* liblzma.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = liblzma.a; sourceTree = "<group>"; };
@@ -315,6 +425,8 @@
 		D9EE8EDB2C5F43F000E47A22 /* YabaSnashiroUITests-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "YabaSnashiroUITests-Bridging-Header.h"; sourceTree = "<group>"; };
 		D9EE8EDC2C5F43F100E47A22 /* MainScreenTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainScreenTest.swift; sourceTree = "<group>"; };
 		D9EE8EE02C5F464E00E47A22 /* SnapshotHelper.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; name = SnapshotHelper.swift; path = fastlane/SnapshotHelper.swift; sourceTree = SOURCE_ROOT; };
+		D9F40EF22E4718A200470B42 /* RetroAchievementsGamePlacardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RetroAchievementsGamePlacardView.swift; sourceTree = "<group>"; };
+		D9F40EF52E472F0C00470B42 /* AchievementImageCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AchievementImageCache.swift; sourceTree = "<group>"; };
 		D9F8DF872D605EA1006EA972 /* LocalCheatTableViewCell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalCheatTableViewCell.swift; sourceTree = "<group>"; };
 		E441550DF2B7E73FC083A81F /* Pods-uoyabauseUITests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-uoyabauseUITests.debug.xcconfig"; path = "Pods/Target Support Files/Pods-uoyabauseUITests/Pods-uoyabauseUITests.debug.xcconfig"; sourceTree = "<group>"; };
 		F059606C7ACC5A2D6E902DCC /* Pods-YabaSnashiro.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-YabaSnashiro.debug.xcconfig"; path = "Pods/Target Support Files/Pods-YabaSnashiro/Pods-YabaSnashiro.debug.xcconfig"; sourceTree = "<group>"; };
@@ -369,7 +481,6 @@
 				D990B59E2C5F504E001E2D6C /* MetalANGLE.xcframework in Frameworks */,
 				8991F68256687B7469F10AD1 /* Pods_YabaSnashiro_Lite.framework in Frameworks */,
 				3421AB665A0C244BD5D62CDE /* Pods_YabaSnashiro_Lite.framework in Frameworks */,
-				3421AB665A0C244BD5D62CDE /* Pods_YabaSnashiro_Lite.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -417,6 +528,10 @@
 		644232A41C6580000050611E /* uoyabause */ = {
 			isa = PBXGroup;
 			children = (
+				946A6C6E2EF7A0E9009388D9 /* Pad */,
+				D915D75E2E4B8991008D25C6 /* MessagingManager.swift */,
+				D915D75F2E4B8991008D25C6 /* NotificationSettingsViewController.swift */,
+				D978AB882E42844C00BB9D22 /* achievements */,
 				D95CDCEA2DC6DC500073D89D /* util */,
 				D95CDCDF2DC644650073D89D /* game */,
 				D93EB1962DC593ED00E3A801 /* DiscordAuthManager.swift */,
@@ -507,6 +622,45 @@
 			name = Frameworks;
 			sourceTree = "<group>";
 		};
+		946A6C612EF7A0E9009388D9 /* Protocols */ = {
+			isa = PBXGroup;
+			children = (
+				946A6C5F2EF7A0E9009388D9 /* PadConfigurationDelegate.swift */,
+				946A6C602EF7A0E9009388D9 /* YabausePadDelegate.swift */,
+			);
+			path = Protocols;
+			sourceTree = "<group>";
+		};
+		946A6C642EF7A0E9009388D9 /* Storage */ = {
+			isa = PBXGroup;
+			children = (
+				946A6C622EF7A0E9009388D9 /* PadConfigurationStorage.swift */,
+				946A6C632EF7A0E9009388D9 /* UserDefaultsPadConfigurationStorage.swift */,
+			);
+			path = Storage;
+			sourceTree = "<group>";
+		};
+		946A6C6E2EF7A0E9009388D9 /* Pad */ = {
+			isa = PBXGroup;
+			children = (
+				946A6C612EF7A0E9009388D9 /* Protocols */,
+				946A6C642EF7A0E9009388D9 /* Storage */,
+				946A6C942EF7C0E9009388D9 /* AnalogStickView.swift */,
+				946A6C652EF7A0E9009388D9 /* ButtonPosition.swift */,
+				946A6C662EF7A0E9009388D9 /* DPadState.swift */,
+				946A6C672EF7A0E9009388D9 /* DPadView.swift */,
+				946A6C682EF7A0E9009388D9 /* GameViewController+YabausePad.swift */,
+				946A6C692EF7A0E9009388D9 /* PadButtons+Extensions.swift */,
+				946A6C6A2EF7A0E9009388D9 /* PadButtonView.swift */,
+				946A6C6B2EF7A0E9009388D9 /* PadConfiguration.swift */,
+				946A6C912EF7B0E9009388D9 /* PadTheme.swift */,
+				946A6C8E2EF7A0E9009388D9 /* PadSettingsViewController.swift */,
+				946A6C6C2EF7A0E9009388D9 /* TouchState.swift */,
+				946A6C6D2EF7A0E9009388D9 /* YabausePadView.swift */,
+			);
+			path = Pad;
+			sourceTree = "<group>";
+		};
 		D92698472D5F91860010093B /* Cheat */ = {
 			isa = PBXGroup;
 			children = (
@@ -523,6 +677,8 @@
 		D95CDCDF2DC644650073D89D /* game */ = {
 			isa = PBXGroup;
 			children = (
+				D915D7582E4B2E60008D25C6 /* OtherGame.swift */,
+				D915D7592E4B2E60008D25C6 /* SegaRally.swift */,
 				D95CDCE02DC644970073D89D /* BaseGame.swift */,
 				D95CDCE12DC644970073D89D /* SonicR.swift */,
 			);
@@ -535,6 +691,33 @@
 				D95CDCE92DC6DC500073D89D /* DiscordWebhook.swift */,
 			);
 			path = util;
+			sourceTree = "<group>";
+		};
+		D978AB882E42844C00BB9D22 /* achievements */ = {
+			isa = PBXGroup;
+			children = (
+				D9F40EF52E472F0C00470B42 /* AchievementImageCache.swift */,
+				D9F40EF22E4718A200470B42 /* RetroAchievementsGamePlacardView.swift */,
+				D978AB9B2E42AA3600BB9D22 /* RetroAchievementsLoginViewController.swift */,
+				D978AB812E42844C00BB9D22 /* AchievementListViewController.swift */,
+				D978AB822E42844C00BB9D22 /* design.md */,
+				D978AB832E42844C00BB9D22 /* KeychainHelper.swift */,
+				D978AB842E42844C00BB9D22 /* RetroAchievementsAuthManager.swift */,
+				D978AB852E42844C00BB9D22 /* RetroAchievementsManager.swift */,
+				D978AB862E42844C00BB9D22 /* RetroAchievementsNotificationView.swift */,
+				D978AB872E42844C00BB9D22 /* RetroAchievementsSettingsViewController.swift */,
+				D915D7642E4C1CF5008D25C6 /* RetroAchievementsManager.swift */,
+				D915D7672E4C1D25008D25C6 /* AchievementImageCache.swift */,
+				D915D7682E4C1D25008D25C6 /* AchievementListViewController.swift */,
+				D915D7692E4C1D25008D25C6 /* KeychainHelper.swift */,
+				D915D76A2E4C1D25008D25C6 /* RetroAchievementsAuthManager.swift */,
+				D915D76B2E4C1D25008D25C6 /* RetroAchievementsGamePlacardView.swift */,
+				D915D76C2E4C1D25008D25C6 /* RetroAchievementsLoginViewController.swift */,
+				D915D76D2E4C1D25008D25C6 /* RetroAchievementsManager.swift */,
+				D915D76E2E4C1D25008D25C6 /* RetroAchievementsNotificationView.swift */,
+				D915D76F2E4C1D25008D25C6 /* RetroAchievementsSettingsViewController.swift */,
+			);
+			path = achievements;
 			sourceTree = "<group>";
 		};
 		D97B415D2C8D071F0070A81D /* BackupManager */ = {
@@ -699,7 +882,6 @@
 				TargetAttributes = {
 					644232A11C6580000050611E = {
 						CreatedOnToolsVersion = 7.2.1;
-						DevelopmentTeam = AAAAAAAAAA;
 						LastSwiftMigration = 0800;
 					};
 					644232BE1C6580010050611E = {
@@ -779,6 +961,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D978AB902E42844C00BB9D22 /* design.md in Resources */,
 				941B72FB2BE733D70078C190 /* Main.storyboard in Resources */,
 				941B72FC2BE733D70078C190 /* GoogleService-Info.plist in Resources */,
 				941B72FD2BE733D70078C190 /* settings.plist in Resources */,
@@ -821,6 +1004,7 @@
 				"${BUILT_PRODUCTS_DIR}/FirebaseDatabase/FirebaseDatabase.framework",
 				"${BUILT_PRODUCTS_DIR}/FirebaseFirestore/FirebaseFirestore.framework",
 				"${BUILT_PRODUCTS_DIR}/FirebaseFirestoreInternal/FirebaseFirestoreInternal.framework",
+				"${BUILT_PRODUCTS_DIR}/FirebaseInAppMessaging/FirebaseInAppMessaging.framework",
 				"${BUILT_PRODUCTS_DIR}/FirebaseInstallations/FirebaseInstallations.framework",
 				"${BUILT_PRODUCTS_DIR}/FirebaseMessaging/FirebaseMessaging.framework",
 				"${BUILT_PRODUCTS_DIR}/FirebaseRemoteConfig/FirebaseRemoteConfig.framework",
@@ -858,6 +1042,7 @@
 				"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/FirebaseDatabase.framework",
 				"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/FirebaseFirestore.framework",
 				"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/FirebaseFirestoreInternal.framework",
+				"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/FirebaseInAppMessaging.framework",
 				"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/FirebaseInstallations.framework",
 				"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/FirebaseMessaging.framework",
 				"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/FirebaseRemoteConfig.framework",
@@ -927,6 +1112,7 @@
 				"${BUILT_PRODUCTS_DIR}/FirebaseDatabase/FirebaseDatabase.framework",
 				"${BUILT_PRODUCTS_DIR}/FirebaseFirestore/FirebaseFirestore.framework",
 				"${BUILT_PRODUCTS_DIR}/FirebaseFirestoreInternal/FirebaseFirestoreInternal.framework",
+				"${BUILT_PRODUCTS_DIR}/FirebaseInAppMessaging/FirebaseInAppMessaging.framework",
 				"${BUILT_PRODUCTS_DIR}/FirebaseInstallations/FirebaseInstallations.framework",
 				"${BUILT_PRODUCTS_DIR}/FirebaseMessaging/FirebaseMessaging.framework",
 				"${BUILT_PRODUCTS_DIR}/FirebaseRemoteConfig/FirebaseRemoteConfig.framework",
@@ -964,6 +1150,7 @@
 				"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/FirebaseDatabase.framework",
 				"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/FirebaseFirestore.framework",
 				"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/FirebaseFirestoreInternal.framework",
+				"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/FirebaseInAppMessaging.framework",
 				"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/FirebaseInstallations.framework",
 				"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/FirebaseMessaging.framework",
 				"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/FirebaseRemoteConfig.framework",
@@ -1101,6 +1288,7 @@
 				"${BUILT_PRODUCTS_DIR}/FirebaseDatabase/FirebaseDatabase.framework",
 				"${BUILT_PRODUCTS_DIR}/FirebaseFirestore/FirebaseFirestore.framework",
 				"${BUILT_PRODUCTS_DIR}/FirebaseFirestoreInternal/FirebaseFirestoreInternal.framework",
+				"${BUILT_PRODUCTS_DIR}/FirebaseInAppMessaging/FirebaseInAppMessaging.framework",
 				"${BUILT_PRODUCTS_DIR}/FirebaseInstallations/FirebaseInstallations.framework",
 				"${BUILT_PRODUCTS_DIR}/FirebaseMessaging/FirebaseMessaging.framework",
 				"${BUILT_PRODUCTS_DIR}/FirebaseRemoteConfig/FirebaseRemoteConfig.framework",
@@ -1138,6 +1326,7 @@
 				"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/FirebaseDatabase.framework",
 				"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/FirebaseFirestore.framework",
 				"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/FirebaseFirestoreInternal.framework",
+				"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/FirebaseInAppMessaging.framework",
 				"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/FirebaseInstallations.framework",
 				"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/FirebaseMessaging.framework",
 				"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/FirebaseRemoteConfig.framework",
@@ -1203,6 +1392,7 @@
 				"${BUILT_PRODUCTS_DIR}/FirebaseDatabase/FirebaseDatabase.framework",
 				"${BUILT_PRODUCTS_DIR}/FirebaseFirestore/FirebaseFirestore.framework",
 				"${BUILT_PRODUCTS_DIR}/FirebaseFirestoreInternal/FirebaseFirestoreInternal.framework",
+				"${BUILT_PRODUCTS_DIR}/FirebaseInAppMessaging/FirebaseInAppMessaging.framework",
 				"${BUILT_PRODUCTS_DIR}/FirebaseInstallations/FirebaseInstallations.framework",
 				"${BUILT_PRODUCTS_DIR}/FirebaseMessaging/FirebaseMessaging.framework",
 				"${BUILT_PRODUCTS_DIR}/FirebaseRemoteConfig/FirebaseRemoteConfig.framework",
@@ -1240,6 +1430,7 @@
 				"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/FirebaseDatabase.framework",
 				"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/FirebaseFirestore.framework",
 				"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/FirebaseFirestoreInternal.framework",
+				"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/FirebaseInAppMessaging.framework",
 				"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/FirebaseInstallations.framework",
 				"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/FirebaseMessaging.framework",
 				"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/FirebaseRemoteConfig.framework",
@@ -1274,32 +1465,67 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				946A6C7C2EF7A0E9009388D9 /* PadConfigurationDelegate.swift in Sources */,
+				946A6C7D2EF7A0E9009388D9 /* PadButtons+Extensions.swift in Sources */,
+				946A6C7E2EF7A0E9009388D9 /* GameViewController+YabausePad.swift in Sources */,
+				946A6C7F2EF7A0E9009388D9 /* DPadView.swift in Sources */,
+				946A6C802EF7A0E9009388D9 /* DPadState.swift in Sources */,
+				946A6C812EF7A0E9009388D9 /* UserDefaultsPadConfigurationStorage.swift in Sources */,
+				946A6C822EF7A0E9009388D9 /* YabausePadView.swift in Sources */,
+				946A6C832EF7A0E9009388D9 /* ButtonPosition.swift in Sources */,
+				946A6C842EF7A0E9009388D9 /* PadButtonView.swift in Sources */,
+				946A6C852EF7A0E9009388D9 /* PadConfiguration.swift in Sources */,
+				946A6C932EF7B0E9009388D9 /* PadTheme.swift in Sources */,
+				946A6C962EF7C0E9009388D9 /* AnalogStickView.swift in Sources */,
+				946A6C902EF7A0E9009388D9 /* PadSettingsViewController.swift in Sources */,
+				946A6C862EF7A0E9009388D9 /* PadConfigurationStorage.swift in Sources */,
+				946A6C872EF7A0E9009388D9 /* TouchState.swift in Sources */,
+				946A6C882EF7A0E9009388D9 /* YabausePadDelegate.swift in Sources */,
 				D9F8DF892D605EA1006EA972 /* LocalCheatTableViewCell.swift in Sources */,
 				D926984C2D5F91860010093B /* TabCheatViewController.swift in Sources */,
 				D926984D2D5F91860010093B /* YabauseManager.swift in Sources */,
+				D9F40EF32E4718A200470B42 /* RetroAchievementsGamePlacardView.swift in Sources */,
 				D926984E2D5F91860010093B /* LocalCheatViewController.swift in Sources */,
 				D926984F2D5F91860010093B /* CloudCheatViewController.swift in Sources */,
 				D93EB1912DC4FE6700E3A801 /* Colors.swift in Sources */,
 				94F215322C4BA91600C213F8 /* SaturnKey.swift in Sources */,
+				D915D7652E4C1CF5008D25C6 /* RetroAchievementsManager.swift in Sources */,
 				94F2152C2C4BA6FF00C213F8 /* MenuViewController.swift in Sources */,
 				D98F41DA2C6DA7620003E4C8 /* DraggableCircleView.swift in Sources */,
 				D93EB1942DC588B400E3A801 /* UserProfileViewController.swift in Sources */,
 				D9D0098B2C68B03500B93C58 /* AppDelegate.swift in Sources */,
 				648926691D719E9500D92D58 /* FileSelectController.swift in Sources */,
 				645EA6C61D975B3D00A7A5D8 /* SettingsViewController.swift in Sources */,
+				D915D7792E4C1D25008D25C6 /* RetroAchievementsNotificationView.swift in Sources */,
+				D915D77A2E4C1D25008D25C6 /* RetroAchievementsLoginViewController.swift in Sources */,
+				D915D77B2E4C1D25008D25C6 /* AchievementImageCache.swift in Sources */,
+				D915D77C2E4C1D25008D25C6 /* RetroAchievementsGamePlacardView.swift in Sources */,
+				D915D77D2E4C1D25008D25C6 /* KeychainHelper.swift in Sources */,
+				D915D77E2E4C1D25008D25C6 /* AchievementListViewController.swift in Sources */,
+				D915D77F2E4C1D25008D25C6 /* RetroAchievementsSettingsViewController.swift in Sources */,
+				D915D7802E4C1D25008D25C6 /* RetroAchievementsAuthManager.swift in Sources */,
+				D915D7812E4C1D25008D25C6 /* RetroAchievementsManager.swift in Sources */,
 				D97B415F2C8D07E40070A81D /* BackupFileListViewController.swift in Sources */,
 				D95CDCEC2DC6DC500073D89D /* DiscordWebhook.swift in Sources */,
 				94F215402C4BF07400C213F8 /* GameViewController.swift in Sources */,
 				94F215432C4CC9BC00C213F8 /* GameMainViewController.swift in Sources */,
 				64D450091D7C0E6C004E2615 /* MainScreenController.swift in Sources */,
 				94F215392C4BCE0500C213F8 /* PadButton.swift in Sources */,
+				D978AB892E42844C00BB9D22 /* RetroAchievementsManager.swift in Sources */,
+				D978AB8A2E42844C00BB9D22 /* KeychainHelper.swift in Sources */,
+				D978AB8B2E42844C00BB9D22 /* RetroAchievementsAuthManager.swift in Sources */,
+				D978AB8C2E42844C00BB9D22 /* AchievementListViewController.swift in Sources */,
+				D978AB8D2E42844C00BB9D22 /* RetroAchievementsSettingsViewController.swift in Sources */,
+				D978AB8E2E42844C00BB9D22 /* RetroAchievementsNotificationView.swift in Sources */,
 				94CB9D8F2581C6BE00C8E3EC /* iOSCoreAudio.m in Sources */,
 				D971100E2DA467010057B574 /* ReportDialog.swift in Sources */,
 				94F2152F2C4BA89B00C213F8 /* KeyMapper.swift in Sources */,
 				D926983E2D5747E50010093B /* LoginViewController.swift in Sources */,
+				D978AB9C2E42AA3600BB9D22 /* RetroAchievementsLoginViewController.swift in Sources */,
 				D93EB1982DC593ED00E3A801 /* DiscordAuthManager.swift in Sources */,
 				D93EB1992DC593ED00E3A801 /* DiscordOAuthRedirectHandler.swift in Sources */,
 				D9D083202DBF96DE00621ECE /* LeaderBoardRepository.swift in Sources */,
+				D9F40EF72E472F0C00470B42 /* AchievementImageCache.swift in Sources */,
 				D9D083212DBF96DE00621ECE /* LeaderBoardViewModel.swift in Sources */,
 				D95CDCE22DC644970073D89D /* SonicR.swift in Sources */,
 				D95CDCE32DC644970073D89D /* BaseGame.swift in Sources */,
@@ -1307,6 +1533,10 @@
 				9490862A2C439ECD0061671A /* GameInfo.swift in Sources */,
 				D92698512D601A6D0010093B /* CloudCheatTableViewCell.swift in Sources */,
 				D97B415B2C8CFC2E0070A81D /* YabaInterface.mm in Sources */,
+				D915D75C2E4B2E60008D25C6 /* OtherGame.swift in Sources */,
+				D915D7622E4B8991008D25C6 /* MessagingManager.swift in Sources */,
+				D915D7632E4B8991008D25C6 /* NotificationSettingsViewController.swift in Sources */,
+				D915D75D2E4B2E60008D25C6 /* SegaRally.swift in Sources */,
 				D97110122DA477AF0057B574 /* StarRatingView.swift in Sources */,
 				D98F41D72C6B92C40003E4C8 /* UIDevice.swift in Sources */,
 			);
@@ -1335,7 +1565,10 @@
 			files = (
 				D9F8DF882D605EA1006EA972 /* LocalCheatTableViewCell.swift in Sources */,
 				D92698482D5F91860010093B /* TabCheatViewController.swift in Sources */,
+				D915D7662E4C1CF5008D25C6 /* RetroAchievementsManager.swift in Sources */,
 				D92698492D5F91860010093B /* YabauseManager.swift in Sources */,
+				D915D7602E4B8991008D25C6 /* MessagingManager.swift in Sources */,
+				D915D7612E4B8991008D25C6 /* NotificationSettingsViewController.swift in Sources */,
 				D926984A2D5F91860010093B /* LocalCheatViewController.swift in Sources */,
 				D926984B2D5F91860010093B /* CloudCheatViewController.swift in Sources */,
 				D93EB1922DC4FE6700E3A801 /* Colors.swift in Sources */,
@@ -1349,11 +1582,37 @@
 				D97B41602C8D07E40070A81D /* BackupFileListViewController.swift in Sources */,
 				D95CDCEB2DC6DC500073D89D /* DiscordWebhook.swift in Sources */,
 				94F215412C4BF07400C213F8 /* GameViewController.swift in Sources */,
+				D915D7702E4C1D25008D25C6 /* RetroAchievementsNotificationView.swift in Sources */,
+				D915D7712E4C1D25008D25C6 /* RetroAchievementsLoginViewController.swift in Sources */,
+				D915D7722E4C1D25008D25C6 /* AchievementImageCache.swift in Sources */,
+				D915D7732E4C1D25008D25C6 /* RetroAchievementsGamePlacardView.swift in Sources */,
+				D915D7742E4C1D25008D25C6 /* KeychainHelper.swift in Sources */,
+				D915D7752E4C1D25008D25C6 /* AchievementListViewController.swift in Sources */,
+				D915D7762E4C1D25008D25C6 /* RetroAchievementsSettingsViewController.swift in Sources */,
+				D915D7772E4C1D25008D25C6 /* RetroAchievementsAuthManager.swift in Sources */,
+				D915D7782E4C1D25008D25C6 /* RetroAchievementsManager.swift in Sources */,
 				94F215442C4CC9BC00C213F8 /* GameMainViewController.swift in Sources */,
 				941B72ED2BE733D70078C190 /* MainScreenController.swift in Sources */,
 				94F2153A2C4BCE0500C213F8 /* PadButton.swift in Sources */,
 				941B72EF2BE733D70078C190 /* iOSCoreAudio.m in Sources */,
 				D971100F2DA467010057B574 /* ReportDialog.swift in Sources */,
+				946A6C6F2EF7A0E9009388D9 /* PadConfigurationDelegate.swift in Sources */,
+				946A6C702EF7A0E9009388D9 /* PadButtons+Extensions.swift in Sources */,
+				946A6C712EF7A0E9009388D9 /* GameViewController+YabausePad.swift in Sources */,
+				946A6C722EF7A0E9009388D9 /* DPadView.swift in Sources */,
+				946A6C732EF7A0E9009388D9 /* DPadState.swift in Sources */,
+				946A6C742EF7A0E9009388D9 /* UserDefaultsPadConfigurationStorage.swift in Sources */,
+				946A6C752EF7A0E9009388D9 /* YabausePadView.swift in Sources */,
+				946A6C762EF7A0E9009388D9 /* ButtonPosition.swift in Sources */,
+				946A6C772EF7A0E9009388D9 /* PadButtonView.swift in Sources */,
+				946A6C782EF7A0E9009388D9 /* PadConfiguration.swift in Sources */,
+				946A6C922EF7B0E9009388D9 /* PadTheme.swift in Sources */,
+				946A6C952EF7C0E9009388D9 /* AnalogStickView.swift in Sources */,
+				946A6C8F2EF7A0E9009388D9 /* PadSettingsViewController.swift in Sources */,
+				946A6C792EF7A0E9009388D9 /* PadConfigurationStorage.swift in Sources */,
+				946A6C7A2EF7A0E9009388D9 /* TouchState.swift in Sources */,
+				946A6C7B2EF7A0E9009388D9 /* YabausePadDelegate.swift in Sources */,
+				D9F40EF42E4718A200470B42 /* RetroAchievementsGamePlacardView.swift in Sources */,
 				94F215302C4BA89B00C213F8 /* KeyMapper.swift in Sources */,
 				D926983F2D5747E50010093B /* LoginViewController.swift in Sources */,
 				D93EB19A2DC593ED00E3A801 /* DiscordAuthManager.swift in Sources */,
@@ -1362,11 +1621,15 @@
 				D9D0831E2DBF96DE00621ECE /* LeaderBoardViewModel.swift in Sources */,
 				D95CDCE42DC644970073D89D /* SonicR.swift in Sources */,
 				D95CDCE52DC644970073D89D /* BaseGame.swift in Sources */,
+				D978AB9D2E42AA3600BB9D22 /* RetroAchievementsLoginViewController.swift in Sources */,
 				D9D0831F2DBF96DE00621ECE /* LeaderBoardController.swift in Sources */,
 				9490862B2C439ECD0061671A /* GameInfo.swift in Sources */,
+				D915D75A2E4B2E60008D25C6 /* OtherGame.swift in Sources */,
+				D915D75B2E4B2E60008D25C6 /* SegaRally.swift in Sources */,
 				D92698522D601A6D0010093B /* CloudCheatTableViewCell.swift in Sources */,
 				D97B415C2C8CFC2E0070A81D /* YabaInterface.mm in Sources */,
 				D97110112DA477AF0057B574 /* StarRatingView.swift in Sources */,
+				D9F40EF62E472F0C00470B42 /* AchievementImageCache.swift in Sources */,
 				D98F41D82C6B92C40003E4C8 /* UIDevice.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -1555,15 +1818,10 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = YabaSnashiro.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
-				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Developer";
-				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
-				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 58;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 70;
 				DEFINES_MODULE = YES;
-				DEVELOPMENT_TEAM = "";
-				"DEVELOPMENT_TEAM[sdk=iphoneos*]" = Y5GFLYKZWK;
-				DEVELOPMENT_TEAM = "";
-				"DEVELOPMENT_TEAM[sdk=iphoneos*]" = Y5GFLYKZWK;
+				DEVELOPMENT_TEAM = Y5GFLYKZWK;
 				ENABLE_BITCODE = NO;
 				ENABLE_MODULE_VERIFIER = YES;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -1583,7 +1841,7 @@
 					"$(PROJECT_DIR)/Debug",
 					"$(PROJECT_DIR)",
 				);
-				MARKETING_VERSION = 1.17.5;
+				MARKETING_VERSION = 1.18.19;
 				MODULE_VERIFIER_SUPPORTED_LANGUAGE_STANDARDS = "gnu99 gnu++11";
 				OTHER_LDFLAGS = (
 					"$(inherited)",
@@ -1597,8 +1855,6 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE = "";
 				PROVISIONING_PROFILE_SPECIFIER = "";
-				"PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]" = "match Development org.devMiyax.yabasanshiro2";
-				"PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]" = "match Development org.devMiyax.yabasanshiro2";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "uoyabause/uoyabause-Bridging-Header.h";
@@ -1618,16 +1874,10 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = YabaSnashiro.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
-				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Distribution";
-				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Distribution";
-				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
-				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 58;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 70;
 				DEFINES_MODULE = YES;
-				DEVELOPMENT_TEAM = "";
-				"DEVELOPMENT_TEAM[sdk=iphoneos*]" = Y5GFLYKZWK;
-				DEVELOPMENT_TEAM = "";
-				"DEVELOPMENT_TEAM[sdk=iphoneos*]" = Y5GFLYKZWK;
+				DEVELOPMENT_TEAM = Y5GFLYKZWK;
 				ENABLE_BITCODE = NO;
 				ENABLE_MODULE_VERIFIER = YES;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -1647,7 +1897,7 @@
 					"$(PROJECT_DIR)/Debug",
 					"$(PROJECT_DIR)",
 				);
-				MARKETING_VERSION = 1.17.5;
+				MARKETING_VERSION = 1.18.19;
 				MODULE_VERIFIER_SUPPORTED_LANGUAGE_STANDARDS = "gnu99 gnu++11";
 				OTHER_LDFLAGS = (
 					"$(inherited)",
@@ -1662,8 +1912,6 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE = "";
 				PROVISIONING_PROFILE_SPECIFIER = "";
-				"PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]" = "match AppStore org.devMiyax.yabasanshiro2";
-				"PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]" = "match AppStore org.devMiyax.yabasanshiro2";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "uoyabause/uoyabause-Bridging-Header.h";
@@ -1765,15 +2013,10 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = YabaSnashiro.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
-				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Developer";
-				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
-				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 58;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 70;
 				DEFINES_MODULE = YES;
-				DEVELOPMENT_TEAM = "";
-				"DEVELOPMENT_TEAM[sdk=iphoneos*]" = Y5GFLYKZWK;
-				DEVELOPMENT_TEAM = "";
-				"DEVELOPMENT_TEAM[sdk=iphoneos*]" = Y5GFLYKZWK;
+				DEVELOPMENT_TEAM = Y5GFLYKZWK;
 				ENABLE_BITCODE = NO;
 				ENABLE_MODULE_VERIFIER = YES;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -1802,7 +2045,7 @@
 					"$(PROJECT_DIR)/Debug",
 					"$(PROJECT_DIR)",
 				);
-				MARKETING_VERSION = 1.17.5;
+				MARKETING_VERSION = 1.18.19;
 				MODULE_VERIFIER_SUPPORTED_LANGUAGE_STANDARDS = "gnu99 gnu++11";
 				OTHER_LDFLAGS = (
 					"-l\"c++\"",
@@ -1816,8 +2059,6 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE = "";
 				PROVISIONING_PROFILE_SPECIFIER = "";
-				"PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]" = "match Development org.devMiyax.yabasanshiro2-lite";
-				"PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]" = "match Development org.devMiyax.yabasanshiro2-lite";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -1839,16 +2080,10 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = YabaSnashiro.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
-				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Distribution";
-				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Distribution";
-				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
-				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 58;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 70;
 				DEFINES_MODULE = YES;
-				DEVELOPMENT_TEAM = "";
-				"DEVELOPMENT_TEAM[sdk=iphoneos*]" = Y5GFLYKZWK;
-				DEVELOPMENT_TEAM = "";
-				"DEVELOPMENT_TEAM[sdk=iphoneos*]" = Y5GFLYKZWK;
+				DEVELOPMENT_TEAM = Y5GFLYKZWK;
 				ENABLE_BITCODE = NO;
 				ENABLE_MODULE_VERIFIER = YES;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -1877,7 +2112,7 @@
 					"$(PROJECT_DIR)/Debug",
 					"$(PROJECT_DIR)",
 				);
-				MARKETING_VERSION = 1.17.5;
+				MARKETING_VERSION = 1.18.19;
 				MODULE_VERIFIER_SUPPORTED_LANGUAGE_STANDARDS = "gnu99 gnu++11";
 				OTHER_LDFLAGS = (
 					"-l\"c++\"",
@@ -1895,8 +2130,6 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE = "";
 				PROVISIONING_PROFILE_SPECIFIER = "";
-				"PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]" = "match AppStore org.devMiyax.yabasanshiro2-lite";
-				"PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]" = "match AppStore org.devMiyax.yabasanshiro2-lite";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -1919,7 +2152,7 @@
 				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 58;
+				CURRENT_PROJECT_VERSION = 62;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = Y5GFLYKZWK;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -1956,7 +2189,7 @@
 				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 58;
+				CURRENT_PROJECT_VERSION = 62;
 				DEVELOPMENT_TEAM = Y5GFLYKZWK;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;

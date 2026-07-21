@@ -78,9 +78,24 @@ Window::~Window() {
 void Window::resize(int width, int height) {
 
   LOGI("%s %d %d", "resize called", width, height);
-  // if (_surface_size_x == width && _surface_size_y == height) {
-  //   return;
-  // }
+  // Skip rebuild when the requested size matches the current surface size.
+  // Qt's paintEvent loop emits resizeEvent on every frame at steady state,
+  // which used to silently rebuild the swapchain each time -- an empty
+  // swapchain image then leaked into PlayRecorder screenshots (always black).
+  bool sizeUnchanged =
+      _surface_size_x == (uint32_t)width && _surface_size_y == (uint32_t)height;
+#if defined(__ANDROID__)
+  // SurfaceView swap can keep the same dims; rebuild anyway when
+  // setNativeWindow() flags it. See Window::setNativeWindow.
+  if (sizeUnchanged && !_native_window_changed) {
+    return;
+  }
+  _native_window_changed = false;
+#else
+  if (sizeUnchanged) {
+    return;
+  }
+#endif
   cleanupSwapChain();
 }
 
@@ -100,6 +115,17 @@ void Window::cleanupSwapChain() {
   _InitSwapchainImages();
   _InitDepthStencilImage();
   _InitFramebuffers();
+
+  // The driver may change _swapchain_image_count on a swapchain recreate.
+  // If the pre-present hook CB count no longer matches, EndRender would
+  // index _pre_present_cmd_buffers[_active_swapchain_image_id] out of
+  // bounds, so we free and reallocate when the counts diverge.
+  // vkDeviceWaitIdle has already run, so the CBs are not pending and free
+  // is safe.
+  if (_pre_present_cmd_pool != VK_NULL_HANDLE &&
+      _pre_present_cmd_buffers.size() != _swapchain_image_count) {
+    _AllocPrePresentCommandBuffers();
+  }
 }
 
 void Window::Close() { _window_should_run = false; }
@@ -120,12 +146,51 @@ int Window::BeginRender() {
 }
 
 void Window::EndRender(std::vector<VkSemaphore> wait_semaphores) {
+  // If a pre-present hook is registered, reset + re-record the
+  // pre-allocated CB for this image idx and submit it. Present waits on
+  // the post-submit semaphore. vkAcquireNextImageKHR guarantees the
+  // previous use of this image idx is complete, so the CB at the same
+  // idx is not pending and reset / re-record is safe.
+  if (_prePresentHook) {
+    VkCommandBuffer hookCb = _pre_present_cmd_buffers[_active_swapchain_image_id];
+
+    // CB reset (pool was created with VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT)
+    ErrorCheck(vkResetCommandBuffer(hookCb, 0));
+
+    VkCommandBufferBeginInfo bi{};
+    bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    ErrorCheck(vkBeginCommandBuffer(hookCb, &bi));
+
+    _prePresentHook(hookCb, _active_swapchain_image_id,
+                    _framebuffers[_active_swapchain_image_id]);
+
+    ErrorCheck(vkEndCommandBuffer(hookCb));
+
+    std::vector<VkPipelineStageFlags> waitStages(wait_semaphores.size(),
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+    VkSubmitInfo si{};
+    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.waitSemaphoreCount = (uint32_t)wait_semaphores.size();
+    si.pWaitSemaphores = wait_semaphores.data();
+    si.pWaitDstStageMask = waitStages.data();
+    si.commandBufferCount = 1;
+    si.pCommandBuffers = &hookCb;
+    si.signalSemaphoreCount = 1;
+    si.pSignalSemaphores = &_pre_present_finished_semaphore;
+    ErrorCheck(vkQueueSubmit(_renderer->GetVulkanQueue(), 1, &si, VK_NULL_HANDLE));
+
+    // Make present wait on the hook submit completion.
+    wait_semaphores = { _pre_present_finished_semaphore };
+    // Do not free the CB; the next use of this image idx will reset + re-record it.
+  }
+
   VkResult present_result = VkResult::VK_RESULT_MAX_ENUM;
   VkResult funcResult;
 
   VkPresentInfoKHR present_info{};
   present_info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-  present_info.waitSemaphoreCount = wait_semaphores.size();
+  present_info.waitSemaphoreCount = (uint32_t)wait_semaphores.size();
   present_info.pWaitSemaphores = wait_semaphores.data();
   present_info.swapchainCount = 1;
   present_info.pSwapchains = &_swapchain;
@@ -514,8 +579,58 @@ void Window::_InitSynchronizations() {
   VkFenceCreateInfo fence_create_info{};
   fence_create_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
   vkCreateFence(_renderer->GetVulkanDevice(), &fence_create_info, nullptr, &_swapchain_image_available);
+
+  // Create the command pool, per-image CBs, and semaphore for the
+  // pre-present hook. By construction _InitSwapchainImages() has already
+  // run, so _swapchain_image_count is finalized at this point.
+  {
+    VkCommandPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    poolInfo.queueFamilyIndex = _renderer->GetVulkanGraphicsQueueFamilyIndex();
+    ErrorCheck(vkCreateCommandPool(_renderer->GetVulkanDevice(), &poolInfo, nullptr, &_pre_present_cmd_pool));
+
+    // Pre-allocate one CB per image idx (avoids per-frame alloc/free,
+    // which would risk VUID-vkFreeCommandBuffers-pCommandBuffers-00047).
+    _AllocPrePresentCommandBuffers();
+
+    VkSemaphoreCreateInfo semInfo{};
+    semInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+    ErrorCheck(vkCreateSemaphore(_renderer->GetVulkanDevice(), &semInfo, nullptr, &_pre_present_finished_semaphore));
+  }
 }
 
 void Window::_DeInitSynchronizations() {
+  if (_pre_present_finished_semaphore != VK_NULL_HANDLE) {
+    vkDestroySemaphore(_renderer->GetVulkanDevice(), _pre_present_finished_semaphore, nullptr);
+    _pre_present_finished_semaphore = VK_NULL_HANDLE;
+  }
+  if (_pre_present_cmd_pool != VK_NULL_HANDLE) {
+    // Destroying the pool also frees the CBs it owns.
+    vkDestroyCommandPool(_renderer->GetVulkanDevice(), _pre_present_cmd_pool, nullptr);
+    _pre_present_cmd_pool = VK_NULL_HANDLE;
+    _pre_present_cmd_buffers.clear();
+  }
   vkDestroyFence(_renderer->GetVulkanDevice(), _swapchain_image_available, nullptr);
+}
+
+void Window::_AllocPrePresentCommandBuffers() {
+  // Return existing CBs to the pool first. The caller (init / right after
+  // vkDeviceWaitIdle following swapchain recreate) guarantees they are
+  // not in the pending state.
+  if (!_pre_present_cmd_buffers.empty()) {
+    vkFreeCommandBuffers(_renderer->GetVulkanDevice(),
+                         _pre_present_cmd_pool,
+                         (uint32_t)_pre_present_cmd_buffers.size(),
+                         _pre_present_cmd_buffers.data());
+  }
+  _pre_present_cmd_buffers.assign(_swapchain_image_count, VK_NULL_HANDLE);
+
+  VkCommandBufferAllocateInfo cbAlloc{};
+  cbAlloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+  cbAlloc.commandPool = _pre_present_cmd_pool;
+  cbAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+  cbAlloc.commandBufferCount = _swapchain_image_count;
+  ErrorCheck(vkAllocateCommandBuffers(_renderer->GetVulkanDevice(), &cbAlloc,
+                                      _pre_present_cmd_buffers.data()));
 }

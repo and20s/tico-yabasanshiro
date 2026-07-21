@@ -393,8 +393,7 @@ void SH2DynShowSttaics(SH2_struct * master, SH2_struct * slave ){
 // MemoyAcess from DynarecCPU
 //********************************************************************
 
-
-#if defined(__JETSON__) || defined(__N2__) || defined(__XU4__) || defined(__RP64__)
+#ifdef __JETSON__
 #pragma GCC push_options
 #pragma GCC optimize ("O1")
 #endif
@@ -411,7 +410,8 @@ void memSetByteNoCache(u32 addr, u8 data)
   case 0x00200000:
     block->LookupTableLow[(addr & 0x000FFFFF) >> 1] = NULL;
     T2WriteByte(LowWram, addr & 0xFFFFF, data);
-    if (addr & 0x20000000) DynarecSh2::CurrentContext->memcycle_ += 7;
+    if (sh2_write_cost_new()) DynarecSh2::CurrentContext->memcycle_ += getMemWriteClock(addr, 1) + sh2_slave_bus_penalty() + sh2_dmac_bus_penalty();
+    else if (addr & 0x20000000) DynarecSh2::CurrentContext->memcycle_ += 7;
     dynaFree();
     return;
     break;
@@ -423,7 +423,8 @@ void memSetByteNoCache(u32 addr, u8 data)
     block->LookupTable[(addr & 0x000FFFFF) >> 1] = NULL;
 #endif
     T2WriteByte(HighWram, addr & 0xFFFFF, data);
-    if (addr & 0x20000000) DynarecSh2::CurrentContext->memcycle_ += 2;
+    if (sh2_write_cost_new()) DynarecSh2::CurrentContext->memcycle_ += getMemWriteClock(addr, 1) + sh2_slave_bus_penalty() + sh2_dmac_bus_penalty();
+    else if (addr & 0x20000000) DynarecSh2::CurrentContext->memcycle_ += 2;
     dynaFree();
     return;
     break;
@@ -454,7 +455,8 @@ void memSetWordNoCache(u32 addr, u16 data)
   case 0x00200000:
     block->LookupTableLow[(addr & 0x000FFFFF) >> 1] = NULL;
     T2WriteWord(LowWram, addr & 0xFFFFF, data);
-    if (addr & 0x20000000) DynarecSh2::CurrentContext->memcycle_ += 7;
+    if (sh2_write_cost_new()) DynarecSh2::CurrentContext->memcycle_ += getMemWriteClock(addr, 2) + sh2_slave_bus_penalty() + sh2_dmac_bus_penalty();
+    else if (addr & 0x20000000) DynarecSh2::CurrentContext->memcycle_ += 7;
     dynaFree();
     return;
     break;
@@ -466,7 +468,8 @@ void memSetWordNoCache(u32 addr, u16 data)
     block->LookupTable[(addr & 0x000FFFFF) >> 1] = NULL;
 #endif
     T2WriteWord(HighWram, addr & 0xFFFFF, data);
-    if (addr & 0x20000000) DynarecSh2::CurrentContext->memcycle_ += 2;
+    if (sh2_write_cost_new()) DynarecSh2::CurrentContext->memcycle_ += getMemWriteClock(addr, 2) + sh2_slave_bus_penalty() + sh2_dmac_bus_penalty();
+    else if (addr & 0x20000000) DynarecSh2::CurrentContext->memcycle_ += 2;
     dynaFree();
     return;
   }
@@ -499,7 +502,8 @@ void memSetLongNoCache(u32 addr, u32 data)
     block->LookupTableLow[(addr & 0x000FFFFF) >> 1] = NULL;
     block->LookupTableLow[((addr & 0x000FFFFF) >> 1) + 1] = NULL;
     T2WriteLong(LowWram, addr & 0xFFFFF, data);
-    if (addr & 0x20000000) DynarecSh2::CurrentContext->memcycle_ += 7;
+    if (sh2_write_cost_new()) DynarecSh2::CurrentContext->memcycle_ += getMemWriteClock(addr, 4) + sh2_slave_bus_penalty() + sh2_dmac_bus_penalty();
+    else if (addr & 0x20000000) DynarecSh2::CurrentContext->memcycle_ += 7;
     dynaFree();
     return;
     break;
@@ -513,7 +517,8 @@ void memSetLongNoCache(u32 addr, u32 data)
     block->LookupTable[((addr & 0x000FFFFF) >> 1) + 1] = NULL;
 #endif
     T2WriteLong(HighWram, addr & 0xFFFFF, data);
-    if (addr & 0x20000000) DynarecSh2::CurrentContext->memcycle_ += 2;
+    if (sh2_write_cost_new()) DynarecSh2::CurrentContext->memcycle_ += getMemWriteClock(addr, 4) + sh2_slave_bus_penalty() + sh2_dmac_bus_penalty();
+    else if (addr & 0x20000000) DynarecSh2::CurrentContext->memcycle_ += 2;
     dynaFree();
     return;
     break;
@@ -726,6 +731,7 @@ u8 memGetByte(u32 addr)
 {
   dynaLock();
   u32 cycle = 0;
+  CurrentSH2->cycles = DynarecSh2::CurrentContext->GET_COUNT();
   const u8 val = MappedMemoryReadByte(addr, &cycle);
   DynarecSh2::CurrentContext->memcycle_ += cycle;
   dynaFree();
@@ -736,6 +742,7 @@ u16 memGetWord(u32 addr)
 {
   dynaLock();
   u32 cycle = 0;
+  CurrentSH2->cycles = DynarecSh2::CurrentContext->GET_COUNT();
   const u16 val = MappedMemoryReadWord(addr, &cycle);
   DynarecSh2::CurrentContext->memcycle_ += cycle;
   dynaFree();
@@ -746,6 +753,7 @@ u32 memGetLong(u32 addr)
 {
   dynaLock();
   u32 cycle = 0;
+  CurrentSH2->cycles = DynarecSh2::CurrentContext->GET_COUNT();
   const u32 val = MappedMemoryReadLong(addr, &cycle);
   DynarecSh2::CurrentContext->memcycle_ += cycle;
   dynaFree();
@@ -755,7 +763,6 @@ u32 memGetLong(u32 addr)
 #ifdef __JETSON__
 #pragma GCC pop_options
 #endif
-
 
 void SH2DynOnFrame(SH2_struct *context) {
   DynarecSh2 *pctx = (DynarecSh2*)context->ext;
@@ -785,12 +792,12 @@ int DelayEachClock() {
 int DebugDelayClock() {
   dynaLock();
 
-#ifdef DMPHISTORY
-  CurrentSH2->pchistory_index++;
-  CurrentSH2->pchistory[CurrentSH2->pchistory_index & (MAX_DMPHISTORY - 1)] = DynarecSh2::CurrentContext->GET_PC();
-  CurrentSH2->pchistory_index++;
-  CurrentSH2->pchistory[CurrentSH2->pchistory_index & (MAX_DMPHISTORY - 1)] = DynarecSh2::CurrentContext->GET_PC() + 2;
-#endif
+  if (CurrentSH2->history_enabled) {
+    CurrentSH2->pchistory_index++;
+    CurrentSH2->pchistory[CurrentSH2->pchistory_index & (MAX_DMPHISTORY - 1)] = DynarecSh2::CurrentContext->GET_PC();
+    CurrentSH2->pchistory_index++;
+    CurrentSH2->pchistory[CurrentSH2->pchistory_index & (MAX_DMPHISTORY - 1)] = DynarecSh2::CurrentContext->GET_PC() + 2;
+  }
 
 
   //CurrentSH2->cycles = DynarecSh2::CurrentContext->GET_COUNT(); // ->SysReg[4];
@@ -950,11 +957,11 @@ if( pc == 0x060133C8 ) {
 #endif
 
 
-#ifdef DMPHISTORY
-  CurrentSH2->pchistory_index++;
-  CurrentSH2->pchistory[CurrentSH2->pchistory_index & (MAX_DMPHISTORY-1) ] = DynarecSh2::CurrentContext->GET_PC();
-  //CurrentSH2->regshistory[CurrentSH2->pchistory_index & 0xFF] = NULL;
-#endif
+  if (CurrentSH2->history_enabled) {
+    CurrentSH2->pchistory_index++;
+    CurrentSH2->pchistory[CurrentSH2->pchistory_index & (MAX_DMPHISTORY-1) ] = DynarecSh2::CurrentContext->GET_PC();
+    //CurrentSH2->regshistory[CurrentSH2->pchistory_index & 0xFF] = NULL;
+  }
   DynaCheckBreakPoint(DynarecSh2::CurrentContext->GET_PC());
 
   if (DynarecSh2::CurrentContext->CheckOneStep()){

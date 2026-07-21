@@ -4417,8 +4417,12 @@ void SetSaturnResolution(int width, int height)
         else {
           if (_Ygl->isFullScreen) {
             if (  (GlHeight * wrate) > GlWidth) {
-              _Ygl->originy = _Ygl->user_originy + (GlHeight - GlWidth  * hrate);
-              GlHeight = _Ygl->screen_width * hrate;
+              if (GlWidth > GlHeight) {
+                _Ygl->originy = _Ygl->user_originy + (GlHeight - GlWidth  * hrate) / 2.0f;
+              }else{
+                 _Ygl->originy = _Ygl->user_originy + (GlHeight - GlWidth  * hrate);
+              }
+              GlHeight = GlWidth * hrate;
             }
             else {
               _Ygl->originx = _Ygl->user_originx + (GlWidth - GlHeight * wrate) / 2.0f;
@@ -7975,7 +7979,8 @@ void VIDOGLVdp2SetResolution(u16 TVMD)
     break;
   case 2: height = 256;
     break;
-  default: break;
+  default: height = 256;
+    break;
   }
 
   hratio = 1;
@@ -8420,6 +8425,9 @@ void VIDOGLSetSettingValueMode(int type, int value) {
     break;
   case VDP_SETTING_ROTATE_SCREEN:
     _Ygl->rotate_screen = value;
+    break;
+  case VDP_SETTING_ASPECT_RATE_MODE:
+    _Ygl->aspect_rate_mode = value;
     break;
   }
 

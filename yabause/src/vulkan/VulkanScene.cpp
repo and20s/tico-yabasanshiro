@@ -34,6 +34,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 
 #include "VulkanInitializers.hpp"
 #include "VulkanTools.h"
+#include "VulkanGpuProfiler.h"
 
 static std::vector<char> readFile(const std::string& filename) {
   std::ifstream file(filename, std::ios::ate | std::ios::binary);
@@ -54,11 +55,14 @@ VulkanScene::VulkanScene()
   _command_buffers.clear();
   _command_pool = VK_NULL_HANDLE;
   _renderer = nullptr;
+  _gpuProfiler = new VulkanGpuProfiler();
 }
 
 
 VulkanScene::~VulkanScene()
 {
+  delete _gpuProfiler;
+  _gpuProfiler = nullptr;
 }
 
 void VulkanScene::present()
@@ -77,6 +81,12 @@ int VulkanScene::init(void)
 
   // Setup Command
   createCommandPool();
+
+  _gpuProfiler->init(device,
+                     _renderer->GetVulkanPhysicalDevice(),
+                     _renderer->GetVulkanPhysicalDeviceProperties(),
+                     _renderer->GraphicsQueueSupportsTimestamp(),
+                     _renderer->SupportsPipelineStatisticsQuery());
   
   return 0;
 }
@@ -87,6 +97,10 @@ void VulkanScene::deInit(void)
 
   const VkDevice device = _renderer->GetVulkanDevice();
   if (device == VK_NULL_HANDLE) return;
+
+  if (_gpuProfiler != nullptr) {
+    _gpuProfiler->deInit();
+  }
 
   if (_command_buffers.size() != 0) {
     vkFreeCommandBuffers(device, _command_pool, _command_buffers.size(), _command_buffers.data());
@@ -99,6 +113,11 @@ void VulkanScene::deInit(void)
   _render_complete_semaphore = VK_NULL_HANDLE;
 
 
+}
+
+VulkanGpuProfiler& VulkanScene::gpuProfiler()
+{
+  return *_gpuProfiler;
 }
 
 VkShaderModule VulkanScene::createShaderModule(const std::vector<char>& code) {
@@ -138,7 +157,7 @@ void VulkanScene::createImage(uint32_t width, uint32_t height, VkFormat format, 
     throw std::runtime_error("failed to create image!");
   }
 
-  printf("VulkanScene image = %llx\n", image);
+  //printf("VulkanScene image = %llx\n", image);
 
   vkDebugNameObject(device, VK_OBJECT_TYPE_IMAGE, (uint64_t)image, "VulkanScene image");
 
@@ -194,6 +213,7 @@ void VulkanScene::createCommandPool()
     for( int i=0; i<commandFence.size(); i++  ){
       VkFenceCreateInfo fence_create_info {};
 	    fence_create_info.sType			= VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+	    fence_create_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 	    vkCreateFence( device, &fence_create_info, nullptr, &commandFence[i] );
     }
 
@@ -616,10 +636,8 @@ void VulkanScene::getScreenshot(void ** outbuf, int & width, int & height)
   width = _device_width;
   height = _device_height;
 
-  if (dstbuf != nullptr) {
-    free(dstbuf);
-  }
-  dstbuf = (unsigned char*)malloc(width*height * 4);
+  // Allocate new buffer for this screenshot (caller will free it)
+  unsigned char* dstbuf = (unsigned char*)malloc(width*height * 4);
 
 
   switch (pretransformFlag) {

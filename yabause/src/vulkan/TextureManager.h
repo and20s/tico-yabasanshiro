@@ -92,6 +92,7 @@ public:
   void * reallocTextureImage(void * pixels, int texWidth, int texHeight);
 
   void updateTextureImage(const std::function<void(VkCommandBuffer commandBuffer)>& f);
+  void waitForCopy();
 
   VkImage _textureImage;
   VkDeviceMemory _textureImageMemory;
@@ -110,5 +111,6 @@ public:
   int updateCount = 0;
 
   VkSemaphore complete;
+  VkFence copyFence = VK_NULL_HANDLE;
 
 };

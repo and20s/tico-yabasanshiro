@@ -59,152 +59,9 @@ class SonicRBackup {
     }
 }
 
-/// Firestoreにスコアを送信する関数
-func submitScoreToFirestore(
-    gameId: String,
-    leaderboardId: String,
-    score: Int64,
-    userName: String,
-    onSuccess: (() -> Void)? = nil,
-    onFailure: ((Error) -> Void)? = nil
-) {
-    let db = Firestore.firestore()
-    guard let userId = Auth.auth().currentUser?.uid else {
-        onFailure?(NSError(domain: "ScoreSubmission", code: 1, userInfo: [NSLocalizedDescriptionKey: "ユーザーが認証されていません"]))
-        return
-    }
-
-    // ユーザーのプロフィール画像URLを取得
-    let photoURL = Auth.auth().currentUser?.photoURL?.absoluteString
-
-    let scoreData: [String: Any] = [
-        "name": userName,
-        "score": score,
-        "timestamp": Int(Date().timeIntervalSince1970 * 1000), // ミリ秒単位のタイムスタンプ
-        "photoUrl": photoURL // ユーザーのアバター画像URL（nilの場合はFirestoreではnullとして保存される）
-    ]
-
-    let scoreDocRef = db.collection("games/\(gameId)/leaderboards")
-        .document(leaderboardId)
-        .collection("scores")
-        .document(userId)
-
-    scoreDocRef.getDocument { document, error in
-        if let error = error {
-            onFailure?(error)
-            return
-        }
-
-        if let document = document, document.exists,
-           let currentScore = document.data()?["score"] as? Int64 {
-            if score < currentScore {
-                // 新記録（より短いタイム）の場合のみ上書き
-                scoreDocRef.setData(scoreData) { error in
-                    if let error = error {
-                        onFailure?(error)
-                    } else {
-                        // スコア更新後、1位かどうかチェック
-                        checkIfTopRankAndNotify(gameId: gameId, leaderboardId: leaderboardId, score: score, userName: userName, photoURL: photoURL)
-                        onSuccess?()
-                    }
-                }
-            } else {
-                // 記録を更新しない場合も成功扱い
-                onSuccess?()
-            }
-        } else {
-            // 初めてのスコア登録
-            scoreDocRef.setData(scoreData) { error in
-                if let error = error {
-                    onFailure?(error)
-                } else {
-                    // スコア登録後、1位かどうかチェック
-                    checkIfTopRankAndNotify(gameId: gameId, leaderboardId: leaderboardId, score: score, userName: userName, photoURL: photoURL)
-                    onSuccess?()
-                }
-            }
-        }
-    }
-}
-
-/// スコアが1位かどうかをチェックし、1位ならDiscordに通知する
-func checkIfTopRankAndNotify(gameId: String, leaderboardId: String, score: Int64, userName: String, photoURL: String?) {
-    let db = Firestore.firestore()
-
-    // 1位のスコアを取得するクエリ
-    let query = db.collection("games").document(gameId)
-        .collection("leaderboards").document(leaderboardId)
-        .collection("scores")
-        .order(by: "score", descending: false)
-        .limit(to: 1)
-
-    query.getDocuments { snapshot, error in
-        guard let snapshot = snapshot, !snapshot.documents.isEmpty else {
-            print("Error checking top rank: \(error?.localizedDescription ?? "No documents")")
-            return
-        }
-
-        // 1位のスコアを取得
-        if let topScore = snapshot.documents[0].get("score") as? Int64,
-           let topUserId = snapshot.documents[0].documentID as String? {
-
-            // 自分のスコアが1位と同じか、自分が1位になった場合
-            if score <= topScore && topUserId == Auth.auth().currentUser?.uid {
-                print("New record achieved! Score: \(score)")
-
-                // リーダーボード名を取得
-                db.collection("games").document(gameId)
-                    .collection("leaderboards").document(leaderboardId)
-                    .getDocument { document, error in
-                        guard let document = document, let leaderboardName = document.get("name") as? String else {
-                            // リーダーボード名が取得できない場合はデフォルト名を使用
-                            notifyDiscord(gameId: gameId, leaderboardName: "Leaderboard \(leaderboardId)", score: score, userName: userName, photoURL: photoURL)
-                            return
-                        }
-
-                        // Discordに通知
-                        notifyDiscord(gameId: gameId, leaderboardName: leaderboardName, score: score, userName: userName, photoURL: photoURL)
-                    }
-            }
-        }
-    }
-}
-
-/// Discordに新記録を通知する
-func notifyDiscord(gameId: String, leaderboardName: String, score: Int64, userName: String, photoURL: String?) {
-    // Firebase Remote Configからwebhook URLを取得
-    let remoteConfig = RemoteConfig.remoteConfig()
-    let webhookUrl = remoteConfig.configValue(forKey: "discord_webhook_url_sonicr").stringValue ?? ""
-
-    // webhook URLが空の場合は処理を中止
-    guard !webhookUrl.isEmpty else {
-        print("Discord webhook URL is empty. Skipping notification.")
-        return
-    }
-
-    print("Using Discord webhook URL from Remote Config")
-
-    // Discordに新記録を送信
-    DiscordWebhook.sendNewRecordMessage(
-        webhookUrl: webhookUrl,
-        gameId: gameId,
-        leaderboardName: leaderboardName,
-        userName: userName,
-        score: score,
-        avatarUrl: photoURL
-    ) { success in
-        if success {
-            print("Successfully posted to Discord")
-        } else {
-            print("Failed to post to Discord")
-        }
-    }
-}
 
 /// ソニックRゲームクラス
 class SonicR: BaseGame {
-
-    var gameId: String = ""
 
     init(gameCode: String) {
         super.init()
@@ -340,6 +197,37 @@ class SonicR: BaseGame {
                     // 新記録通知
                     self.uiEvent?.onNewRecord(leaderBoardId: gid)
                 }
+            }
+        }
+    }
+    
+    /// Discordに新記録を通知する（SonicR専用）
+    override func notifyDiscord(gameId: String, leaderboardName: String, score: Int64, userName: String, photoURL: String?) {
+        // Firebase Remote Configからwebhook URLを取得
+        let remoteConfig = RemoteConfig.remoteConfig()
+        let webhookUrl = remoteConfig.configValue(forKey: "discord_webhook_url_sonicr").stringValue ?? ""
+
+        // webhook URLが空の場合は処理を中止
+        guard !webhookUrl.isEmpty else {
+            print("Discord webhook URL is empty. Skipping notification.")
+            return
+        }
+
+        print("Using Discord webhook URL from Remote Config for SonicR")
+
+        // Discordに新記録を送信
+        DiscordWebhook.sendNewRecordMessage(
+            webhookUrl: webhookUrl,
+            gameId: gameId,
+            leaderboardName: leaderboardName,
+            userName: userName,
+            score: score,
+            avatarUrl: photoURL
+        ) { success in
+            if success {
+                print("Successfully posted SonicR record to Discord")
+            } else {
+                print("Failed to post SonicR record to Discord")
             }
         }
     }

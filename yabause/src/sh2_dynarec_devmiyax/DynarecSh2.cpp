@@ -672,8 +672,8 @@ x86op_desc asm_list[] =
   opdesc(EXTU_W,0,1,0),
   opdesc(MOVR,0,1,0),  // 0x6003
   opdesc(MULL,0,4,0),  // 0x0007
-  opdesc(MULS,0,3,0),  // 0x200f
-  opdesc(MULU,0,3,0),  // 0x200e
+  opdesc(MULS,0,2,0),  // 0x200f
+  opdesc(MULU,0,2,0),  // 0x200e
   opdesc(NEG,0,1,0),
   opdesc(NEGC,0,1,0),
   opdesc(NOT,0,1,0),
@@ -692,8 +692,8 @@ x86op_desc asm_list[] =
   opdesc(MOVBL,0,1,0), // 6000
   opdesc(MOVWL,0,1,0), // 6001
   opdesc(MOVL_MEM_REG,0,1,0),
-  opdesc(MAC_L,0,3,0),  // 0x000f
-  opdesc(MAC_W,0,3,0),  // 0x400f
+  opdesc(MAC_L,0,1,0),  // 0x000f
+  opdesc(MAC_W,0,1,0),  // 0x400f
   opdesc(MOVBP,0,1,0),  // 6004
   opdesc(MOVWP,0,1,0),  // 6005
   opdesc(MOVLP,0,1,1),  // 6006
@@ -1542,7 +1542,12 @@ void DynarecSh2::ExecuteCount( u32 Count ) {
   //}
   //else {
   //  one_step_ = false;
-    pre_exe_count_ = m_pDynaSh2->SysReg[4] - targetcnt;
+    // += (not =): AddCycle() calls made from device callbacks during this
+    // slice (e.g. the SCU DMA C-bus halt charge) land in pre_exe_count_
+    // and must not be clobbered by the overshoot bookkeeping. When no
+    // mid-slice AddCycle happened pre_exe_count_ is 0 here, so this is
+    // identical to the old assignment.
+    pre_exe_count_ += m_pDynaSh2->SysReg[4] - targetcnt;
   //}
 }
 
@@ -1624,8 +1629,12 @@ inline int DynarecSh2::Execute(){
           return IN_INFINITY_LOOP;
         }
         else if (yabsys.extend_backup == 2 &&
-          GET_PC() >= 0x0380 &&
-          GET_PC() <= 0x03A8) {
+          GET_PC() >= BUP_TABLE_REAL_BASE &&
+          GET_PC() <= BUP_TABLE_REAL_LAST) {
+          // Virtual BUP table entries (real-BIOS mode). The old
+          // 0x380..0x3A8 range overlapped real BIOS code (SYS_CHGSCUIM
+          // internals, reached via "bsr 0x380" from 0x200) and hung the
+          // master SH2 for any game combining BUP_Init with SYS_CHGSCUIM.
           BiosHandleFunc(ctx_);
           return IN_INFINITY_LOOP;
         }
@@ -1716,7 +1725,7 @@ inline int DynarecSh2::Execute(){
 #if defined(DEBUG_CPU) || defined(EXECUTE_STAT)
     u32 prepc = GET_PC();
   if (is_slave_) { //statics_trigger_ == COLLECTING) {
-    s64 pretime = YabauseGetTicks();
+    //s64 pretime = YabauseGetTicks();
     ((dynaFunc)((void*)(pBlock->code)))(m_pDynaSh2);
     //compie_statics_[prepc].count++;
     //compie_statics_[prepc].time += YabauseGetTicks() - pretime;

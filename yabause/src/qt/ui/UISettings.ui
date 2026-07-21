@@ -346,6 +346,16 @@
          </property>
         </widget>
        </item>
+       <item row="32" column="0" colspan="3">
+        <widget class="QCheckBox" name="cbVdp2NewComposite">
+         <property name="toolTip">
+          <string>Per-pixel VDP2 color calculation compositor (Vulkan only, experimental)</string>
+         </property>
+         <property name="text">
+          <string>Use new VDP2 composite (per-pixel color calc, Vulkan)</string>
+         </property>
+        </widget>
+       </item>
        <item row="30" column="1" colspan="2">
         <widget class="QComboBox" name="cbRBGREsolution"/>
        </item>

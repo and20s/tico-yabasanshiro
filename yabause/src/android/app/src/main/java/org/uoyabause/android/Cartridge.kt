@@ -29,6 +29,7 @@ object Cartridge {
     const val CART_DRAM32MBIT = 7
     const val CART_NETLINK = 8
     const val CART_ROM16MBIT = 9
+
     @JvmStatic
     fun getName(cartridgetype: Int): String {
         when (cartridgetype) {

@@ -15,8 +15,10 @@
     You should have received a copy of the GNU General Public License
     along with YabaSanshiro; if not, write to the Free Software
     Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
-*/
-/*
+
+
+    ============================================================================
+
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
@@ -37,6 +39,8 @@ import android.os.Build
 import android.os.Bundle
 import android.view.InputDevice
 import android.view.KeyEvent
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.fragment.app.FragmentActivity
 import org.devmiyax.yabasanshiro.R
 import org.uoyabause.android.phone.GameSelectFragmentPhone
@@ -48,21 +52,27 @@ class GameSelectActivity : FragmentActivity() {
     /**
      * Called when the activity is first created.
      */
-    val TAG = "GameSelectActivity"
+    val tag = "GameSelectActivity"
+
     public override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
         setContentView(R.layout.activity_game_select)
+
+        // Setup edge-to-edge window insets handling
+        setupEdgeToEdgeInsets()
         val uiModeManager = getSystemService(UI_MODE_SERVICE) as UiModeManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             uiModeManager.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION
         ) {
             Thread {
-                val subscription = Subscription.createSubscription(
-                    "RECENT",
-                    "recent played games",
-                    "saturngame://yabasanshiro/",
-                    R.mipmap.ic_launcher
-                )
+                val subscription =
+                    Subscription.createSubscription(
+                        "RECENT",
+                        "recent played games",
+                        "saturngame://yabasanshiro/",
+                        R.mipmap.ic_launcher,
+                    )
                 val channelId = TvUtil.createChannel(this@GameSelectActivity, subscription)
                 TvUtil.syncPrograms(this@GameSelectActivity, channelId)
             }.start()
@@ -83,7 +93,8 @@ class GameSelectActivity : FragmentActivity() {
         super.onSaveInstanceState(outState)
     }
 
-    var frg_: GameSelectFragmentPhone? = null
+    var frg: GameSelectFragmentPhone? = null
+
     public override fun onResume() {
         super.onResume()
     }
@@ -94,12 +105,13 @@ class GameSelectActivity : FragmentActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             uiModeManager.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION
         ) {
-            val subscription = Subscription.createSubscription(
-                "RECENT",
-                "recent played games",
-                "saturngame://yabasanshiro/",
-                R.mipmap.ic_launcher
-            )
+            val subscription =
+                Subscription.createSubscription(
+                    "RECENT",
+                    "recent played games",
+                    "saturngame://yabasanshiro/",
+                    R.mipmap.ic_launcher,
+                )
             val channelId = TvUtil.createChannel(this, subscription)
             TvUtil.syncPrograms(this, channelId)
         } else {
@@ -107,6 +119,7 @@ class GameSelectActivity : FragmentActivity() {
         }
     }
 
+    @android.annotation.SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         val dev = InputDevice.getDevice(event.deviceId)
         if (dev != null && dev.name.contains("HuiJia")) {
@@ -115,5 +128,24 @@ class GameSelectActivity : FragmentActivity() {
             }
         }
         return super.dispatchKeyEvent(event)
+    }
+
+    /**
+     * Setup edge-to-edge window insets handling for Android 15+ (API 35+)
+     */
+    private fun setupEdgeToEdgeInsets() {
+        val rootView = findViewById<android.view.View>(android.R.id.content)
+        ViewCompat.setOnApplyWindowInsetsListener(rootView) { view, windowInsets ->
+            val insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())
+
+            view.setPadding(
+                view.paddingLeft,
+                insets.top,
+                view.paddingRight,
+                view.paddingBottom,
+            )
+
+            windowInsets
+        }
     }
 }

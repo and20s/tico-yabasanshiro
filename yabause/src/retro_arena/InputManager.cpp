@@ -213,9 +213,7 @@ uint32_t genidAnalogjson( int user, int joyId, const json & result ){
   return MAKE_PAD(0,((joyId << 18)|SDL_MEDIUM_AXIS_VALUE|result["id"].get<int>() ));
 }
 
-
 int setPlayerKeys( void * padbits, int user, int joyId, const json & player ){
-
     if( player.find("up") != player.end()) PerSetKey(genidjson(user,joyId,player["up"]),PERPAD_UP, padbits);
     if( player.find("down") != player.end()) PerSetKey(genidjson(user,joyId,player["down"]),PERPAD_DOWN, padbits);
     if( player.find("left") != player.end()) PerSetKey(genidjson(user,joyId,player["left"]),PERPAD_LEFT, padbits);

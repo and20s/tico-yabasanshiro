@@ -15,8 +15,8 @@
     You should have received a copy of the GNU General Public License
     along with Yabause; if not, write to the Free Software
     Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
-*/
-/*  Copyright 2019 devMiyax(smiyaxdev@gmail.com)
+
+    Copyright 2019 devMiyax(smiyaxdev@gmail.com)
 
     This file is part of YabaSanshiro.
 
@@ -41,7 +41,9 @@ import android.util.AttributeSet
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 
-class YabauseView : SurfaceView, SurfaceHolder.Callback {
+class YabauseView :
+    SurfaceView,
+    SurfaceHolder.Callback {
     /*
     private int axisX = 0;
     private int axisY = 0;
@@ -50,20 +52,21 @@ class YabauseView : SurfaceView, SurfaceHolder.Callback {
     public int[] pointerX = new int[256];
     public int[] pointerY = new int[256];
 */
-    var _context: Context
+    var viewContext: Context
 
     constructor(context: Context, attrs: AttributeSet?) : super(context, attrs) {
-        _context = context
+        viewContext = context
         init()
     }
 
     constructor(context: Context) : super(context) {
-        _context = context
+        viewContext = context
         init()
     }
+
 /*
     constructor(context: Context, translucent: Boolean, depth: Int, stencil: Int) : super(context) {
-        _context = context
+        viewContext = context
         init()
     }
 */
@@ -72,7 +75,12 @@ class YabauseView : SurfaceView, SurfaceHolder.Callback {
         // getHolder().setType(SurfaceHolder.SURFACE_TYPE_GPU);
     }
 
-    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+    override fun surfaceChanged(
+        holder: SurfaceHolder,
+        format: Int,
+        width: Int,
+        height: Int,
+    ) {
         YabauseRunnable.lockGL()
         YabauseRunnable.initViewport(holder.surface, width, height)
         YabauseRunnable.unlockGL()
@@ -80,6 +88,7 @@ class YabauseView : SurfaceView, SurfaceHolder.Callback {
 
     override fun surfaceCreated(holder: SurfaceHolder) {
     }
+
     override fun surfaceDestroyed(holder: SurfaceHolder) {
         YabauseRunnable.lockGL()
         YabauseRunnable.initViewport(null, 0, 0)
@@ -87,7 +96,7 @@ class YabauseView : SurfaceView, SurfaceHolder.Callback {
     } /*
     @Override protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
     	/ *
-        SharedPreferences sharedPref = PreferenceManager.getDefaultSharedPreferences(_context);
+        SharedPreferences sharedPref = PreferenceManager.getDefaultSharedPreferences(viewContext);
         boolean keep_aspectrate = sharedPref.getBoolean("pref_keepaspectrate", false);
 
         if( keep_aspectrate ) {

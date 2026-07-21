@@ -1,6 +1,5 @@
 package org.uoyabause.android
 
-import android.annotation.SuppressLint
 import android.os.Bundle
 import android.util.Log
 import android.view.LayoutInflater
@@ -9,238 +8,195 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.TextView
 import androidx.fragment.app.DialogFragment
+import androidx.lifecycle.lifecycleScope
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
-import com.google.firebase.database.DataSnapshot
-import com.google.firebase.database.DatabaseError
-import com.google.firebase.database.FirebaseDatabase
-import com.google.firebase.database.ValueEventListener
-import io.reactivex.Observable
-import io.reactivex.ObservableEmitter
-import io.reactivex.Observer
-import io.reactivex.android.schedulers.AndroidSchedulers
-import io.reactivex.disposables.Disposable
-import io.reactivex.observers.DisposableSingleObserver
-import io.reactivex.schedulers.Schedulers
-import java.util.concurrent.TimeUnit
-import okhttp3.MediaType
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.devmiyax.yabasanshiro.R
 import org.json.JSONObject
 
 class ShowPinInFragment : DialogFragment() {
-
-    private var progress_emitter: ObservableEmitter<String>? = null
-    private var observer: Observer<String>? = null
-    private var authchecker: DisposableSingleObserver<FirebaseUser>? = null
+    private var isRequestInProgress = false
+    private var timeoutJob: Job? = null
     lateinit var rootView: View
     private var pinNumber: String? = null
-
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val user = FirebaseAuth.getInstance().currentUser
         if (user == null) {
-            /*
-            authchecker = object : DisposableSingleObserver<FirebaseUser>() {
-                override fun onError(e: Throwable) {
-                    this@ShowPinInFragment.dismiss()
-                }
-
-                override fun onSuccess(value: FirebaseUser) {
-                    getIpdToken(value)
-                }
-            }
-            presenter_.signIn(authchecker)
-            */
             return
         } else {
             getIpdToken(user)
         }
     }
 
-    val TIMER_DURATION = 30
+    val timerDuration = 30
+
     fun getIpdToken(user: FirebaseUser) {
-        val baseref = FirebaseDatabase.getInstance().reference
-        val baseurl = "/user-posts/" + user.getUid() + "/android_token"
-        baseref.child(baseurl).addListenerForSingleValueEvent(
-            object : ValueEventListener {
-                override fun onCancelled(p0: DatabaseError) {
-                    Log.d(javaClass.name, p0.message)
-                }
-
-                override fun onDataChange(dataSnapshot: DataSnapshot) {
-                    val ipdtoken = dataSnapshot.getValue() as String
-                    observer = object : Observer<String> {
-                        override fun onSubscribe(d: Disposable) {}
-                        override fun onNext(response: String) {
-                            val tv = rootView.findViewById<TextView>(R.id.pinin)
-                            pinNumber = response
-                            tv.text = response
-
-                            val message = rootView.findViewById<TextView>(R.id.message)
-                            message.text = getString(R.string.enter_pinin)
-                        }
-
-                        @SuppressLint("SetTextI18n")
-                        override fun onError(e: Throwable) {
-                            val tv = rootView.findViewById<TextView>(R.id.pinin)
-                            tv.text = "Error:${e.localizedMessage}"
-                            pinNumber = null
-                        }
-
-                        override fun onComplete() {
-                            checkTimeout()
-                        }
-                    }
-                    this@ShowPinInFragment.getPinin(observer!!, ipdtoken)
-                }
-            }
-        )
-    }
-
-    // Force close on time out
-    @SuppressLint("CheckResult")
-    fun checkTimeout() {
-        Observable.timer(60L, TimeUnit.SECONDS)
-            .observeOn(AndroidSchedulers.mainThread())
-            .subscribe {
-                Log.d(javaClass.name, "&&&& on timer")
-                this.dismiss()
-            }
-    }
-
-    fun removePinin(observer: Observer<String>, pinNumber: String) {
-        Observable.create<String> { emitter ->
-            val url = requireActivity().getString(R.string.url_getTokenAndDelete)
-            val key = requireActivity().getString(R.string.key_getTokenAndDelete)
-            if (key == "") {
-                emitter.onError(Throwable("NO!"))
+        val activity = activity ?: return
+        val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+            .requestIdToken(getString(org.devmiyax.yabasanshiro.R.string.default_web_client_id))
+            .requestEmail()
+            .build()
+        val client = GoogleSignIn.getClient(activity, gso)
+        client.silentSignIn().addOnSuccessListener { account ->
+            val googleIdToken = account.idToken
+            if (googleIdToken != null) {
+                fetchPinin(googleIdToken)
             } else {
-                val client = OkHttpClient()
-                val mime = "application/json; charset=utf-8".toMediaTypeOrNull()
-                val requestBody = RequestBody.create(mime, "{ \"key\":\"${pinNumber}\" }")
-                val request: Request = Request.Builder()
-                    .url(url)
-                    .post(requestBody)
-                    .addHeader("x-api-key", key)
-                    .addHeader("Content-Type", "application/json")
-                    .build()
-                val response = client.newCall(request).execute()
-                if (response.isSuccessful) {
-                    emitter.onComplete()
-                } else {
-                    emitter.onError(Throwable(response.message))
-                }
+                Log.e(javaClass.name, "Google ID token is null from silentSignIn")
             }
-        }.observeOn(AndroidSchedulers.mainThread())
-            .subscribeOn(Schedulers.io())
-            .subscribe(observer)
+        }.addOnFailureListener { e ->
+            Log.e(javaClass.name, "silentSignIn failed: ${e.message}")
+        }
     }
 
-    fun getPinin(observer: Observer<String>, token: String) {
-
-        if (progress_emitter != null) {
-            return
-        }
-
+    private fun fetchPinin(token: String) {
+        if (isRequestInProgress) return
+        isRequestInProgress = true
         pinNumber = null
 
-        Observable.create<String> { emitter ->
+        lifecycleScope.launch {
+            try {
+                val result = getPinin(token)
+                val tv = rootView.findViewById<TextView>(R.id.pinin)
+                pinNumber = result
+                tv.text = result
+
+                val message = rootView.findViewById<TextView>(R.id.message)
+                message.text = getString(R.string.enter_pinin)
+
+                // Start timeout after successful PIN retrieval
+                startTimeout()
+            } catch (e: Exception) {
+                val tv = rootView.findViewById<TextView>(R.id.pinin)
+                tv.text = "Error:${e.localizedMessage}"
+                pinNumber = null
+            } finally {
+                isRequestInProgress = false
+            }
+        }
+    }
+
+    private fun startTimeout() {
+        timeoutJob?.cancel()
+        timeoutJob =
+            lifecycleScope.launch {
+                delay(60_000L)
+                Log.d(javaClass.name, "&&&& on timer")
+                dismiss()
+            }
+    }
+
+    private suspend fun removePinin(pin: String): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            try {
+                val url = requireActivity().getString(R.string.url_getTokenAndDelete)
+                val key = requireActivity().getString(R.string.key_getTokenAndDelete)
+                if (key == "") {
+                    return@withContext Result.failure(Exception("NO!"))
+                }
+                val client = OkHttpClient()
+                val mime = "application/json; charset=utf-8".toMediaTypeOrNull()
+                val requestBody = "{ \"key\":\"$pin\" }".toRequestBody(mime)
+                val request: Request =
+                    Request
+                        .Builder()
+                        .url(url)
+                        .post(requestBody)
+                        .addHeader("x-api-key", key)
+                        .addHeader("Content-Type", "application/json")
+                        .build()
+                val response = client.newCall(request).execute()
+                if (response.isSuccessful) {
+                    Result.success(Unit)
+                } else {
+                    Result.failure(Exception(response.message))
+                }
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
+
+    private suspend fun getPinin(token: String): String =
+        withContext(Dispatchers.IO) {
             val url = requireActivity().getString(R.string.url_getLoginPinIn)
             val key = requireActivity().getString(R.string.key_getLoginPinIn)
             if (key == "") {
-                emitter.onError(Throwable("NO!"))
-            } else {
-                progress_emitter = emitter
-                val client = OkHttpClient()
-                val mime = "application/json; charset=utf-8".toMediaTypeOrNull()
-                val requestBody = RequestBody.create(mime, "{ \"token\":\"" + token + "\" }")
-                val request: Request = Request.Builder()
+                throw Exception("NO!")
+            }
+            val client = OkHttpClient()
+            val mime = "application/json; charset=utf-8".toMediaTypeOrNull()
+            val requestBody = "{ \"token\":\"$token\" }".toRequestBody(mime)
+            val request: Request =
+                Request
+                    .Builder()
                     .url(url)
                     .post(requestBody)
                     .addHeader("x-api-key", key)
                     .addHeader("Content-Type", "application/json")
                     .build()
-                val response = client.newCall(request).execute()
-                if (response.isSuccessful) {
-
-                    try {
-                        val jsonData: String = response.body!!.string()
-                        Log.d(javaClass.name, jsonData)
-                        val Jobject = JSONObject(jsonData)
-                        val pinin = Jobject.getString("pinin")
-                        emitter.onNext(pinin)
-                    } catch (e: Exception) {
-                        emitter.onError(e)
-                    }
-                } else {
-                    Log.d(javaClass.name, response.message)
-                    emitter.onError(Throwable(response.message))
-                }
-                progress_emitter = null
-                emitter.onComplete()
+            val response = client.newCall(request).execute()
+            if (response.isSuccessful) {
+                val jsonData: String = response.body!!.string()
+                Log.d(javaClass.name, jsonData)
+                val jObject = JSONObject(jsonData)
+                jObject.getString("pinin")
+            } else {
+                Log.d(javaClass.name, response.message)
+                throw Exception(response.message)
             }
-        }.observeOn(AndroidSchedulers.mainThread())
-            .subscribeOn(Schedulers.io())
-            .subscribe(observer)
-    }
+        }
 
     override fun onCreateView(
         inflater: LayoutInflater,
         container: ViewGroup?,
-        savedInstanceState: Bundle?
+        savedInstanceState: Bundle?,
     ): View? {
-        // Inflate the layout for this fragment
         rootView = inflater.inflate(R.layout.fragment_show_pin_in, container, false)
         val cancel = rootView.findViewById<Button>(R.id.cancel)
         cancel.setOnClickListener {
-
             if (pinNumber != null) {
-                observer = object : Observer<String> {
-                    override fun onSubscribe(d: Disposable) {}
-                    override fun onNext(response: String) {}
-                    override fun onError(e: Throwable) {
-                        this@ShowPinInFragment.dismiss()
-                    }
-
-                    override fun onComplete() {
-                        this@ShowPinInFragment.dismiss()
-                    }
+                lifecycleScope.launch {
+                    removePinin(pinNumber!!)
+                    pinNumber = null
+                    dismiss()
                 }
-                removePinin(observer!!, pinNumber!!)
-                pinNumber = null
             } else {
-                this.dismiss()
+                dismiss()
             }
         }
         return rootView
     }
 
     override fun onDestroy() {
+        timeoutJob?.cancel()
         if (pinNumber != null) {
-            observer = object : Observer<String> {
-                override fun onSubscribe(d: Disposable) {}
-                override fun onNext(response: String) {}
-                override fun onError(e: Throwable) {}
-                override fun onComplete() {}
+            lifecycleScope.launch {
+                removePinin(pinNumber!!)
             }
-            removePinin(observer!!, pinNumber!!)
         }
         super.onDestroy()
     }
 
     override fun onResume() {
         super.onResume()
-        val window = getDialog()?.getWindow()
-        if (window == null) return
-        val params = window.getAttributes()
+        val window = dialog?.window ?: return
+        val params = window.attributes
         params.width = 600
         params.height = 600
-        window.setAttributes(params)
+        window.attributes = params
     }
 
     companion object {

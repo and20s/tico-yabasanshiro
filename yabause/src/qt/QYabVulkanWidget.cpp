@@ -78,7 +78,7 @@ void AddRequiredPlatformDeviceExtensions(std::vector<const char*>* device_extens
 }
 
 void Window::_InitOSWindow() {
-  
+
 }
 
 void Window::_DeInitOSWindow() {

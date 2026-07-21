@@ -4,6 +4,8 @@
 #include <QTimer>
 #include <QPainter>
 #include <QStyledItemDelegate>
+#include <QMenu>
+#include <QContextMenuEvent>
 #include "QGameInfo.h"
 
 #define ImageSize 128
@@ -163,24 +165,9 @@ void GameTableView::setupViewOptimizations() {
   verticalHeader()->setDefaultSectionSize(ImageSize+10);
   verticalHeader()->setSectionResizeMode(QHeaderView::Fixed);
 
-  // ビューのアップデートモード設定
-  setUpdatesEnabled(true);
-  //viewport()->setAttribute(Qt::WA_OpaquePaintEvent);
-
-  // ダブルバッファリングを有効化
-  viewport()->setAttribute(Qt::WA_NoSystemBackground);
-
-  // 選択モードの最適化
+  // 選択モードの設定
   setSelectionMode(QAbstractItemView::SingleSelection);
   setSelectionBehavior(QAbstractItemView::SelectRows);
-
-  // アイテムのキャッシュポリシーを設定
-  if (mModel) {
-    int visibleRows = viewport()->height() / verticalHeader()->defaultSectionSize();
-    mModel->setItemPrototype(new QStandardItem());
-    // 表示行数の2倍をキャッシュ
-    verticalScrollBar()->setRange(0, qMax(0, mModel->rowCount() - visibleRows));
-  }
 
 }
 
@@ -343,4 +330,34 @@ void GameTableView::resizeEvent(QResizeEvent *event) {
 void GameTableView::showEvent(QShowEvent *event) {
     QTableView::showEvent(event);
     loadVisibleImages();
+}
+
+void GameTableView::contextMenuEvent(QContextMenuEvent *event) {
+    // Get the index at the clicked position
+    QModelIndex index = indexAt(event->pos());
+
+    if (!index.isValid()) {
+        return;
+    }
+
+    // Get product number and title from the selected row
+    QModelIndex sourceIndex = mProxyModel->mapToSource(index);
+    int row = sourceIndex.row();
+
+    QString productNumber = mModel->data(mModel->index(row, COL_PRODUCT_NUMBER)).toString();
+    QString gameTitle = mModel->data(mModel->index(row, COL_TITLE)).toString();
+
+    if (productNumber.isEmpty()) {
+        return;
+    }
+
+    // Create context menu
+    QMenu contextMenu(this);
+
+    QAction *viewReportsAction = contextMenu.addAction("View Bug Reports");
+    connect(viewReportsAction, &QAction::triggered, [this, productNumber, gameTitle]() {
+        emit viewBugReportsRequested(productNumber, gameTitle);
+    });
+
+    contextMenu.exec(event->globalPos());
 }

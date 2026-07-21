@@ -92,6 +92,54 @@
                 android:progress="100" />
         </LinearLayout>
 
+        <LinearLayout
+            android:layout_width="300dp"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_margin="10dp">
+
+            <TextView
+                android:id="@+id/editText_hitsize"
+                android:layout_width="90dip"
+                android:layout_height="wrap_content"
+                android:text="@string/hitsize" />
+
+            <SeekBar
+                android:id="@+id/button_hitsize"
+                android:layout_width="200dp"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_horizontal"
+                android:clickable="false"
+                android:focusable="false"
+                android:max="200"
+                android:min="50"
+                android:progress="100" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="300dp"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_margin="10dp">
+
+            <TextView
+                android:id="@+id/editText_analog_distance"
+                android:layout_width="90dip"
+                android:layout_height="wrap_content"
+                android:text="@string/analog_distance" />
+
+            <SeekBar
+                android:id="@+id/button_analog_distance"
+                android:layout_width="200dp"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_horizontal"
+                android:clickable="false"
+                android:focusable="false"
+                android:max="300"
+                android:min="100"
+                android:progress="200" />
+        </LinearLayout>
+
         <CheckBox
             android:id="@+id/cb_forcefeedback"
             android:layout_width="300dp"
@@ -112,6 +160,13 @@
             android:layout_height="wrap_content"
             android:layout_gravity="center"
             android:text="@string/show_analog_dpad_switch_button" />
+
+        <CheckBox
+            android:id="@+id/cb_classic_pad_style"
+            android:layout_width="300dp"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:text="@string/classic_pad_style" />
     </LinearLayout>
 
 

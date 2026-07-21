@@ -1,3 +1,5 @@
+@file:OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
+
 /*  Copyright 2019 devMiyax(smiyaxdev@gmail.com)
 
     This file is part of YabaSanshiro.
@@ -15,8 +17,10 @@
     You should have received a copy of the GNU General Public License
     along with YabaSanshiro; if not, write to the Free Software
     Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
-*/
-/*
+
+
+    ============================================================================
+
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
@@ -29,11 +33,11 @@
  * or implied. See the License for the specific language governing permissions and limitations under
  * the License.
  */
+
 package org.uoyabause.android.tv
 
 import android.Manifest
 import android.app.Activity
-import android.app.ProgressDialog
 import android.app.UiModeManager
 import android.content.Context
 import android.content.Intent
@@ -47,12 +51,15 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
+import android.os.Looper
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -71,6 +78,7 @@ import androidx.leanback.widget.OnItemViewSelectedListener
 import androidx.leanback.widget.Presenter
 import androidx.leanback.widget.Row
 import androidx.leanback.widget.RowPresenter
+import androidx.lifecycle.lifecycleScope
 import androidx.multidex.MultiDexApplication
 import androidx.preference.PreferenceManager
 import com.google.android.gms.ads.AdRequest
@@ -84,19 +92,25 @@ import com.google.android.gms.analytics.Tracker
 import com.google.firebase.analytics.FirebaseAnalytics
 import com.google.firebase.auth.FirebaseAuth
 import io.noties.markwon.Markwon
-import io.reactivex.Observer
-import io.reactivex.disposables.Disposable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import org.devmiyax.yabasanshiro.BuildConfig
 import org.devmiyax.yabasanshiro.R
 import org.devmiyax.yabasanshiro.StartupActivity
-import org.uoyabause.android.*
+import org.uoyabause.android.AdActivity
+import org.uoyabause.android.FileDialog
 import org.uoyabause.android.FileDialog.FileSelectedListener
+import org.uoyabause.android.GameInfo
+import org.uoyabause.android.GameSelectPresenter
 import org.uoyabause.android.GameSelectPresenter.GameSelectPresenterListener
+import org.uoyabause.android.SettingsActivity
 import org.uoyabause.android.ShowPinInFragment.Companion.newInstance
+import org.uoyabause.android.YabauseApplication
+import org.uoyabause.android.YabauseStorage
 import org.uoyabause.android.YabauseStorage.Companion.storage
+import org.uoyabause.android.storage.PreferencesManager
 import java.io.File
 import java.net.InetAddress
 import java.net.NetworkInterface
@@ -105,149 +119,183 @@ import java.net.URLDecoder
 import java.util.Collections
 import java.util.Timer
 
-
-class GameSelectFragment : BrowseSupportFragment(), FileSelectedListener,
+class GameSelectFragment :
+    BrowseSupportFragment(),
+    FileSelectedListener,
     GameSelectPresenterListener {
-    private val mHandler = Handler()
-    private var mRowsAdapter: ArrayObjectAdapter? = null
-    private var mDefaultBackground: Drawable? = null
-    private var mMetrics: DisplayMetrics? = null
-    private val mBackgroundTimer: Timer? = null
-    private val mBackgroundURI: URI? = null
-    private var mBackgroundManager: BackgroundManager? = null
-    private var mTracker: Tracker? = null
-    private var mInterstitialAd: InterstitialAd? = null
-    private var mFirebaseAnalytics: FirebaseAnalytics? = null
-    private var initialDialog : AlertDialog? = null
-    var isfisrtupdate = true
-    var v_: View? = null
-    lateinit var presenter_: GameSelectPresenter
-    var alphabet = arrayOf("A",
-        "B",
-        "C",
-        "D",
-        "E",
-        "F",
-        "G",
-        "H",
-        "I",
-        "J",
-        "K",
-        "L",
-        "M",
-        "N",
-        "O",
-        "P",
-        "Q",
-        "R",
-        "S",
-        "T",
-        "U",
-        "V",
-        "W",
-        "X",
-        "Y",
-        "Z")
-    private var mProgressDialog: ProgressDialog? = null
+    private val handler = Handler(Looper.getMainLooper())
+    private var rowsAdapter: ArrayObjectAdapter? = null
+    private var defaultBackground: Drawable? = null
+    private var metrics: DisplayMetrics? = null
+    private val backgroundTimer: Timer? = null
+    private val backgroundUri: URI? = null
+    private var backgroundManager: BackgroundManager? = null
+    private var tracker: Tracker? = null
+    private var interstitialAd: InterstitialAd? = null
+    private var firebaseAnalytics: FirebaseAnalytics? = null
+    private var initialDialog: AlertDialog? = null
+    var isFirstUpdate = true
+    var fragmentView: View? = null
+    lateinit var presenter: GameSelectPresenter
+    var alphabet =
+        arrayOf(
+            "A",
+            "B",
+            "C",
+            "D",
+            "E",
+            "F",
+            "G",
+            "H",
+            "I",
+            "J",
+            "K",
+            "L",
+            "M",
+            "N",
+            "O",
+            "P",
+            "Q",
+            "R",
+            "S",
+            "T",
+            "U",
+            "V",
+            "W",
+            "X",
+            "Y",
+            "Z",
+        )
+    private var progressDialog: AlertDialog? = null
+    private var progressDialogMessage: TextView? = null
+
+    private val storagePermissionLauncher =
+        registerForActivityResult(
+            ActivityResultContracts.RequestMultiplePermissions(),
+        ) { permissions ->
+            val allGranted = permissions.entries.all { it.value }
+            if (allGranted) {
+                Log.i(TAG, "Storage permissions granted.")
+                updateGameList()
+            } else {
+                Log.i(TAG, "Storage permissions denied.")
+            }
+        }
+
+    private val settingsActivityLauncher =
+        registerForActivityResult(
+            ActivityResultContracts.StartActivityForResult(),
+        ) { result ->
+            if (initialDialog != null) {
+                initialDialog?.dismiss()
+                initialDialog = null
+            }
+            when (result.resultCode) {
+                GAMELIST_NEED_TO_UPDATED -> {
+                    refreshLevel = 3
+                    if (checkStoragePermission() == 0) {
+                        updateGameList()
+                    }
+                    updateBackGraound()
+                }
+                GAMELIST_NEED_TO_RESTART -> {
+                    val intent = Intent(activity, StartupActivity::class.java)
+                    intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NEW_TASK)
+                    startActivity(intent)
+                    requireActivity().finish()
+                }
+                else -> {
+                    updateBackGraound()
+                }
+            }
+        }
 
     /**
      * Called when the 'show camera' button is clicked.
      * Callback is defined in resource layout definition.
      */
     fun checkStoragePermission(): Int {
-        if (Build.VERSION.SDK_INT >= 23 && Build.VERSION.SDK_INT < Build.VERSION_CODES.Q ) {
+        if (Build.VERSION.SDK_INT >= 23 && Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             // Verify that all required contact permissions have been granted.
-            if (ActivityCompat.checkSelfPermission(requireActivity(),
-                    Manifest.permission.READ_EXTERNAL_STORAGE)
+            if (ActivityCompat.checkSelfPermission(
+                    requireActivity(),
+                    Manifest.permission.READ_EXTERNAL_STORAGE,
+                )
                 != PackageManager.PERMISSION_GRANTED ||
-                ActivityCompat.checkSelfPermission(requireActivity(),
-                    Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                ActivityCompat.checkSelfPermission(
+                    requireActivity(),
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                )
                 != PackageManager.PERMISSION_GRANTED
             ) {
-                // Contacts permissions have not been granted.
+                // Storage permissions have not been granted.
                 Log.i(TAG, "Storage permissions has NOT been granted. Requesting permissions.")
-                // if (shouldShowRequestPermissionRationale(Manifest.permission.READ_EXTERNAL_STORAGE)
-                //        || shouldShowRequestPermissionRationale(Manifest.permission.WRITE_EXTERNAL_STORAGE)) {
-                // } else {
-                requestPermissions(PERMISSIONS_STORAGE, REQUEST_STORAGE)
-                // }
+                storagePermissionLauncher.launch(PERMISSIONS_STORAGE)
                 return -1
             }
         }
         return 0
     }
 
-    fun verifyPermissions(grantResults: IntArray): Boolean {
-        // At least one result must be checked.
-        if (grantResults.size < 1) {
-            return false
-        }
-
-        // Verify that each required permission has been granted, otherwise return false.
-        for (result in grantResults) {
-            if (result != PackageManager.PERMISSION_GRANTED) {
-                return false
-            }
-        }
-        return true
-    }
-
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<String>,
-        grantResults: IntArray,
-    ) {
-        if (requestCode == REQUEST_STORAGE) {
-            Log.i(TAG, "Received response for contact permissions request.")
-            // We have requested multiple permissions for contacts, so all of them need to be
-            // checked.
-            if (verifyPermissions(grantResults) == true) {
-                updateGameList()
-            } else {
-            }
-        } else {
-            super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        }
-    }
-
-    fun showDialog( message : String ) {
-        if( initialDialog != null ){
+    fun showDialog(message: String) {
+        if (initialDialog != null) {
             initialDialog?.dismiss()
             initialDialog = null
         }
-        if (mProgressDialog == null) {
-            mProgressDialog = ProgressDialog(activity)
-            mProgressDialog!!.setMessage(message)
-            mProgressDialog!!.show()
+        if (progressDialog == null) {
+            val context = activity ?: return
+            val layout =
+                LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    setPadding(48, 32, 48, 32)
+                    gravity = android.view.Gravity.CENTER_VERTICAL
+                }
+            val progressBar =
+                ProgressBar(context).apply {
+                    isIndeterminate = true
+                }
+            progressDialogMessage =
+                TextView(context).apply {
+                    text = message
+                    setPadding(32, 0, 0, 0)
+                }
+            layout.addView(progressBar)
+            layout.addView(progressDialogMessage)
+            progressDialog =
+                AlertDialog
+                    .Builder(context)
+                    .setView(layout)
+                    .setCancelable(false)
+                    .create()
+            progressDialog!!.show()
         }
     }
 
     fun updateDialogString(msg: String) {
-        if( initialDialog != null ){
+        if (initialDialog != null) {
             initialDialog?.dismiss()
             initialDialog = null
         }
-        if (mProgressDialog == null) {
-            mProgressDialog = ProgressDialog(activity)
-            mProgressDialog!!.setMessage(msg)
-            mProgressDialog!!.show()
-        }else {
-            mProgressDialog!!.setMessage("$msg")
+        if (progressDialog == null) {
+            showDialog(msg)
+        } else {
+            progressDialogMessage?.text = msg
         }
     }
 
     fun dismissDialog() {
-        if (mProgressDialog != null) {
-            if (mProgressDialog!!.isShowing) {
-                mProgressDialog!!.dismiss()
+        if (progressDialog != null) {
+            if (progressDialog!!.isShowing) {
+                progressDialog!!.dismiss()
             }
-            mProgressDialog = null
+            progressDialog = null
+            progressDialogMessage = null
         }
     }
 
     override fun fileSelected(file: File?) {
-        if( file != null ) {
-            presenter_!!.fileSelected(file)
+        if (file != null) {
+            presenter!!.fileSelected(file)
         }
     }
 
@@ -255,15 +303,14 @@ class GameSelectFragment : BrowseSupportFragment(), FileSelectedListener,
     // public void onUpdateGameList() {
     //    loadRows();
     //    dismissDialog();
-    //    if(isfisrtupdate) {
-    //        isfisrtupdate = false;
-    //        presenter_.checkSignIn();
+    //    if(isFirstUpdate) {
+    //        isFirstUpdate = false;
+    //        presenter.checkSignIn();
     //    }
     // }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        retainInstance = true
-        presenter_ = GameSelectPresenter(this, yabauseActivityLauncher,this)
+        presenter = GameSelectPresenter(this, yabauseActivityLauncher, this)
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
             if (requireContext().display?.isMinimalPostProcessingSupported()!!) {
                 requireActivity().window.setPreferMinimalPostProcessing(true)
@@ -272,18 +319,16 @@ class GameSelectFragment : BrowseSupportFragment(), FileSelectedListener,
         }
     }
 
-    var yabauseActivityLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        if (BuildConfig.BUILD_TYPE != "pro") {
-            val prefs = requireActivity().getSharedPreferences("private", Context.MODE_PRIVATE)
-            val hasDonated = prefs.getBoolean("donated", false)
-            if (hasDonated == false) {
+    var yabauseActivityLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            if (!YabauseApplication.isPro()) {
                 val rn = Math.random()
                 if (rn <= 0.5) {
                     val uiModeManager =
                         requireActivity().getSystemService(Context.UI_MODE_SERVICE) as UiModeManager
                     if (uiModeManager.currentModeType != Configuration.UI_MODE_TYPE_TELEVISION) {
-                        if (mInterstitialAd != null) {
-                            mInterstitialAd!!.show(requireActivity())
+                        if (interstitialAd != null) {
+                            interstitialAd!!.show(requireActivity())
                         } else {
                             val intent = Intent(activity, AdActivity::class.java)
                             startActivity(intent)
@@ -298,15 +343,18 @@ class GameSelectFragment : BrowseSupportFragment(), FileSelectedListener,
                 }
             }
         }
-    }
 
+    @Deprecated("Deprecated in Java")
     override fun onActivityCreated(savedInstanceState: Bundle?) {
         Log.i(TAG, "onCreate")
+        @Suppress("DEPRECATION")
         super.onActivityCreated(savedInstanceState)
-        mFirebaseAnalytics = FirebaseAnalytics.getInstance(requireActivity())
+        firebaseAnalytics = FirebaseAnalytics.getInstance(requireActivity())
         val application = requireActivity().application as YabauseApplication
-        mTracker = application.defaultTracker
+        tracker = application.defaultTracker
         MobileAds.initialize(requireContext())
+
+        showMigrationDialogIfNeeded()
 
         requestNewInterstitial()
 
@@ -322,7 +370,7 @@ class GameSelectFragment : BrowseSupportFragment(), FileSelectedListener,
                     val game = YabauseStorage.dao.findByFilePath(filename)
                     if (game != null) {
                         launch(Dispatchers.Main) {
-                            presenter_.startGame(game, yabauseActivityLauncher)
+                            presenter.startGame(game, yabauseActivityLauncher)
                         }
                     }
                 }
@@ -333,8 +381,8 @@ class GameSelectFragment : BrowseSupportFragment(), FileSelectedListener,
         prepareBackgroundManager()
         setupUIElements()
         setupEventListeners()
-        if (mRowsAdapter == null) {
-            mRowsAdapter = ArrayObjectAdapter(ListRowPresenter())
+        if (rowsAdapter == null) {
+            rowsAdapter = ArrayObjectAdapter(ListRowPresenter())
             val gridHeader = HeaderItem(0, "PREFERENCES")
             val mGridPresenter = GridItemPresenter()
             val gridRowAdapter = ArrayObjectAdapter(mGridPresenter)
@@ -359,10 +407,9 @@ class GameSelectFragment : BrowseSupportFragment(), FileSelectedListener,
                 gridRowAdapter.add(resources.getString(R.string.sign_in))
             }
             gridRowAdapter.add(resources.getString(R.string.sign_in_to_other_devices))
-            mRowsAdapter!!.add(ListRow(gridHeader, gridRowAdapter))
+            rowsAdapter!!.add(ListRow(gridHeader, gridRowAdapter))
             setSelectedPosition(0, false)
-            adapter = mRowsAdapter
-
+            adapter = rowsAdapter
         }
         if (checkStoragePermission() == 0) {
             updateBackGraound()
@@ -382,7 +429,7 @@ class GameSelectFragment : BrowseSupportFragment(), FileSelectedListener,
         container: ViewGroup?,
         savedInstanceState: Bundle?,
     ): View? {
-        v_ = super.onCreateView(inflater, container, savedInstanceState)
+        fragmentView = super.onCreateView(inflater, container, savedInstanceState)
         val uiModeManager = requireActivity().getSystemService(Context.UI_MODE_SERVICE) as UiModeManager
         if (uiModeManager.currentModeType != Configuration.UI_MODE_TYPE_TELEVISION) {
             val rootView = titleView
@@ -391,68 +438,66 @@ class GameSelectFragment : BrowseSupportFragment(), FileSelectedListener,
                 tv.textSize = 24f
             }
         }
-        return v_
+        return fragmentView
     }
 
-    private var signInActivityLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        presenter_.onSignIn(result.resultCode, result.data)
-        if (presenter_.currentUserName != null) {
-            //val m = navigationView!!.menu
-            //val miLogin = m.findItem(R.id.menu_item_login)
-            //miLogin.setTitle(R.string.sign_out)
+    private var signInActivityLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            presenter.onSignIn(result.resultCode, result.data)
+            if (presenter.currentUserName != null) {
+                // val m = navigationView!!.menu
+                // val miLogin = m.findItem(R.id.menu_item_login)
+                // miLogin.setTitle(R.string.sign_out)
+            }
         }
-    }
 
-    private var observer: Observer<*>? = null
+    private var updateJob: Job? = null
+
     fun updateGameList() {
-        // showDialog();
-        if (observer != null) return
-        val tmpobserver: Observer<String> = object : Observer<String> {
-            // GithubRepositoryApiCompleteEventEntity eventResult = new GithubRepositoryApiCompleteEventEntity();
-            override fun onSubscribe(d: Disposable) {
-                observer = this
+        if (updateJob?.isActive == true) return
+        if (!presenter.prepareStorage()) return
+
+        val level = refreshLevel
+        refreshLevel = 0
+        updateJob =
+            lifecycleScope.launch {
                 showDialog("Updating")
-            }
-
-            override fun onNext(response: String) {
-                updateDialogString( "Updating .. $response")
-            }
-
-            override fun onError(e: Throwable) {
-                observer = null
-                dismissDialog()
-                presenter_?.syncBackup()
-            }
-
-            override fun onComplete() {
-                observer = null
-                loadRows()
-                dismissDialog()
-                if (isfisrtupdate) {
-                    isfisrtupdate = false
-                    val ac: Activity? = this@GameSelectFragment.activity
-                    if (ac != null && ac.intent.getBooleanExtra("showPin", false)) {
-                        newInstance().show(childFragmentManager, "sample")
-                    } else {
-                        presenter_!!.checkSignIn(signInActivityLauncher)
+                try {
+                    presenter.updateGameDatabase(level) { message ->
+                        updateDialogString("Updating .. $message")
                     }
+
+                    loadRows()
+                    dismissDialog()
+
+                    if (isFirstUpdate) {
+                        isFirstUpdate = false
+                        val ac: Activity? = this@GameSelectFragment.activity
+                        if (ac != null && ac.intent.getBooleanExtra("showPin", false)) {
+                            if (!YabauseApplication.isPro()) {
+                                YabauseApplication.checkDonated(ac)
+                            } else {
+                                newInstance().show(childFragmentManager, "sample")
+                            }
+                        } else {
+                            presenter.checkSignIn(signInActivityLauncher)
+                        }
+                    }
+                } catch (e: Exception) {
+                    dismissDialog()
                 }
-                presenter_?.syncBackup()
             }
-        }
-        presenter_!!.updateGameList(refresh_level, tmpobserver)
-        refresh_level = 0
     }
 
     override fun onResume() {
         super.onResume()
         isForeground = this
-        if (mTracker != null) {
-            mTracker!!.setScreenName(TAG)
-            mTracker!!.send(ScreenViewBuilder().build())
+        if (tracker != null) {
+            tracker!!.setScreenName(TAG)
+            tracker!!.send(ScreenViewBuilder().build())
         }
 
-        updateSignInOutString();
+        updateSignInOutString()
     }
 
     override fun onPause() {
@@ -462,42 +507,42 @@ class GameSelectFragment : BrowseSupportFragment(), FileSelectedListener,
     }
 
     override fun onDestroy() {
-        //this.setSelectedPosition(-1, false)
+        // this.setSelectedPosition(-1, false)
         System.gc()
         super.onDestroy()
         /*
-        if (null != mBackgroundTimer) {
-            Log.d(TAG, "onDestroy: " + mBackgroundTimer.toString());
-            mBackgroundTimer.cancel();
+        if (null != backgroundTimer) {
+            Log.d(TAG, "onDestroy: " + backgroundTimer.toString());
+            backgroundTimer.cancel();
         }
 */
     }
 
-    override fun onSignOut(){
+    override fun onSignOut() {
         updateSignInOutString()
     }
 
-    private fun updateSignInOutString(){
+    private fun updateSignInOutString() {
         val auth = FirebaseAuth.getInstance()
-        for (i in 0 until mRowsAdapter!!.size()) {
-            var ls = mRowsAdapter!![i] as ListRow
-            if( ls.getHeaderItem().getName() == "PREFERENCES" ){
+        for (i in 0 until rowsAdapter!!.size()) {
+            var ls = rowsAdapter!![i] as ListRow
+            if (ls.getHeaderItem().getName() == "PREFERENCES") {
                 var adapter = ls!!.getAdapter() as ArrayObjectAdapter
-                for (j in 0 until adapter.size() ) {
+                for (j in 0 until adapter.size()) {
                     var item = adapter!!.get(j) as String
 
                     if (auth.currentUser != null) {
                         if (item == resources.getString(R.string.sign_in)) {
-                            adapter!!.replace(j,resources.getString(R.string.sign_out))
-                            adapter!!.notifyItemRangeChanged(j,1)
-                            mRowsAdapter!!.notifyItemRangeChanged(i,1)
+                            adapter!!.replace(j, resources.getString(R.string.sign_out))
+                            adapter!!.notifyItemRangeChanged(j, 1)
+                            rowsAdapter!!.notifyItemRangeChanged(i, 1)
                             return
                         }
-                    }else{
+                    } else {
                         if (item == resources.getString(R.string.sign_out)) {
-                            adapter!!.replace(j,resources.getString(R.string.sign_in))
-                            adapter!!.notifyItemRangeChanged(j,1)
-                            mRowsAdapter!!.notifyItemRangeChanged(i,1)
+                            adapter!!.replace(j, resources.getString(R.string.sign_in))
+                            adapter!!.notifyItemRangeChanged(j, 1)
+                            rowsAdapter!!.notifyItemRangeChanged(i, 1)
                             return
                         }
                     }
@@ -507,9 +552,7 @@ class GameSelectFragment : BrowseSupportFragment(), FileSelectedListener,
     }
 
     private fun loadRows() {
-
         GlobalScope.launch(Dispatchers.IO) {
-
             var datacount = 0
             try {
                 datacount = YabauseStorage.dao.getRowCount()
@@ -518,30 +561,23 @@ class GameSelectFragment : BrowseSupportFragment(), FileSelectedListener,
             }
 
             if (datacount == 0) {
-
                 launch(Dispatchers.Main) {
                     var viewMessage = TextView(requireContext())
 
-                    val markwon = Markwon.create(
-                        requireContext()
-                    )
-
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        //val welcomeMessage = resources.getString(
-                        //    R.string.welcome_11
-                        //)
-
-                        val packagename = requireActivity().getPackageName()
-
-
-                        val welcomeMessage = resources.getString(
-                            R.string.welcome_11,
-                            "Android/data/" + packagename + "/files/yabause/games",
-                            "Android/data/" + packagename + "/files",
+                    val markwon =
+                        Markwon.create(
+                            requireContext(),
                         )
 
-                        markwon.setMarkdown(viewMessage, welcomeMessage)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        val welcomeMessage =
+                            resources.getString(
+                                R.string.welcome_11,
+                                YabauseStorage.storage.gamePath,
+                                YabauseStorage.storage.externalGamePath ?: "",
+                            )
 
+                        markwon.setMarkdown(viewMessage, welcomeMessage)
                     } else {
                         val welcomeMessage =
                             resources.getString(R.string.welcome, YabauseStorage.storage.gamePath)
@@ -550,17 +586,15 @@ class GameSelectFragment : BrowseSupportFragment(), FileSelectedListener,
 
                     viewMessage.setPadding(64)
 
-
-                    initialDialog = AlertDialog.Builder(requireActivity(), R.style.Theme_AppCompat)
-                        .setView(viewMessage)
-                        .setPositiveButton(R.string.ok) { _, _ ->
-
-                        }
-                        .create()
+                    initialDialog =
+                        AlertDialog
+                            .Builder(requireActivity(), R.style.Theme_AppCompat)
+                            .setView(viewMessage)
+                            .setPositiveButton(R.string.ok) { _, _ ->
+                            }.create()
 
                     initialDialog?.show()
                 }
-
 
                 return@launch
             }
@@ -568,10 +602,8 @@ class GameSelectFragment : BrowseSupportFragment(), FileSelectedListener,
             if (!isAdded) return@launch
 
             launch(Dispatchers.Main) {
-
                 var addindex = 0
-                mRowsAdapter = ArrayObjectAdapter(ListRowPresenter())
-
+                rowsAdapter = ArrayObjectAdapter(ListRowPresenter())
 
                 // -----------------------------------------------------------------
                 // Recent Play Game
@@ -585,21 +617,19 @@ class GameSelectFragment : BrowseSupportFragment(), FileSelectedListener,
                     launch(Dispatchers.Main) {
                         val recentHeader = HeaderItem(addindex.toLong(), "RECENT")
                         val itx = rlist!!.iterator()
-                        val cardPresenter_recent = CardPresenter()
-                        val listRowAdapter_recent = ArrayObjectAdapter(cardPresenter_recent)
+                        val cardPresenterRecent = CardPresenter()
+                        val listRowAdapterRecent = ArrayObjectAdapter(cardPresenterRecent)
                         var hit = false
                         while (itx.hasNext()) {
                             val game = itx.next()
-                            if (game != null) {
-                                listRowAdapter_recent.add(game)
-                            }
+                            listRowAdapterRecent.add(game)
                             hit = true
                         }
 
                         // ----------------------------------------------------------------------
                         // Refernce
                         if (hit) {
-                            mRowsAdapter!!.add(ListRow(recentHeader, listRowAdapter_recent))
+                            rowsAdapter!!.add(ListRow(recentHeader, listRowAdapterRecent))
                             addindex++
                         }
                         val gridHeader = HeaderItem(addindex.toLong(), "PREFERENCES")
@@ -627,9 +657,8 @@ class GameSelectFragment : BrowseSupportFragment(), FileSelectedListener,
                             gridRowAdapter.add(resources.getString(R.string.sign_in))
                         }
                         gridRowAdapter.add(resources.getString(R.string.sign_in_to_other_devices))
-                        mRowsAdapter!!.add(ListRow(gridHeader, gridRowAdapter))
+                        rowsAdapter!!.add(ListRow(gridHeader, gridRowAdapter))
                         addindex++
-
 
                         // -----------------------------------------------------------------
                         //
@@ -641,42 +670,42 @@ class GameSelectFragment : BrowseSupportFragment(), FileSelectedListener,
                                 println(e)
                             }
 
-                        launch(Dispatchers.Main) {
-                            var i: Int
-                            i = 0
-                            while (i < alphabet.size) {
-                                hit = false
+                            launch(Dispatchers.Main) {
+                                var i: Int
+                                i = 0
+                                while (i < alphabet.size) {
+                                    hit = false
+                                    val cardPresenter = CardPresenter()
+                                    val listRowAdapter = ArrayObjectAdapter(cardPresenter)
+                                    val it = list!!.iterator()
+                                    while (it.hasNext()) {
+                                        val game = it.next()
+                                        if (game.game_title.uppercase().indexOf(alphabet[i]) == 0) {
+                                            listRowAdapter.add(game)
+                                            Log.d("GameSelect", alphabet[i] + ":" + game.game_title)
+                                            it.remove()
+                                            hit = true
+                                        }
+                                    }
+                                    if (hit) {
+                                        val header = HeaderItem(addindex.toLong(), alphabet[i])
+                                        rowsAdapter!!.add(ListRow(header, listRowAdapter))
+                                        addindex++
+                                    }
+                                    i++
+                                }
                                 val cardPresenter = CardPresenter()
                                 val listRowAdapter = ArrayObjectAdapter(cardPresenter)
-                                val it = list!!.iterator()
+                                val it: Iterator<GameInfo> = list!!.iterator()
                                 while (it.hasNext()) {
                                     val game = it.next()
-                                    if (game.game_title.toUpperCase().indexOf(alphabet[i]) == 0) {
-                                        listRowAdapter.add(game)
-                                        Log.d("GameSelect", alphabet[i] + ":" + game.game_title)
-                                        it.remove()
-                                        hit = true
-                                    }
+                                    Log.d("GameSelect", "Others:" + game.game_title)
+                                    listRowAdapter.add(game)
                                 }
-                                if (hit) {
-                                    val header = HeaderItem(addindex.toLong(), alphabet[i])
-                                    mRowsAdapter!!.add(ListRow(header, listRowAdapter))
-                                    addindex++
-                                }
-                                i++
+                                val header = HeaderItem(addindex.toLong(), "Others")
+                                rowsAdapter!!.add(ListRow(header, listRowAdapter))
+                                adapter = rowsAdapter
                             }
-                            val cardPresenter = CardPresenter()
-                            val listRowAdapter = ArrayObjectAdapter(cardPresenter)
-                            val it: Iterator<GameInfo> = list!!.iterator()
-                            while (it.hasNext()) {
-                                val game = it.next()
-                                Log.d("GameSelect", "Others:" + game.game_title)
-                                listRowAdapter.add(game)
-                            }
-                            val header = HeaderItem(addindex.toLong(), "Others")
-                            mRowsAdapter!!.add(ListRow(header, listRowAdapter))
-                            adapter = mRowsAdapter
-                        }
                         }
                     }
                 }
@@ -685,34 +714,41 @@ class GameSelectFragment : BrowseSupportFragment(), FileSelectedListener,
     }
 
     private fun prepareBackgroundManager() {
-        mBackgroundManager = BackgroundManager.getInstance(activity)
-        mBackgroundManager!!.setAutoReleaseOnStop(false)
-        mBackgroundManager!!.attach(requireActivity().window)
-        mDefaultBackground =
+        backgroundManager = BackgroundManager.getInstance(activity)
+        backgroundManager!!.setAutoReleaseOnStop(false)
+        backgroundManager!!.attach(requireActivity().window)
+        defaultBackground =
             null // getBrandColor(); //getResources().getDrawable(R.drawable.saturn);
-        mMetrics = DisplayMetrics()
-        // requireActivity().windowManager.defaultDisplay.getMetrics(mMetrics)
-        requireContext().display?.getRealMetrics(mMetrics)
+        metrics = DisplayMetrics()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val windowMetrics = requireActivity().windowManager.currentWindowMetrics
+            val bounds = windowMetrics.bounds
+            metrics!!.widthPixels = bounds.width()
+            metrics!!.heightPixels = bounds.height()
+        } else {
+            @Suppress("DEPRECATION")
+            requireActivity().windowManager.defaultDisplay.getMetrics(metrics)
+        }
     }
 
     private fun updateBackGraound() {
         // val sp = PreferenceManager.getDefaultSharedPreferences(activity)
-        val image_path = "err" // sp.getString("select_image", "err");
-        if (image_path == "err") {
-            mDefaultBackground = null // getResources().getDrawable(R.drawable.saturn);
-            mBackgroundManager!!.drawable = mDefaultBackground
+        val imagePath = "err" // sp.getString("select_image", "err");
+        if (imagePath == "err") {
+            defaultBackground = null // getResources().getDrawable(R.drawable.saturn);
+            backgroundManager!!.drawable = defaultBackground
         } else {
             try {
                 val options = BitmapFactory.Options()
                 options.inPreferredConfig = Bitmap.Config.ARGB_8888
-                val bitmap = BitmapFactory.decodeFile(image_path, options)
+                val bitmap = BitmapFactory.decodeFile(imagePath, options)
 
 /*
                 getActivity().grantUriPermission("org.uoyabause.android",
-                        Uri.parse(image_path),
+                        Uri.parse(imagePath),
                         Intent.FLAG_GRANT_READ_URI_PERMISSION);
 
-                InputStream inputStream = getActivity().getContentResolver().openInputStream(Uri.parse(image_path));
+                InputStream inputStream = getActivity().getContentResolver().openInputStream(Uri.parse(imagePath));
 
                 BitmapFactory.Options imageOptions = new BitmapFactory.Options();
                 imageOptions.inJustDecodeBounds = true;
@@ -723,7 +759,7 @@ class GameSelectFragment : BrowseSupportFragment(), FileSelectedListener,
 
                 Bitmap bitmap;
                 int imageSizeMax = 1920;
-                inputStream = getActivity().getContentResolver().openInputStream(Uri.parse(image_path));
+                inputStream = getActivity().getContentResolver().openInputStream(Uri.parse(imagePath));
                 float imageScaleWidth = (float)imageOptions.outWidth / imageSizeMax;
                 float imageScaleHeight = (float)imageOptions.outHeight / imageSizeMax;
 
@@ -740,11 +776,12 @@ class GameSelectFragment : BrowseSupportFragment(), FileSelectedListener,
                 }
 
                 inputStream.close();
-                //mDefaultBackground = Drawable.createFromStream(inputStream, image_path );
-     */mBackgroundManager!!.setBitmap(bitmap)
+                //defaultBackground = Drawable.createFromStream(inputStream, imagePath );
+ */
+                backgroundManager!!.setBitmap(bitmap)
             } catch (e: Exception) {
-                mDefaultBackground = null // getResources().getDrawable(R.drawable.saturn);
-                mBackgroundManager!!.drawable = mDefaultBackground
+                defaultBackground = null // getResources().getDrawable(R.drawable.saturn);
+                backgroundManager!!.drawable = defaultBackground
             }
         }
     }
@@ -781,39 +818,42 @@ class GameSelectFragment : BrowseSupportFragment(), FileSelectedListener,
 
     /*
         protected void updateBackground(String uri) {
-            int width = mMetrics.widthPixels;
-            int height = mMetrics.heightPixels;
+            int width = metrics.widthPixels;
+            int height = metrics.heightPixels;
             Glide.with(getActivity())
                     .load(uri)
                     .centerCrop()
-                    .error(mDefaultBackground)
+                    .error(defaultBackground)
                     .into(new SimpleTarget<GlideDrawable>(width, height) {
                         @Override
                         public void onResourceReady(GlideDrawable resource,
                                                     GlideAnimation<? super GlideDrawable>
                                                             glideAnimation) {
-                            mBackgroundManager.setDrawable(resource);
+                            backgroundManager.setDrawable(resource);
                         }
                     });
-            mBackgroundTimer.cancel();
+            backgroundTimer.cancel();
         }
-    */
-    /*
+
+
+    ============================================================================
+
     private void startBackgroundTimer() {
-        if (null != mBackgroundTimer) {
-            mBackgroundTimer.cancel();
+        if (null != backgroundTimer) {
+            backgroundTimer.cancel();
         }
-        mBackgroundTimer = new Timer();
-        mBackgroundTimer.schedule(new UpdateBackgroundTask(), BACKGROUND_UPDATE_DELAY);
+        backgroundTimer = new Timer();
+        backgroundTimer.schedule(new UpdateBackgroundTask(), BACKGROUND_UPDATE_DELAY);
     }
 */
-    val SETTING_ACTIVITY = 0x01
-    val DOWNLOAD_ACTIVITY = 0x03
+    val settingActivity = 0x01
+    val downloadActivity = 0x03
 
-    var signinActivityLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        presenter_!!.onSignIn(result.resultCode, result.data)
-        updateSignInOutString()
-    }
+    var signinActivityLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            presenter!!.onSignIn(result.resultCode, result.data)
+            updateSignInOutString()
+        }
 
     private inner class ItemViewClickedListener : OnItemViewClickedListener {
         override fun onItemClicked(
@@ -823,51 +863,53 @@ class GameSelectFragment : BrowseSupportFragment(), FileSelectedListener,
             row: Row,
         ) {
             if (item is GameInfo) {
-                presenter_.startGame(item,yabauseActivityLauncher)
+                presenter.startGame(item, yabauseActivityLauncher)
             } else if (item is String) {
                 if (item == getString(R.string.sign_in)) {
-                    presenter_.signIn(signinActivityLauncher)
+                    presenter.signIn(signinActivityLauncher)
                 } else if (item == getString(R.string.sign_out)) {
-                    presenter_.signOut()
+                    presenter.signOut()
                 } else if (item == getString(R.string.sign_in_to_other_devices)) {
                     newInstance().show(childFragmentManager, "sample")
                 } else if (item == getString(R.string.setting)) {
                     val intent = Intent(activity, SettingsActivity::class.java)
-                    startActivityForResult(intent, SETTING_ACTIVITY)
+                    settingsActivityLauncher.launch(intent)
                 } else if (item == "+") {
-
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        val prefs = requireActivity().getSharedPreferences("private",
-                            MultiDexApplication.MODE_PRIVATE)
-                        val InstallCount = prefs.getInt("InstallCount", 3)
-                        if( InstallCount > 0){
+                        val prefs =
+                            requireActivity().getSharedPreferences(
+                                "private",
+                                MultiDexApplication.MODE_PRIVATE,
+                            )
+                        val installCount = prefs.getInt("installCount", 3)
+                        if (installCount > 0) {
                             val intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
                             intent.addCategory(Intent.CATEGORY_OPENABLE)
                             intent.type = "*/*"
                             readRequestLauncher.launch(intent)
-                        }else {
-                            val message = resources.getString(R.string.or_place_file_to, YabauseStorage.storage.gamePath);
+                        } else {
+                            val message = resources.getString(R.string.or_place_file_to, YabauseStorage.storage.gamePath)
                             val rtn = YabauseApplication.checkDonated(requireActivity(), message)
-                            if ( rtn == 0) {
+                            if (rtn == 0) {
                                 val intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
                                 intent.addCategory(Intent.CATEGORY_OPENABLE)
                                 intent.type = "*/*"
                                 readRequestLauncher.launch(intent)
                             }
                         }
-
-                    }else{
+                    } else {
                         val yabroot = File(storage.rootPath)
-                        val sharedPref = PreferenceManager.getDefaultSharedPreferences(
-                            activity
-                        )
-                        val last_dir = sharedPref.getString("pref_last_dir", yabroot.path)
-                        val fd = FileDialog(requireActivity(), last_dir)
+                        val sharedPref =
+                            PreferenceManager.getDefaultSharedPreferences(
+                                requireActivity(),
+                            )
+                        val lastDir = sharedPref.getString("pref_lastDir", yabroot.path)
+                        val fd = FileDialog(requireActivity(), lastDir)
                         fd.addFileListener(this@GameSelectFragment)
                         fd.showDialog()
                     }
                 } else if (item.indexOf(getString(R.string.refresh_db)) >= 0) {
-                    refresh_level = 3
+                    refreshLevel = 3
                     if (checkStoragePermission() == 0) {
                         updateGameList()
                     }
@@ -898,7 +940,6 @@ class GameSelectFragment : BrowseSupportFragment(), FileSelectedListener,
         }
     }
 
-
     private inner class ItemViewSelectedListener : OnItemViewSelectedListener {
         override fun onItemSelected(
             itemViewHolder: Presenter.ViewHolder?,
@@ -909,12 +950,14 @@ class GameSelectFragment : BrowseSupportFragment(), FileSelectedListener,
         }
     }
 
-
     private inner class GridItemPresenter : Presenter() {
         override fun onCreateViewHolder(parent: ViewGroup): ViewHolder {
             val view = TextView(parent.context)
-            view.layoutParams = ViewGroup.LayoutParams(GRID_ITEM_WIDTH,
-                GRID_ITEM_HEIGHT)
+            view.layoutParams =
+                ViewGroup.LayoutParams(
+                    GRID_ITEM_WIDTH,
+                    GRID_ITEM_HEIGHT,
+                )
             view.isFocusable = true
             view.isFocusableInTouchMode = true
             view.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.default_background))
@@ -923,7 +966,10 @@ class GameSelectFragment : BrowseSupportFragment(), FileSelectedListener,
             return ViewHolder(view)
         }
 
-        override fun onBindViewHolder(viewHolder: ViewHolder, item: Any?) {
+        override fun onBindViewHolder(
+            viewHolder: ViewHolder,
+            item: Any?,
+        ) {
             (viewHolder.view as TextView).text = item as String
         }
 
@@ -934,7 +980,7 @@ class GameSelectFragment : BrowseSupportFragment(), FileSelectedListener,
         showSnackbar(string_id)
     }
 
-    override fun onShowDialog(message: String){
+    override fun onShowDialog(message: String) {
         showDialog(message)
     }
 
@@ -950,23 +996,16 @@ class GameSelectFragment : BrowseSupportFragment(), FileSelectedListener,
         loadRows()
     }
 
-    override fun onFinishSyncBackUp(result: AutoBackupManager.SyncResult, message: String) {
-        TODO("Not yet implemented")
-    }
-
-    override fun onStartSyncBackUp() {
-        TODO("Not yet implemented")
-    }
-
     private fun showSnackbar(id: Int) {
         Toast.makeText(activity, getString(id), Toast.LENGTH_SHORT).show()
         /*
         Snackbar
-                .make(v_, getString(id), Snackbar.LENGTH_SHORT)
+                .make(fragmentView, getString(id), Snackbar.LENGTH_SHORT)
                 .show();
-*/
 
-/*
+
+    ============================================================================
+
         new AlertDialog.Builder(this)
                 .setMessage(getString(id))
                 .setPositiveButton("OK", null)
@@ -974,42 +1013,49 @@ class GameSelectFragment : BrowseSupportFragment(), FileSelectedListener,
 */
     }
 
-    private var readRequestLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        if ( result.resultCode == Activity.RESULT_OK) {
-            if (result.data != null) {
-                val uri = result.data!!.data
-                if (uri != null) {
-                    presenter_.onSelectFile(uri)
+    private var readRequestLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            if (result.resultCode == Activity.RESULT_OK) {
+                if (result.data != null) {
+                    val uri = result.data!!.data
+                    if (uri != null) {
+                        presenter.onSelectFile(uri)
+                    }
                 }
             }
         }
-    }
 
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(
+        requestCode: Int,
+        resultCode: Int,
+        data: Intent?,
+    ) {
+        @Suppress("DEPRECATION")
         super.onActivityResult(requestCode, resultCode, data)
 
-        if( initialDialog != null ){
+        if (initialDialog != null) {
             initialDialog?.dismiss()
             initialDialog = null
         }
         when (requestCode) {
-            //READ_REQUEST_CODE -> {
+            // READ_REQUEST_CODE -> {
             //    if (resultCode == Activity.RESULT_OK && data != null) {
             //        val uri = data.data
             //        if (uri != null) {
-            //           presenter_.onSelectFile(uri)
+            //           presenter.onSelectFile(uri)
             //        }
             //    }
-            //}
-            DOWNLOAD_ACTIVITY -> {
+            // }
+            downloadActivity -> {
                 if (resultCode == 0) {
-                    refresh_level = 3
+                    refreshLevel = 3
                     if (checkStoragePermission() == 0) {
                         updateGameList()
                     }
                 }
                 if (resultCode == GAMELIST_NEED_TO_UPDATED) {
-                    refresh_level = 3
+                    refreshLevel = 3
                     if (checkStoragePermission() == 0) {
                         updateGameList()
                     }
@@ -1023,45 +1069,32 @@ class GameSelectFragment : BrowseSupportFragment(), FileSelectedListener,
                     updateBackGraound()
                 }
             }
-            SETTING_ACTIVITY -> if (resultCode == GAMELIST_NEED_TO_UPDATED) {
-                refresh_level = 3
-                if (checkStoragePermission() == 0) {
-                    updateGameList()
-                }
-                updateBackGraound()
-            } else if (resultCode == GAMELIST_NEED_TO_RESTART) {
-                val intent = Intent(activity, StartupActivity::class.java)
-                intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NEW_TASK)
-                startActivity(intent)
-                requireActivity().finish()
-            } else {
-                updateBackGraound()
-            }
-            GameSelectPresenter.YABAUSE_ACTIVITY -> if (BuildConfig.BUILD_TYPE != "pro") {
-                val prefs = requireActivity().getSharedPreferences("private", Context.MODE_PRIVATE)
-                val hasDonated = prefs.getBoolean("donated", false)
-                if (hasDonated == false) {
-                    val rn = Math.random()
-                    if (rn <= 0.5) {
-                        val uiModeManager =
-                            requireActivity().getSystemService(Context.UI_MODE_SERVICE) as UiModeManager
-                        if (uiModeManager.currentModeType != Configuration.UI_MODE_TYPE_TELEVISION) {
-                            if (mInterstitialAd != null) {
-                                mInterstitialAd!!.show(requireActivity())
+            GameSelectPresenter.YABAUSE_ACTIVITY ->
+                if (BuildConfig.BUILD_TYPE != "pro") {
+                    val prefs = requireActivity().getSharedPreferences("private", Context.MODE_PRIVATE)
+                    val hasDonated = prefs.getBoolean("donated", false)
+                    if (hasDonated == false) {
+                        val rn = Math.random()
+                        if (rn <= 0.5) {
+                            val uiModeManager =
+                                requireActivity().getSystemService(Context.UI_MODE_SERVICE) as UiModeManager
+                            if (uiModeManager.currentModeType != Configuration.UI_MODE_TYPE_TELEVISION) {
+                                if (interstitialAd != null) {
+                                    interstitialAd!!.show(requireActivity())
+                                } else {
+                                    val intent = Intent(activity, AdActivity::class.java)
+                                    startActivity(intent)
+                                }
                             } else {
                                 val intent = Intent(activity, AdActivity::class.java)
                                 startActivity(intent)
                             }
-                        } else {
+                        } else if (rn > 0.5) {
                             val intent = Intent(activity, AdActivity::class.java)
                             startActivity(intent)
                         }
-                    } else if (rn > 0.5) {
-                        val intent = Intent(activity, AdActivity::class.java)
-                        startActivity(intent)
                     }
                 }
-            }
             else -> {
             }
         }
@@ -1069,35 +1102,55 @@ class GameSelectFragment : BrowseSupportFragment(), FileSelectedListener,
 
     private fun requestNewInterstitial() {
         val adRequest = AdRequest.Builder().build()
-        InterstitialAd.load(requireActivity(), requireActivity().getString(R.string.banner_ad_unit_id), adRequest,
+        InterstitialAd.load(
+            requireActivity(),
+            requireActivity().getString(R.string.banner_ad_unit_id),
+            adRequest,
             object : InterstitialAdLoadCallback() {
-                override fun onAdLoaded(interstitialAd: InterstitialAd) {
-                    // The mInterstitialAd reference will be null until
+                override fun onAdLoaded(ad: InterstitialAd) {
+                    // The interstitialAd reference will be null until
                     // an ad is loaded.
-                    mInterstitialAd = interstitialAd
-                    //Log.i(BrowseSupportFragment.TAG, "onAdLoaded")
+                    this@GameSelectFragment.interstitialAd = ad
+                    // Log.i(BrowseSupportFragment.TAG, "onAdLoaded")
                 }
 
                 override fun onAdFailedToLoad(loadAdError: LoadAdError) {
                     // Handle the error
-                    //Log.i(BrowseSupportFragment.TAG, loadAdError.message)
-                    mInterstitialAd = null
+                    // Log.i(BrowseSupportFragment.TAG, loadAdError.message)
+                    interstitialAd = null
                 }
-            })
+            },
+        )
 
-        mInterstitialAd?.fullScreenContentCallback = object: FullScreenContentCallback() {
-            override fun onAdDismissedFullScreenContent() {
-                Log.d(TAG, "Ad was dismissed.")
-                //requestNewInterstitial()
+        interstitialAd?.fullScreenContentCallback =
+            object : FullScreenContentCallback() {
+                override fun onAdDismissedFullScreenContent() {
+                    Log.d(TAG, "Ad was dismissed.")
+                    // requestNewInterstitial()
+                }
+
+                override fun onAdShowedFullScreenContent() {
+                    Log.d(TAG, "Ad showed fullscreen content.")
+                    interstitialAd = null
+                }
             }
-            override fun onAdShowedFullScreenContent() {
-                Log.d(TAG, "Ad showed fullscreen content.")
-                mInterstitialAd = null
-            }
+    }
+
+    private fun showMigrationDialogIfNeeded() {
+        val prefsManager = PreferencesManager.getInstance(requireContext())
+        if (prefsManager.shouldShowMigrationDialog()) {
+            AlertDialog
+                .Builder(requireContext())
+                .setTitle(R.string.migration_dialog_title)
+                .setMessage(R.string.migration_dialog_message)
+                .setPositiveButton(android.R.string.ok) { _, _ ->
+                    prefsManager.markMigrationDialogShown()
+                }.setCancelable(false)
+                .show()
         }
     }
 
-    var refresh_level = 0
+    var refreshLevel = 0
 
     companion object {
         private const val TAG = "GameSelectFragment"
@@ -1111,8 +1164,11 @@ class GameSelectFragment : BrowseSupportFragment(), FileSelectedListener,
         @JvmField
         var isForeground: GameSelectFragment? = null
         private const val REQUEST_STORAGE = 1
-        private val PERMISSIONS_STORAGE = arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE,
-            Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        private val PERMISSIONS_STORAGE =
+            arrayOf(
+                Manifest.permission.READ_EXTERNAL_STORAGE,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE,
+            )
 
         /**
          * Get IP address from first non-localhost interface
@@ -1128,7 +1184,7 @@ class GameSelectFragment : BrowseSupportFragment(), FileSelectedListener,
                     val addrs: List<InetAddress> = Collections.list(intf.inetAddresses)
                     for (addr in addrs) {
                         if (!addr.isLoopbackAddress) {
-                            val sAddr = addr.hostAddress
+                            val sAddr = addr.hostAddress ?: continue
                             // boolean isIPv4 = InetAddressUtils.isIPv4Address(sAddr);
                             val isIPv4 = sAddr.indexOf(':') < 0
                             if (useIPv4) {
@@ -1136,8 +1192,15 @@ class GameSelectFragment : BrowseSupportFragment(), FileSelectedListener,
                             } else {
                                 if (!isIPv4) {
                                     val delim = sAddr.indexOf('%') // drop ip6 zone suffix
-                                    return if (delim < 0) sAddr.toUpperCase() else sAddr.substring(0,
-                                        delim).toUpperCase()
+                                    return if (delim < 0) {
+                                        sAddr.uppercase()
+                                    } else {
+                                        sAddr
+                                            .substring(
+                                                0,
+                                                delim,
+                                            ).uppercase()
+                                    }
                                 }
                             }
                         }
@@ -1153,13 +1216,12 @@ class GameSelectFragment : BrowseSupportFragment(), FileSelectedListener,
          * @return
          */
         fun getVersionName(context: Context?): String {
-
 //        return getIPAddress(true);
             val pm = context!!.packageManager
             var versionName = ""
             try {
                 val packageInfo = pm.getPackageInfo(context.packageName, 0)
-                versionName = packageInfo.versionName
+                versionName = packageInfo.versionName ?: ""
             } catch (e: PackageManager.NameNotFoundException) {
                 e.printStackTrace()
             }
@@ -1168,6 +1230,6 @@ class GameSelectFragment : BrowseSupportFragment(), FileSelectedListener,
 
         const val GAMELIST_NEED_TO_UPDATED = 0x8001
         const val GAMELIST_NEED_TO_RESTART = 0x8002
-        //const val READ_REQUEST_CODE = 0x8003
+        // const val READ_REQUEST_CODE = 0x8003
     }
 }

@@ -19,59 +19,70 @@
     Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:orientation="vertical" android:layout_width="match_parent"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/edit_cheat_view_layer"
+    android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:id="@+id/edit_cheat_view_layer">
+    android:orientation="vertical"
+    android:padding="@dimen/spacing_m">
 
-    <TextView
-        android:text="Description"
+    <com.google.android.material.textfield.TextInputLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:id="@+id/textView" />
+        android:hint="@string/cheat_description"
+        style="@style/Widget.Material3.TextInputLayout.OutlinedBox">
 
-    <EditText
+        <com.google.android.material.textfield.TextInputEditText
+            android:id="@+id/editText_cheat_desc"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:maxLines="1"
+            android:inputType="text"
+            android:imeOptions="actionNext" />
+
+    </com.google.android.material.textfield.TextInputLayout>
+
+    <com.google.android.material.textfield.TextInputLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:maxLines="1"
-        android:inputType="text"
-        android:imeOptions="actionNext"
-        android:ems="10"
-        android:id="@+id/editText_cheat_desc" />
+        android:layout_marginTop="@dimen/spacing_m"
+        android:hint="@string/action_replay_code"
+        style="@style/Widget.Material3.TextInputLayout.OutlinedBox">
 
-    <TextView
-        android:text="Action Replay Code"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:id="@+id/textView3" />
+        <com.google.android.material.textfield.TextInputEditText
+            android:id="@+id/editText_code"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:digits="0123456789ABCDEF \n"
+            android:inputType="textCapCharacters|textMultiLine"
+            android:maxLines="64"
+            android:scrollbars="vertical" />
 
-
-    <EditText
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:digits="0123456789ABCDEF \n"
-        android:inputType="textCapCharacters|textMultiLine"
-        android:ems="10"
-        android:maxLines="64"
-        android:scrollbars="vertical"
-        android:id="@+id/editText_code" />
+    </com.google.android.material.textfield.TextInputLayout>
 
     <LinearLayout
-        android:orientation="horizontal"
         android:layout_width="match_parent"
-        android:layout_height="match_parent">
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/spacing_m"
+        android:orientation="horizontal">
 
-        <Button
-            android:text="Apply"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/button_cheat_edit_apply"
-            android:layout_weight="1" />
+            android:layout_width="0dp"
+            android:layout_height="@dimen/min_touch_target"
+            android:layout_weight="1"
+            android:layout_marginEnd="@dimen/margin_small"
+            android:text="@string/apply" />
 
-        <Button
-            android:text="Cancel"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/button_edit_cheat_cancel"
-            android:layout_weight="1" />
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="0dp"
+            android:layout_height="@dimen/min_touch_target"
+            android:layout_weight="1"
+            android:layout_marginStart="@dimen/margin_small"
+            android:text="@string/cancel" />
+
     </LinearLayout>
+
 </LinearLayout>

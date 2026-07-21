@@ -972,6 +972,9 @@ PODS:
   - Firebase/Firestore (10.29.0):
     - Firebase/CoreOnly
     - FirebaseFirestore (~> 10.29.0)
+  - Firebase/InAppMessaging (10.29.0):
+    - Firebase/CoreOnly
+    - FirebaseInAppMessaging (~> 10.29.0-beta)
   - Firebase/Messaging (10.29.0):
     - Firebase/CoreOnly
     - FirebaseMessaging (~> 10.29.0)
@@ -1052,6 +1055,13 @@ PODS:
     - "gRPC-C++ (~> 1.62.0)"
     - gRPC-Core (~> 1.62.0)
     - leveldb-library (~> 1.22)
+    - nanopb (< 2.30911.0, >= 2.30908.0)
+  - FirebaseInAppMessaging (10.29.0-beta):
+    - FirebaseABTesting (~> 10.0)
+    - FirebaseCore (~> 10.0)
+    - FirebaseInstallations (~> 10.0)
+    - GoogleUtilities/Environment (~> 7.13)
+    - GoogleUtilities/UserDefaults (~> 7.13)
     - nanopb (< 2.30911.0, >= 2.30908.0)
   - FirebaseInstallations (10.29.0):
     - FirebaseCore (~> 10.0)
@@ -1251,6 +1261,7 @@ DEPENDENCIES:
   - Firebase/Core
   - Firebase/Database
   - Firebase/Firestore
+  - Firebase/InAppMessaging
   - Firebase/Messaging
   - Firebase/RemoteConfig
   - Firebase/Storage
@@ -1277,6 +1288,7 @@ SPEC REPOS:
     - FirebaseDatabase
     - FirebaseFirestore
     - FirebaseFirestoreInternal
+    - FirebaseInAppMessaging
     - FirebaseInstallations
     - FirebaseMessaging
     - FirebaseRemoteConfig
@@ -1318,6 +1330,7 @@ SPEC CHECKSUMS:
   FirebaseDatabase: 1fecbdd38d325c78bd430c06b8e71794ce415dc7
   FirebaseFirestore: f258936f52d712337233182b90042a76ff48dce0
   FirebaseFirestoreInternal: f43d25cc04835ec3aa1885f4fc946a1a4f9e1c56
+  FirebaseInAppMessaging: c83ea74bf56bda665b9890a390d754b9e3e9f2fc
   FirebaseInstallations: 913cf60d0400ebd5d6b63a28b290372ab44590dd
   FirebaseMessaging: 7b5d8033e183ab59eb5b852a53201559e976d366
   FirebaseRemoteConfig: 48ef3f243742a8d72422ccfc9f986e19d7de53fd
@@ -1342,6 +1355,6 @@ SPEC CHECKSUMS:
   PromisesSwift: 9d77319bbe72ebf6d872900551f7eeba9bce2851
   RecaptchaInterop: 7d1a4a01a6b2cb1610a47ef3f85f0c411434cb21
 
-PODFILE CHECKSUM: 49bca4e6657748dbe2c82a6f843c100a9670c6b5
+PODFILE CHECKSUM: 1e6dd7ace465713edc3c321b7af562fc531647c6
 
-COCOAPODS: 1.15.2
+COCOAPODS: 1.16.2

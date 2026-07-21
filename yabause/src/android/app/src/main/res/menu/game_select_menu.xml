@@ -21,6 +21,11 @@
 
 <menu xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <item
+        android:id="@+id/menu_item_exit"
+        android:icon="@drawable/ic_power_settings_new_black_24dp"
+        android:title="@string/exit"
+        />
 
     <item
         android:id="@+id/menu_auto_backupsync"
@@ -46,6 +51,12 @@
         android:icon="@drawable/baseline_sync_white_24"
         />
 
+    <item
+        android:id="@+id/menu_backup_manager"
+        android:icon="@drawable/ic_backup"
+        android:title="@string/backup_manager"
+        />
+
 
     <item
         android:id="@+id/menu_item_login"
@@ -59,4 +70,3 @@
         android:title="@string/privacy_policy"
         />
 </menu>
-

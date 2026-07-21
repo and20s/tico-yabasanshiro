@@ -1,19 +1,21 @@
-/*  Copyright 2019 devMiyax(smiyaxdev@gmail.com)
+/*  Copyright 2005-2006 Guillaume Duhamel
+    Copyright 2005-2006 Theo Berkau
+    Copyright 2011-2015 Shinya Miyamoto(devmiyax)
 
-    This file is part of YabaSanshiro.
+    This file is part of Yabause.
 
-    YabaSanshiro is free software; you can redistribute it and/or modify
+    Yabause is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation; either version 2 of the License, or
     (at your option) any later version.
 
-    YabaSanshiro is distributed in the hope that it will be useful,
+    Yabause is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
     GNU General Public License for more details.
 
     You should have received a copy of the GNU General Public License
-    along with YabaSanshiro; if not, write to the Free Software
+    along with Yabause; if not, write to the Free Software
     Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 */
 
@@ -3189,11 +3191,7 @@ void YglRenderVDP1(void) {
       }
 
       if ( level->prg[j].prgid >= PG_VFP1_GOURAUDSAHDING_TESS ) {
-#if defined(__XU4__)
-        glPatchParameteriOES(GL_PATCH_VERTICES, 4);
-#else        
         if (glPatchParameteri) glPatchParameteri(GL_PATCH_VERTICES, 4);
-#endif        
         glDrawArrays(GL_PATCHES, 0, level->prg[j].currentQuad / 2);
       }else{
         glDrawArrays(GL_TRIANGLES, 0, level->prg[j].currentQuad / 2);

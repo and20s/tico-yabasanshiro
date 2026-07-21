@@ -6,19 +6,31 @@ import FirebaseDatabase
 import FirebaseStorage
 import NotificationCenter
 import GoogleSignIn
+import GameController
 
 // DiscordOAuthRedirectHandlerからの通知を使用するためのimport
 @_exported import class UIKit.UIViewController
 @_exported import struct Foundation.Notification
 
 class UserProfileViewController: UIViewController {
+    
+    // MARK: - GameController Support
+    private var gameController: GCController?
 
     // MARK: - UI Components
+    private let scrollView: UIScrollView = {
+        let scroll = UIScrollView()
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.showsVerticalScrollIndicator = true
+        return scroll
+    }()
+    
     private let stackView: UIStackView = {
         let stack = UIStackView()
         stack.axis = .vertical
-        stack.spacing = 20
-        stack.alignment = .center
+        stack.spacing = 24
+        stack.alignment = .fill
+        stack.distribution = .fill
         stack.translatesAutoresizingMaskIntoConstraints = false
         return stack
     }()
@@ -27,16 +39,28 @@ class UserProfileViewController: UIViewController {
         let imageView = UIImageView()
         imageView.contentMode = .scaleAspectFill
         imageView.clipsToBounds = true
-        imageView.layer.cornerRadius = 50
-        imageView.backgroundColor = .systemGray5
+        imageView.layer.cornerRadius = 60
+        imageView.backgroundColor = .systemGray6
+        imageView.layer.borderWidth = 3
+        imageView.layer.borderColor = UIColor.systemGray4.cgColor
         imageView.translatesAutoresizingMaskIntoConstraints = false
         return imageView
     }()
 
     private let userNameLabel: UILabel = {
         let label = UILabel()
-        label.font = .systemFont(ofSize: 20, weight: .bold)
+        label.font = .systemFont(ofSize: 28, weight: .bold)
         label.textAlignment = .center
+        label.textColor = .label
+        label.translatesAutoresizingMaskIntoConstraints = false
+        return label
+    }()
+    
+    private let userEmailLabel: UILabel = {
+        let label = UILabel()
+        label.font = .systemFont(ofSize: 16, weight: .regular)
+        label.textAlignment = .center
+        label.textColor = .secondaryLabel
         label.translatesAutoresizingMaskIntoConstraints = false
         return label
     }()
@@ -44,9 +68,10 @@ class UserProfileViewController: UIViewController {
     private let logoutButton: UIButton = {
         let button = UIButton(type: .system)
         button.setTitle(NSLocalizedString("Sign out", comment: "Button title for sign out"), for: .normal)
-        button.backgroundColor = .systemGray
-        button.setTitleColor(.white, for: .normal)
-        button.layer.cornerRadius = 8
+        button.backgroundColor = .systemGray5
+        button.setTitleColor(.label, for: .normal)
+        button.titleLabel?.font = .systemFont(ofSize: 17, weight: .medium)
+        button.layer.cornerRadius = 12
         button.translatesAutoresizingMaskIntoConstraints = false
         return button
     }()
@@ -54,18 +79,21 @@ class UserProfileViewController: UIViewController {
     private let deleteAccountButton: UIButton = {
         let button = UIButton(type: .system)
         button.setTitle(NSLocalizedString("Delete Account", comment: "Button title for account deletion"), for: .normal)
-        button.backgroundColor = .systemRed
-        button.setTitleColor(.white, for: .normal)
-        button.layer.cornerRadius = 8
+        button.backgroundColor = .systemRed.withAlphaComponent(0.1)
+        button.setTitleColor(.systemRed, for: .normal)
+        button.titleLabel?.font = .systemFont(ofSize: 17, weight: .medium)
+        button.layer.cornerRadius = 12
+        button.layer.borderWidth = 1
+        button.layer.borderColor = UIColor.systemRed.cgColor
         button.translatesAutoresizingMaskIntoConstraints = false
         return button
     }()
 
     private let discordStatusLabel: UILabel = {
         let label = UILabel()
-        label.font = .systemFont(ofSize: 16)
-        label.textAlignment = .center
-        label.textColor = .secondaryLabel
+        label.font = .systemFont(ofSize: 16, weight: .medium)
+        label.textAlignment = .left
+        label.textColor = .label
         label.translatesAutoresizingMaskIntoConstraints = false
         return label
     }()
@@ -74,48 +102,194 @@ class UserProfileViewController: UIViewController {
         let imageView = UIImageView()
         imageView.image = UIImage(named: "Discord-Symbol-Blurple")
         imageView.contentMode = .scaleAspectFit
+        imageView.tintColor = UIColor(red: 88/255.0, green: 101/255.0, blue: 242/255.0, alpha: 1.0)
         imageView.translatesAutoresizingMaskIntoConstraints = false
         return imageView
     }()
 
     private let discordLinkButton: UIButton = {
         let button = UIButton(type: .system)
-        button.setTitle(NSLocalizedString("Link Discord Account", comment: "Button title for Discord linking"), for: .normal)
+        button.setTitle(NSLocalizedString("Connect Discord", comment: "Button title for Discord linking"), for: .normal)
         button.backgroundColor = UIColor(red: 88/255.0, green: 101/255.0, blue: 242/255.0, alpha: 1.0)
         button.setTitleColor(.white, for: .normal)
-        button.layer.cornerRadius = 8
+        button.titleLabel?.font = .systemFont(ofSize: 16, weight: .semibold)
+        button.layer.cornerRadius = 12
         button.translatesAutoresizingMaskIntoConstraints = false
         return button
     }()
 
     private let discordUnlinkButton: UIButton = {
         let button = UIButton(type: .system)
-        button.setTitle(NSLocalizedString("Unlink Discord Account", comment: "Button title for Discord unlinking"), for: .normal)
-        button.backgroundColor = .systemGray
-        button.setTitleColor(.white, for: .normal)
-        button.layer.cornerRadius = 8
+        button.setTitle(NSLocalizedString("Disconnect", comment: "Button title for Discord unlinking"), for: .normal)
+        button.backgroundColor = .systemGray5
+        button.setTitleColor(.label, for: .normal)
+        button.titleLabel?.font = .systemFont(ofSize: 16, weight: .medium)
+        button.layer.cornerRadius = 12
         button.translatesAutoresizingMaskIntoConstraints = false
         button.isHidden = true
         return button
     }()
 
+    // Section containers for better organization
+    private let profileSectionView: UIView = {
+        let view = UIView()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        return view
+    }()
+    
+    private let connectionsSectionView: UIView = {
+        let view = UIView()
+        view.backgroundColor = .secondarySystemBackground
+        view.layer.cornerRadius = 16
+        view.translatesAutoresizingMaskIntoConstraints = false
+        return view
+    }()
+    
+    private let accountSectionView: UIView = {
+        let view = UIView()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        return view
+    }()
+    
+    private let sectionTitleLabel: UILabel = {
+        let label = UILabel()
+        label.text = NSLocalizedString("Connected Accounts", comment: "Section title for connected accounts")
+        label.font = .systemFont(ofSize: 20, weight: .semibold)
+        label.textColor = .label
+        label.translatesAutoresizingMaskIntoConstraints = false
+        return label
+    }()
+    
     private lazy var discordContainerView: UIView = {
         let containerView = UIView()
         containerView.translatesAutoresizingMaskIntoConstraints = false
-
-        // Discordアイコンとステータスラベルを水平方向に配置
-        containerView.addSubview(discordIconView)
-        containerView.addSubview(discordStatusLabel)
+        containerView.backgroundColor = .tertiarySystemBackground
+        containerView.layer.cornerRadius = 12
+        
+        // Create horizontal stack for icon and status
+        let hStack = UIStackView()
+        hStack.axis = .horizontal
+        hStack.spacing = 12
+        hStack.alignment = .center
+        hStack.translatesAutoresizingMaskIntoConstraints = false
+        
+        // Add icon and status label to stack
+        hStack.addArrangedSubview(discordIconView)
+        hStack.addArrangedSubview(discordStatusLabel)
+        
+        // Add buttons to container
+        containerView.addSubview(hStack)
+        containerView.addSubview(discordLinkButton)
+        containerView.addSubview(discordUnlinkButton)
 
         NSLayoutConstraint.activate([
-            discordIconView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
-            discordIconView.centerYAnchor.constraint(equalTo: containerView.centerYAnchor),
-            discordIconView.widthAnchor.constraint(equalToConstant: 24),
-            discordIconView.heightAnchor.constraint(equalToConstant: 24),
+            hStack.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 16),
+            hStack.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 16),
+            hStack.trailingAnchor.constraint(lessThanOrEqualTo: containerView.trailingAnchor, constant: -16),
+            
+            discordIconView.widthAnchor.constraint(equalToConstant: 32),
+            discordIconView.heightAnchor.constraint(equalToConstant: 32),
+            
+            discordLinkButton.topAnchor.constraint(equalTo: hStack.bottomAnchor, constant: 12),
+            discordLinkButton.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 16),
+            discordLinkButton.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -16),
+            discordLinkButton.bottomAnchor.constraint(equalTo: containerView.bottomAnchor, constant: -16),
+            discordLinkButton.heightAnchor.constraint(equalToConstant: 44),
+            
+            discordUnlinkButton.topAnchor.constraint(equalTo: hStack.bottomAnchor, constant: 12),
+            discordUnlinkButton.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 16),
+            discordUnlinkButton.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -16),
+            discordUnlinkButton.bottomAnchor.constraint(equalTo: containerView.bottomAnchor, constant: -16),
+            discordUnlinkButton.heightAnchor.constraint(equalToConstant: 44)
+        ])
 
-            discordStatusLabel.leadingAnchor.constraint(equalTo: discordIconView.trailingAnchor, constant: 8),
-            discordStatusLabel.centerYAnchor.constraint(equalTo: containerView.centerYAnchor),
-            discordStatusLabel.trailingAnchor.constraint(equalTo: containerView.trailingAnchor)
+        return containerView
+    }()
+
+    // MARK: - RetroAchievements UI Components
+    private let retroAchievementsStatusLabel: UILabel = {
+        let label = UILabel()
+        label.font = .systemFont(ofSize: 16, weight: .medium)
+        label.textAlignment = .left
+        label.textColor = .label
+        label.numberOfLines = 0
+        label.translatesAutoresizingMaskIntoConstraints = false
+        return label
+    }()
+
+    private let retroAchievementsIconView: UIImageView = {
+        let imageView = UIImageView()
+        imageView.contentMode = .scaleAspectFit
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        return imageView
+    }()
+
+    private let retroAchievementsLoginButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.setTitle(NSLocalizedString("Connect", comment: "Button title for RetroAchievements linking"), for: .normal)
+        button.backgroundColor = UIColor(red: 255/255.0, green: 102/255.0, blue: 0/255.0, alpha: 1.0)
+        button.setTitleColor(.white, for: .normal)
+        button.titleLabel?.font = .systemFont(ofSize: 16, weight: .semibold)
+        button.layer.cornerRadius = 12
+        button.translatesAutoresizingMaskIntoConstraints = false
+        return button
+    }()
+
+    private let retroAchievementsLogoutButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.setTitle(NSLocalizedString("Disconnect", comment: "Button title for RetroAchievements unlinking"), for: .normal)
+        button.backgroundColor = .systemGray5
+        button.setTitleColor(.label, for: .normal)
+        button.titleLabel?.font = .systemFont(ofSize: 16, weight: .medium)
+        button.layer.cornerRadius = 12
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.isHidden = true
+        return button
+    }()
+
+    // RA Settings button removed as requested
+
+    private lazy var retroAchievementsContainerView: UIView = {
+        let containerView = UIView()
+        containerView.translatesAutoresizingMaskIntoConstraints = false
+        containerView.backgroundColor = .tertiarySystemBackground
+        containerView.layer.cornerRadius = 12
+        
+        // Create horizontal stack for icon and status
+        let hStack = UIStackView()
+        hStack.axis = .horizontal
+        hStack.spacing = 12
+        hStack.alignment = .center
+        hStack.translatesAutoresizingMaskIntoConstraints = false
+        
+        // Add icon and status label to stack
+        hStack.addArrangedSubview(retroAchievementsIconView)
+        hStack.addArrangedSubview(retroAchievementsStatusLabel)
+        
+        // Add stack and buttons to container
+        containerView.addSubview(hStack)
+        containerView.addSubview(retroAchievementsLoginButton)
+        containerView.addSubview(retroAchievementsLogoutButton)
+
+        NSLayoutConstraint.activate([
+            hStack.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 16),
+            hStack.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 16),
+            hStack.trailingAnchor.constraint(lessThanOrEqualTo: containerView.trailingAnchor, constant: -16),
+            
+            retroAchievementsIconView.widthAnchor.constraint(equalToConstant: 32),
+            retroAchievementsIconView.heightAnchor.constraint(equalToConstant: 32),
+            
+            retroAchievementsLoginButton.topAnchor.constraint(equalTo: hStack.bottomAnchor, constant: 12),
+            retroAchievementsLoginButton.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 16),
+            retroAchievementsLoginButton.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -16),
+            retroAchievementsLoginButton.bottomAnchor.constraint(equalTo: containerView.bottomAnchor, constant: -16),
+            retroAchievementsLoginButton.heightAnchor.constraint(equalToConstant: 44),
+            
+            retroAchievementsLogoutButton.topAnchor.constraint(equalTo: hStack.bottomAnchor, constant: 12),
+            retroAchievementsLogoutButton.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 16),
+            retroAchievementsLogoutButton.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -16),
+            retroAchievementsLogoutButton.bottomAnchor.constraint(equalTo: containerView.bottomAnchor, constant: -16),
+            retroAchievementsLogoutButton.heightAnchor.constraint(equalToConstant: 44)
         ])
 
         return containerView
@@ -130,6 +304,9 @@ class UserProfileViewController: UIViewController {
 
         // Discord連携の通知を購読
         setupNotifications()
+        
+        // GameController設定
+        setupGameController()
     }
 
     deinit {
@@ -173,44 +350,92 @@ class UserProfileViewController: UIViewController {
         view.backgroundColor = .systemBackground
         title = NSLocalizedString("Profile", comment: "Title for profile screen")
 
-        view.addSubview(stackView)
-
-        stackView.addArrangedSubview(userImageView)
-        stackView.addArrangedSubview(userNameLabel)
-        stackView.addArrangedSubview(discordContainerView)
-        stackView.addArrangedSubview(discordLinkButton)
-        stackView.addArrangedSubview(discordUnlinkButton)
-        stackView.addArrangedSubview(logoutButton)
-        stackView.addArrangedSubview(deleteAccountButton)
+        // Add scroll view
+        view.addSubview(scrollView)
+        scrollView.addSubview(stackView)
+        
+        // Setup profile section
+        profileSectionView.addSubview(userImageView)
+        profileSectionView.addSubview(userNameLabel)
+        profileSectionView.addSubview(userEmailLabel)
+        
+        // Setup connections section
+        connectionsSectionView.addSubview(sectionTitleLabel)
+        connectionsSectionView.addSubview(discordContainerView)
+        connectionsSectionView.addSubview(retroAchievementsContainerView)
+        
+        // Setup account section
+        accountSectionView.addSubview(logoutButton)
+        accountSectionView.addSubview(deleteAccountButton)
+        
+        // Add sections to stack view
+        stackView.addArrangedSubview(profileSectionView)
+        stackView.addArrangedSubview(connectionsSectionView)
+        stackView.addArrangedSubview(accountSectionView)
 
         NSLayoutConstraint.activate([
-            stackView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            stackView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 40),
-            stackView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
-            stackView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
-
-            userImageView.widthAnchor.constraint(equalToConstant: 100),
-            userImageView.heightAnchor.constraint(equalToConstant: 100),
-
-            discordContainerView.widthAnchor.constraint(equalToConstant: 200),
-            discordContainerView.heightAnchor.constraint(equalToConstant: 30),
-
-            discordLinkButton.heightAnchor.constraint(equalToConstant: 44),
-            discordLinkButton.widthAnchor.constraint(equalToConstant: 200),
-
-            discordUnlinkButton.heightAnchor.constraint(equalToConstant: 44),
-            discordUnlinkButton.widthAnchor.constraint(equalToConstant: 200),
-
-            logoutButton.heightAnchor.constraint(equalToConstant: 44),
-            logoutButton.widthAnchor.constraint(equalToConstant: 200),
-
-            deleteAccountButton.heightAnchor.constraint(equalToConstant: 44),
-            deleteAccountButton.widthAnchor.constraint(equalToConstant: 200)
+            // Scroll view constraints
+            scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            
+            // Stack view constraints
+            stackView.topAnchor.constraint(equalTo: scrollView.topAnchor, constant: 20),
+            stackView.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor, constant: 20),
+            stackView.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor, constant: -20),
+            stackView.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: -20),
+            stackView.widthAnchor.constraint(equalTo: scrollView.widthAnchor, constant: -40),
+            
+            // Profile section
+            profileSectionView.heightAnchor.constraint(greaterThanOrEqualToConstant: 200),
+            userImageView.centerXAnchor.constraint(equalTo: profileSectionView.centerXAnchor),
+            userImageView.topAnchor.constraint(equalTo: profileSectionView.topAnchor),
+            userImageView.widthAnchor.constraint(equalToConstant: 120),
+            userImageView.heightAnchor.constraint(equalToConstant: 120),
+            
+            userNameLabel.topAnchor.constraint(equalTo: userImageView.bottomAnchor, constant: 16),
+            userNameLabel.leadingAnchor.constraint(equalTo: profileSectionView.leadingAnchor),
+            userNameLabel.trailingAnchor.constraint(equalTo: profileSectionView.trailingAnchor),
+            
+            userEmailLabel.topAnchor.constraint(equalTo: userNameLabel.bottomAnchor, constant: 4),
+            userEmailLabel.leadingAnchor.constraint(equalTo: profileSectionView.leadingAnchor),
+            userEmailLabel.trailingAnchor.constraint(equalTo: profileSectionView.trailingAnchor),
+            userEmailLabel.bottomAnchor.constraint(equalTo: profileSectionView.bottomAnchor),
+            
+            // Connections section
+            sectionTitleLabel.topAnchor.constraint(equalTo: connectionsSectionView.topAnchor, constant: 20),
+            sectionTitleLabel.leadingAnchor.constraint(equalTo: connectionsSectionView.leadingAnchor, constant: 20),
+            sectionTitleLabel.trailingAnchor.constraint(equalTo: connectionsSectionView.trailingAnchor, constant: -20),
+            
+            discordContainerView.topAnchor.constraint(equalTo: sectionTitleLabel.bottomAnchor, constant: 16),
+            discordContainerView.leadingAnchor.constraint(equalTo: connectionsSectionView.leadingAnchor, constant: 16),
+            discordContainerView.trailingAnchor.constraint(equalTo: connectionsSectionView.trailingAnchor, constant: -16),
+            
+            retroAchievementsContainerView.topAnchor.constraint(equalTo: discordContainerView.bottomAnchor, constant: 12),
+            retroAchievementsContainerView.leadingAnchor.constraint(equalTo: connectionsSectionView.leadingAnchor, constant: 16),
+            retroAchievementsContainerView.trailingAnchor.constraint(equalTo: connectionsSectionView.trailingAnchor, constant: -16),
+            retroAchievementsContainerView.bottomAnchor.constraint(equalTo: connectionsSectionView.bottomAnchor, constant: -20),
+            
+            // Account section
+            accountSectionView.heightAnchor.constraint(greaterThanOrEqualToConstant: 120),
+            logoutButton.topAnchor.constraint(equalTo: accountSectionView.topAnchor, constant: 20),
+            logoutButton.leadingAnchor.constraint(equalTo: accountSectionView.leadingAnchor),
+            logoutButton.trailingAnchor.constraint(equalTo: accountSectionView.trailingAnchor),
+            logoutButton.heightAnchor.constraint(equalToConstant: 50),
+            
+            deleteAccountButton.topAnchor.constraint(equalTo: logoutButton.bottomAnchor, constant: 12),
+            deleteAccountButton.leadingAnchor.constraint(equalTo: accountSectionView.leadingAnchor),
+            deleteAccountButton.trailingAnchor.constraint(equalTo: accountSectionView.trailingAnchor),
+            deleteAccountButton.heightAnchor.constraint(equalToConstant: 50),
+            deleteAccountButton.bottomAnchor.constraint(equalTo: accountSectionView.bottomAnchor)
         ])
 
         logoutButton.addTarget(self, action: #selector(logoutButtonTapped), for: .touchUpInside)
         discordLinkButton.addTarget(self, action: #selector(discordLinkButtonTapped), for: .touchUpInside)
         discordUnlinkButton.addTarget(self, action: #selector(discordUnlinkButtonTapped), for: .touchUpInside)
+        retroAchievementsLoginButton.addTarget(self, action: #selector(retroAchievementsLoginButtonTapped), for: .touchUpInside)
+        retroAchievementsLogoutButton.addTarget(self, action: #selector(retroAchievementsLogoutButtonTapped), for: .touchUpInside)
         deleteAccountButton.addTarget(self, action: #selector(deleteAccountButtonTapped), for: .touchUpInside)
     }
 
@@ -226,11 +451,11 @@ class UserProfileViewController: UIViewController {
             // GoogleService-Info.plistからFirebaseを初期化
             var filePath: String?
 
-            #if DEBUG
-            filePath = Bundle.main.path(forResource: "GoogleService-Info-Debug", ofType: "plist")
-            #else
+            //#if DEBUG
+            //filePath = Bundle.main.path(forResource: "GoogleService-Info-Debug", ofType: "plist")
+            //#else
             filePath = Bundle.main.path(forResource: "GoogleService-Info", ofType: "plist")
-            #endif
+            //#endif
 
             if let filePath = filePath, let options = FirebaseOptions(contentsOfFile: filePath) {
                 FirebaseApp.configure(options: options)
@@ -248,6 +473,9 @@ class UserProfileViewController: UIViewController {
 
         // ユーザー名の設定
         userNameLabel.text = user.displayName ?? NSLocalizedString("Anonymous User", comment: "Default name for users without a display name")
+        
+        // メールアドレスの設定
+        userEmailLabel.text = user.email ?? ""
 
         // プロフィール画像の設定
         if let photoURL = user.photoURL {
@@ -273,6 +501,9 @@ class UserProfileViewController: UIViewController {
 
         // Discordアカウント連携状態の確認
         checkDiscordLinkStatus(userId: user.uid)
+        
+        // RetroAchievementsアカウント連携状態の確認
+        checkRetroAchievementsStatus()
     }
 
     private func checkDiscordLinkStatus(userId: String) {
@@ -298,6 +529,54 @@ class UserProfileViewController: UIViewController {
             }
         }
     }
+    
+    private func checkRetroAchievementsStatus() {
+        // Ensure RetroAchievementsManager is initialized
+        RetroAchievementsManager.initialize()
+        
+        // RetroAchievementsAuthManagerから連携状態を確認
+        let authManager = RetroAchievementsAuthManager.shared
+        let isLoggedIn = authManager.isRetroAchievementsLoggedIn
+        
+        if isLoggedIn, let username = authManager.currentUsername {
+            // ログイン済みの場合
+            retroAchievementsStatusLabel.text = username
+            retroAchievementsLoginButton.isHidden = true
+            retroAchievementsLogoutButton.isHidden = false
+        } else {
+            // 未ログインの場合
+            retroAchievementsStatusLabel.text = NSLocalizedString("Not Connected", comment: "Status for unconnected RetroAchievements account")
+            retroAchievementsLoginButton.isHidden = false
+            retroAchievementsLogoutButton.isHidden = true
+        }
+        
+        // 公式アイコンを読み込み
+        loadRetroAchievementsIcon()
+    }
+    
+    private func loadRetroAchievementsIcon() {
+        // 公式アイコンURLから画像を読み込む
+        guard let iconURL = URL(string: "https://docs.retroachievements.org/ra-logo-big-shadow.png") else {
+            // フォールバック: システムアイコンを使用
+            retroAchievementsIconView.image = UIImage(systemName: "gamecontroller.fill")
+            retroAchievementsIconView.tintColor = UIColor(red: 255/255.0, green: 102/255.0, blue: 0/255.0, alpha: 1.0)
+            return
+        }
+        
+        DispatchQueue.global().async {
+            if let data = try? Data(contentsOf: iconURL), let image = UIImage(data: data) {
+                DispatchQueue.main.async {
+                    self.retroAchievementsIconView.image = image
+                }
+            } else {
+                // 画像の読み込みに失敗した場合はフォールバック
+                DispatchQueue.main.async {
+                    self.retroAchievementsIconView.image = UIImage(systemName: "gamecontroller.fill")
+                    self.retroAchievementsIconView.tintColor = UIColor(red: 255/255.0, green: 102/255.0, blue: 0/255.0, alpha: 1.0)
+                }
+            }
+        }
+    }
 
     // MARK: - Actions
     @objc private func closeButtonTapped() {
@@ -309,11 +588,11 @@ class UserProfileViewController: UIViewController {
         do {
             try Auth.auth().signOut()
             let alert = UIAlertController(
-                title: NSLocalizedString("ログアウト成功", comment: "Title for successful logout"),
-                message: NSLocalizedString("ログアウトしました", comment: "Message for successful logout"),
+                title: NSLocalizedString("Logout Successful", comment: "Title for successful logout"),
+                message: NSLocalizedString("You have been logged out", comment: "Message for successful logout"),
                 preferredStyle: .alert
             )
-            alert.addAction(UIAlertAction(title: "OK", style: .default) { [weak self] _ in
+            alert.addAction(UIAlertAction(title: NSLocalizedString("OK", comment: "OK button title"), style: .default) { [weak self] _ in
                 self?.dismiss(animated: true)
             })
             present(alert, animated: true)
@@ -322,11 +601,11 @@ class UserProfileViewController: UIViewController {
 
             // エラー時のアラート表示
             let alert = UIAlertController(
-                title: NSLocalizedString("ログアウト失敗", comment: "Title for logout error"),
+                title: NSLocalizedString("Logout Failed", comment: "Title for logout error"),
                 message: error.localizedDescription,
                 preferredStyle: .alert
             )
-            alert.addAction(UIAlertAction(title: "OK", style: .default))
+            alert.addAction(UIAlertAction(title: NSLocalizedString("OK", comment: "OK button title"), style: .default))
             present(alert, animated: true)
         }
     }
@@ -340,13 +619,13 @@ class UserProfileViewController: UIViewController {
     @objc private func discordUnlinkButtonTapped() {
         // Discordアカウント連携解除の確認ダイアログ
         let alert = UIAlertController(
-            title: NSLocalizedString("Discord連携解除", comment: "Title for Discord unlink confirmation"),
-            message: NSLocalizedString("Discordアカウントの連携を解除しますか？", comment: "Message for Discord unlink confirmation"),
+            title: NSLocalizedString("Discord Unlink", comment: "Title for Discord unlink confirmation"),
+            message: NSLocalizedString("Are you sure you want to unlink your Discord account?", comment: "Message for Discord unlink confirmation"),
             preferredStyle: .alert
         )
 
-        alert.addAction(UIAlertAction(title: NSLocalizedString("キャンセル", comment: "Cancel button"), style: .cancel))
-        alert.addAction(UIAlertAction(title: NSLocalizedString("解除する", comment: "Confirm unlink button"), style: .destructive) { [weak self] _ in
+        alert.addAction(UIAlertAction(title: NSLocalizedString("Cancel", comment: "Cancel button"), style: .cancel))
+        alert.addAction(UIAlertAction(title: NSLocalizedString("Unlink", comment: "Confirm unlink button"), style: .destructive) { [weak self] _ in
             self?.unlinkDiscordAccount()
         })
 
@@ -366,20 +645,20 @@ class UserProfileViewController: UIViewController {
 
                 // エラー時のアラート表示
                 let alert = UIAlertController(
-                    title: NSLocalizedString("連携解除失敗", comment: "Title for Discord unlink error"),
+                    title: NSLocalizedString("Unlink Failed", comment: "Title for Discord unlink error"),
                     message: error.localizedDescription,
                     preferredStyle: .alert
                 )
-                alert.addAction(UIAlertAction(title: "OK", style: .default))
+                alert.addAction(UIAlertAction(title: NSLocalizedString("OK", comment: "OK button title"), style: .default))
                 self.present(alert, animated: true)
             } else {
                 // 成功時のアラート表示
                 let alert = UIAlertController(
-                    title: NSLocalizedString("連携解除成功", comment: "Title for successful Discord unlink"),
-                    message: NSLocalizedString("Discordアカウントの連携を解除しました", comment: "Message for successful Discord unlink"),
+                    title: NSLocalizedString("Unlink Successful", comment: "Title for successful Discord unlink"),
+                    message: NSLocalizedString("Discord account unlinked", comment: "Message for successful Discord unlink"),
                     preferredStyle: .alert
                 )
-                alert.addAction(UIAlertAction(title: "OK", style: .default))
+                alert.addAction(UIAlertAction(title: NSLocalizedString("OK", comment: "OK button title"), style: .default))
                 self.present(alert, animated: true)
 
                 // UI更新
@@ -389,18 +668,79 @@ class UserProfileViewController: UIViewController {
             }
         }
     }
+    
+    @objc private func retroAchievementsLoginButtonTapped() {
+        // RetroAchievementsログインダイアログを表示
+        let loginViewController = RetroAchievementsLoginViewController()
+        
+        loginViewController.onLoginSuccess = { [weak self] (username: String) in
+            // ログイン成功時の処理
+            DispatchQueue.main.async {
+                self?.checkRetroAchievementsStatus()
+                
+                // 成功通知を表示
+                let alert = UIAlertController(
+                    title: NSLocalizedString("Login Successful", comment: "Title for successful RetroAchievements login"),
+                    message: NSLocalizedString("Welcome back", comment: "Message for successful RetroAchievements login") + ", \(username)!",
+                    preferredStyle: .alert
+                )
+                alert.addAction(UIAlertAction(title: NSLocalizedString("OK", comment: "OK button title"), style: .default))
+                self?.present(alert, animated: true)
+            }
+        }
+        
+        loginViewController.onLoginCancel = {
+            // キャンセル時は特に処理なし
+        }
+        
+        loginViewController.modalPresentationStyle = UIModalPresentationStyle.formSheet
+        present(loginViewController, animated: true)
+    }
+    
+    @objc private func retroAchievementsLogoutButtonTapped() {
+        // RetroAchievementsアカウント連携解除の確認ダイアログ
+        let alert = UIAlertController(
+            title: NSLocalizedString("RetroAchievements Logout", comment: "Title for RetroAchievements logout confirmation"),
+            message: NSLocalizedString("Are you sure you want to disconnect your RetroAchievements account?", comment: "Message for RetroAchievements logout confirmation"),
+            preferredStyle: .alert
+        )
+        
+        alert.addAction(UIAlertAction(title: NSLocalizedString("Cancel", comment: "Cancel button"), style: .cancel))
+        alert.addAction(UIAlertAction(title: NSLocalizedString("Disconnect", comment: "Confirm logout button"), style: .destructive) { [weak self] _ in
+            self?.logoutRetroAchievements()
+        })
+        
+        present(alert, animated: true)
+    }
+    
+    private func logoutRetroAchievements() {
+        let authManager = RetroAchievementsAuthManager.shared
+        authManager.logoutRetroAchievements()
+        
+        // UI更新
+        checkRetroAchievementsStatus()
+        
+        // 成功時のアラート表示
+        let alert = UIAlertController(
+            title: NSLocalizedString("Logout Successful", comment: "Title for successful RetroAchievements logout"),
+            message: NSLocalizedString("Your RetroAchievements account has been disconnected.", comment: "Message for successful RetroAchievements logout"),
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: NSLocalizedString("OK", comment: "OK button title"), style: .default))
+        present(alert, animated: true)
+    }
 
     // MARK: - Account Deletion
     @objc private func deleteAccountButtonTapped() {
         // アカウント削除の確認ダイアログ
         let alert = UIAlertController(
-            title: NSLocalizedString("アカウント削除", comment: "Title for account deletion confirmation"),
-            message: NSLocalizedString("アカウントとすべての関連データを削除します。この操作は元に戻せません。続行しますか？", comment: "Message for account deletion confirmation"),
+            title: NSLocalizedString("Delete Account Confirmation", comment: "Title for account deletion confirmation"),
+            message: NSLocalizedString("This will delete your account and all related data. This action cannot be undone. Continue?", comment: "Message for account deletion confirmation"),
             preferredStyle: .alert
         )
 
-        alert.addAction(UIAlertAction(title: NSLocalizedString("キャンセル", comment: "Cancel button"), style: .cancel))
-        alert.addAction(UIAlertAction(title: NSLocalizedString("削除する", comment: "Confirm deletion button"), style: .destructive) { [weak self] _ in
+        alert.addAction(UIAlertAction(title: NSLocalizedString("Cancel", comment: "Cancel button"), style: .cancel))
+        alert.addAction(UIAlertAction(title: NSLocalizedString("Delete", comment: "Confirm deletion button"), style: .destructive) { [weak self] _ in
             self?.promptForReauthentication()
         })
 
@@ -422,11 +762,11 @@ class UserProfileViewController: UIViewController {
         } else {
             // その他のプロバイダまたは匿名認証の場合
             let alert = UIAlertController(
-                title: NSLocalizedString("再認証が必要", comment: "Title for reauthentication required"),
-                message: NSLocalizedString("セキュリティ上の理由から、アカウントを削除するには再度ログインする必要があります。一度ログアウトして再度ログインした後、再試行してください。", comment: "Message for reauthentication required"),
+                title: NSLocalizedString("Reauthentication Required", comment: "Title for reauthentication required"),
+                message: NSLocalizedString("For security reasons, you need to sign in again to delete your account. Please sign out and sign in again, then retry.", comment: "Message for reauthentication required"),
                 preferredStyle: .alert
             )
-            alert.addAction(UIAlertAction(title: "OK", style: .default))
+            alert.addAction(UIAlertAction(title: NSLocalizedString("OK", comment: "OK button title"), style: .default))
             present(alert, animated: true)
         }
     }
@@ -464,18 +804,18 @@ class UserProfileViewController: UIViewController {
 
     private func promptForEmailPassword() {
         let alert = UIAlertController(
-            title: NSLocalizedString("再認証", comment: "Title for reauthentication"),
-            message: NSLocalizedString("セキュリティ上の理由から、アカウントを削除するにはパスワードを再入力してください。", comment: "Message for reauthentication"),
+            title: NSLocalizedString("Reauthentication", comment: "Title for reauthentication"),
+            message: NSLocalizedString("For security reasons, please re-enter your password to delete your account.", comment: "Message for reauthentication"),
             preferredStyle: .alert
         )
 
         alert.addTextField { textField in
-            textField.placeholder = NSLocalizedString("パスワード", comment: "Password placeholder")
+            textField.placeholder = NSLocalizedString("Password", comment: "Password placeholder")
             textField.isSecureTextEntry = true
         }
 
-        alert.addAction(UIAlertAction(title: NSLocalizedString("キャンセル", comment: "Cancel button"), style: .cancel))
-        alert.addAction(UIAlertAction(title: NSLocalizedString("確認", comment: "Confirm button"), style: .default) { [weak self, weak alert] _ in
+        alert.addAction(UIAlertAction(title: NSLocalizedString("Cancel", comment: "Cancel button"), style: .cancel))
+        alert.addAction(UIAlertAction(title: NSLocalizedString("Confirm", comment: "Confirm button"), style: .default) { [weak self, weak alert] _ in
             guard let self = self,
                   let textFields = alert?.textFields,
                   let passwordField = textFields.first,
@@ -516,11 +856,11 @@ class UserProfileViewController: UIViewController {
 
     private func showReauthenticationError(_ error: Error) {
         let alert = UIAlertController(
-            title: NSLocalizedString("再認証失敗", comment: "Title for reauthentication failure"),
+            title: NSLocalizedString("Reauthentication Failed", comment: "Title for reauthentication failure"),
             message: error.localizedDescription,
             preferredStyle: .alert
         )
-        alert.addAction(UIAlertAction(title: "OK", style: .default))
+        alert.addAction(UIAlertAction(title: NSLocalizedString("OK", comment: "OK button title"), style: .default))
         present(alert, animated: true)
     }
 
@@ -590,11 +930,11 @@ class UserProfileViewController: UIViewController {
                 DispatchQueue.main.async {
                     // 成功時のアラート表示
                     let alert = UIAlertController(
-                        title: NSLocalizedString("アカウント削除成功", comment: "Title for successful account deletion"),
-                        message: NSLocalizedString("アカウントとすべての関連データが削除されました", comment: "Message for successful account deletion"),
+                        title: NSLocalizedString("Account Deleted Successfully", comment: "Title for successful account deletion"),
+                        message: NSLocalizedString("Your account and all related data have been deleted", comment: "Message for successful account deletion"),
                         preferredStyle: .alert
                     )
-                    alert.addAction(UIAlertAction(title: "OK", style: .default) { _ in
+                    alert.addAction(UIAlertAction(title: NSLocalizedString("OK", comment: "OK button title"), style: .default) { _ in
                         // ViewControllerを閉じる
                         self?.dismiss(animated: true)
                     })
@@ -607,11 +947,11 @@ class UserProfileViewController: UIViewController {
 
                     // エラー時のアラート表示
                     let alert = UIAlertController(
-                        title: NSLocalizedString("アカウント削除失敗", comment: "Title for account deletion error"),
-                        message: "\(NSLocalizedString("アカウント削除に失敗しました", comment: "Message for account deletion error")): \(error.localizedDescription)",
+                        title: NSLocalizedString("Account Deletion Failed", comment: "Title for account deletion error"),
+                        message: "\(NSLocalizedString("Failed to delete account", comment: "Message for account deletion error")): \(error.localizedDescription)",
                         preferredStyle: .alert
                     )
-                    alert.addAction(UIAlertAction(title: "OK", style: .default))
+                    alert.addAction(UIAlertAction(title: NSLocalizedString("OK", comment: "OK button title"), style: .default))
                     self?.present(alert, animated: true)
                 }
             }
@@ -796,6 +1136,77 @@ class UserProfileViewController: UIViewController {
                     completion(nil)
                 } else {
                     completion(lastError)
+                }
+            }
+        }
+    }
+    
+    // MARK: - GameController Support
+    
+    private func setupGameController() {
+        // 既に接続されているコントローラーがあるかチェック
+        if let controller = GCController.controllers().first {
+            gameController = controller
+            setupControllerInputHandlers(controller)
+        }
+        
+        // コントローラー接続の監視
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(controllerDidConnect),
+            name: .GCControllerDidConnect,
+            object: nil
+        )
+        
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(controllerDidDisconnect),
+            name: .GCControllerDidDisconnect,
+            object: nil
+        )
+    }
+    
+    @objc private func controllerDidConnect(_ notification: Notification) {
+        guard let controller = notification.object as? GCController else { return }
+        gameController = controller
+        setupControllerInputHandlers(controller)
+    }
+    
+    @objc private func controllerDidDisconnect(_ notification: Notification) {
+        guard let controller = notification.object as? GCController,
+              controller == gameController else { return }
+        gameController = nil
+    }
+    
+    private func setupControllerInputHandlers(_ controller: GCController) {
+        // Extended gamepadの場合
+        if let extendedGamepad = controller.extendedGamepad {
+            // B button (キャンセル/戻る)
+            extendedGamepad.buttonB.pressedChangedHandler = { [weak self] (button, value, pressed) in
+                if pressed {
+                    DispatchQueue.main.async {
+                        self?.dismiss(animated: true, completion: nil)
+                    }
+                }
+            }
+            
+            // Menu button (設定画面を閉じる)
+            extendedGamepad.buttonMenu.pressedChangedHandler = { [weak self] (button, value, pressed) in
+                if pressed {
+                    DispatchQueue.main.async {
+                        self?.dismiss(animated: true, completion: nil)
+                    }
+                }
+            }
+        }
+        // Micro gamepadの場合
+        else if let microGamepad = controller.microGamepad {
+            // X button (キャンセル/戻る)
+            microGamepad.buttonX.pressedChangedHandler = { [weak self] (button, value, pressed) in
+                if pressed {
+                    DispatchQueue.main.async {
+                        self?.dismiss(animated: true, completion: nil)
+                    }
                 }
             }
         }

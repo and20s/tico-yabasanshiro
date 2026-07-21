@@ -38,6 +38,10 @@ TextureManager::~TextureManager() {
 
   vkFreeCommandBuffers(device, commandPool, commandBuffers.size(), commandBuffers.data());
   vkDestroyCommandPool(device, commandPool, nullptr);
+
+  if (copyFence != VK_NULL_HANDLE) {
+    vkDestroyFence(device, copyFence, nullptr);
+  }
 }
 
 int TextureManager::init(unsigned int w, unsigned int h) {
@@ -70,6 +74,11 @@ int TextureManager::init(unsigned int w, unsigned int h) {
   VkSemaphoreCreateInfo semaphore_create_info{};
   semaphore_create_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
   vkCreateSemaphore(device, &semaphore_create_info, nullptr, &complete);
+
+  VkFenceCreateInfo fenceInfo{};
+  fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+  fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+  ErrorCheck(vkCreateFence(device, &fenceInfo, nullptr, &copyFence));
 
   return 0;
 }
@@ -170,7 +179,7 @@ void * TextureManager::createTextureImage(int texWidth, int texHeight) {
 
   vulkan->createImage(texWidth, texHeight, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL,
     VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, _textureImage, _textureImageMemory);
-  printf("_textureImage = %llx\n", _textureImage);
+  //printf("_textureImage = %llx\n", _textureImage);
   vulkan->transitionImageLayout(_textureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
   vulkan->copyBufferToImage(stagingBuffer, _textureImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
   vulkan->transitionImageLayout(_textureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -259,7 +268,7 @@ void * TextureManager::reallocTextureImage(void * pixels, int texWidth, int texH
   vkFreeMemory(device, _textureImageMemory, nullptr);
   vulkan->createImage(texWidth, texHeight, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL,
     VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, _textureImage, _textureImageMemory);
-  printf("_textureImage = %llx\n", _textureImage);
+  //printf("_textureImage = %llx\n", _textureImage);
   vulkan->transitionImageLayout(_textureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
   vulkan->copyBufferToImage(stagingBuffer, _textureImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
   vulkan->transitionImageLayout(_textureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -299,6 +308,16 @@ void TextureManager::updateTextureImage(const std::function<void(VkCommandBuffer
   if (device == VK_NULL_HANDLE) return;
   //if (this->_yMax <= 0 ) return;
 
+  // Wait for the previous texture upload to finish before recycling the
+  // shared copyFence and the command buffer slot we are about to reset.
+  // Without this the next vkResetCommandBuffer() / vkResetFences() pair
+  // triggers VUID-vkResetCommandBuffer-00045 / VUID-vkResetFences-01123 on
+  // Adreno when texture uploads queue faster than the GPU drains them.
+  // copyFence is created SIGNALED so the very first call returns instantly.
+  if (copyFence != VK_NULL_HANDLE) {
+    vkWaitForFences(device, 1, &copyFence, VK_TRUE, UINT64_MAX);
+  }
+
   int ci = updateCount & (TX_COMMANDBUFFER_COUNT-1);
   updateCount++;
 
@@ -313,6 +332,32 @@ void TextureManager::updateTextureImage(const std::function<void(VkCommandBuffer
   //vkResetCommandPool(device, this->commandPool ,0);
   vkResetCommandBuffer(commandBuffers[ci],0);
   vkBeginCommandBuffer(commandBuffers[ci], &beginInfo);
+
+  // WAR hazard fix (root cause of the COMPUTE_RASTERIZER pattern noise). Every
+  // per-frame VDP2 resource the composite fragment shader samples -- this
+  // texture atlas, plus the CRAM / line / back / window / vertex uploads the
+  // f() callback records into THIS same command buffer -- is host-rebuilt and
+  // single/few-buffered. With up to MAX_COMMANDBUFFER_COUNT(=4) frames in
+  // flight (COMPUTE_RASTERIZER path has no graphics renderFences serialization),
+  // the next frame's transfers here can overwrite those resources while a prior
+  // frame's composite is still sampling them -> garbage texels. This command
+  // buffer is submitted before the composite every frame, so a single global
+  // FRAGMENT_SHADER(read) -> TRANSFER(write) barrier at its head orders every
+  // upload after the previous frame's composite reads (same queue, submission
+  // order), covering all of those resources at once -- no CPU stall, no extra
+  // memory, full pipelining preserved. (Confirmed cause: debugger replay and a
+  // full vkDeviceWaitIdle were both clean; per-resource analysis traced it to
+  // these single-buffered composite inputs.)
+  {
+    VkMemoryBarrier war{};
+    war.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    war.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    war.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(commandBuffers[ci],
+        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        0, 1, &war, 0, nullptr, 0, nullptr);
+  }
 
   //------------------------------------------------------------------------
   if (this->_yMax > 0) {
@@ -335,9 +380,19 @@ void TextureManager::updateTextureImage(const std::function<void(VkCommandBuffer
     barrier.subresourceRange.levelCount = 1;
     barrier.subresourceRange.baseArrayLayer = 0;
     barrier.subresourceRange.layerCount = 1;
-    barrier.srcAccessMask = 0;
+    // WAR hazard fix: this texture atlas is a SINGLE image, re-uploaded every
+    // frame and sampled by the VDP2 composite fragment shader. With up to
+    // MAX_COMMANDBUFFER_COUNT(=4) frames in flight (COMPUTE_RASTERIZER path,
+    // which unlike the graphics path has no renderFences serialization), the
+    // previous frame's composite may still be sampling _textureImage when this
+    // frame's buffer->image copy overwrites it. A TOP_OF_PIPE / srcAccess=0
+    // source scope imposes NO execution dependency on those prior fragment
+    // reads, so the transfer write races them -> garbage texels (the
+    // COMPUTE_RASTERIZER pattern noise; replay was clean, GPU-serialized was
+    // clean). Order the transfer AFTER prior fragment-shader reads instead.
+    barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
     barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    sourceStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
     destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
 
     vkCmdPipelineBarrier(
@@ -404,9 +459,20 @@ void TextureManager::updateTextureImage(const std::function<void(VkCommandBuffer
   submitInfo.pCommandBuffers = &commandBuffers[ci];
   submitInfo.signalSemaphoreCount = 0; //1;
   submitInfo.pSignalSemaphores = nullptr; // (VkSemaphore*)&complete;
-  ErrorCheck(vkQueueSubmit(vulkan->getVulkanQueue(), 1, &submitInfo, VK_NULL_HANDLE));
-
-//  vkQueueWaitIdle(vulkan->getVulkanQueue());
+  // Wait for the previous frame's VDP2 composite to finish sampling the shared
+  // per-frame resources before this submit's transfers overwrite them. This is
+  // the Adreno-reliable (GPU-GPU) form of the WAR ordering that the in-buffer
+  // pipeline barrier provides on desktop; see VIDVulkan::vdp2ReadDoneSignalSem.
+  // No-op (VK_NULL_HANDLE) when no composite signal is pending.
+  VkSemaphore upWaitSem = vulkan->vdp2ReadDoneWaitSem();
+  VkPipelineStageFlags upWaitStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+  if (upWaitSem != VK_NULL_HANDLE) {
+    submitInfo.waitSemaphoreCount = 1;
+    submitInfo.pWaitSemaphores = &upWaitSem;
+    submitInfo.pWaitDstStageMask = &upWaitStage;
+  }
+  vkResetFences(device, 1, &copyFence);
+  ErrorCheck(vkQueueSubmit(vulkan->getVulkanQueue(), 1, &submitInfo, copyFence));
   //vkDeviceWaitIdle(device);
 
   vkMapMemory(device, stagingBufferMemory, 0, VK_WHOLE_SIZE, 0, &imageBuffer);
@@ -414,5 +480,11 @@ void TextureManager::updateTextureImage(const std::function<void(VkCommandBuffer
 
   _texture = (unsigned int *)imageBuffer;
 
+}
+
+void TextureManager::waitForCopy() {
+  if (copyFence != VK_NULL_HANDLE) {
+    vkWaitForFences(vulkan->getDevice(), 1, &copyFence, VK_TRUE, UINT64_MAX);
+  }
 }
 

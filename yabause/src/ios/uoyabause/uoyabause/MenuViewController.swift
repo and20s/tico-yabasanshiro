@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import GameController
 
 protocol MenuViewControllerDelegate: AnyObject {
     func didSelect(menuItem: MenuViewController.MenuOptions)
@@ -49,6 +50,10 @@ class MenuViewController: UIViewController, UITableViewDelegate, UITableViewData
 
     // メニューの最適な幅を外部から取得できるようにするプロパティ
     private(set) var optimalWidth: CGFloat = 0
+    
+    // GameController support
+    private var gameController: GCController?
+    private var currentFocusedIndexPath: IndexPath = IndexPath(row: 0, section: 0)
 
     enum MenuOptions: String, CaseIterable {
         case exit = "Exit"
@@ -62,6 +67,7 @@ class MenuViewController: UIViewController, UITableViewDelegate, UITableViewData
         case analogMode = "Analog Mode"
         case report = "Report Game"
         case leaderBoard = "Leader Board"
+        case achievements = "Achievements"
 
         var imageName: String {
             switch self {
@@ -87,6 +93,8 @@ class MenuViewController: UIViewController, UITableViewDelegate, UITableViewData
                 return "star.bubble"
             case .leaderBoard:
                 return "trophy"
+            case .achievements:
+                return "rosette"
             }
         }
 
@@ -114,6 +122,8 @@ class MenuViewController: UIViewController, UITableViewDelegate, UITableViewData
                 return NSLocalizedString("Action Replay Code", comment: "Action Replay Code menu")
             case .leaderBoard:
                 return NSLocalizedString("Leader Board", comment: "Leader Board menu")
+            case .achievements:
+                return NSLocalizedString("Achievements", comment: "Achievements menu")
             }
         }
     }
@@ -131,6 +141,35 @@ class MenuViewController: UIViewController, UITableViewDelegate, UITableViewData
         view.addSubview(tableView)
         tableView.delegate = self
         tableView.dataSource = self
+        
+        // Set up GameController support
+        setupGameControllerSupport()
+        
+        // Listen for hardcore mode changes
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(hardcoreModeChanged),
+            name: .retroAchievementsHardcoreModeChanged,
+            object: nil
+        )
+    }
+    
+    @objc private func hardcoreModeChanged() {
+        // Reload table to update hardcore mode indicators
+        DispatchQueue.main.async { [weak self] in
+            self?.tableView.reloadData()
+        }
+    }
+    
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        // Reload table to update hardcore mode indicators
+        tableView.reloadData()
+        
+        // Set initial focus when gamepad is connected
+        if gameController != nil {
+            updateVisualFocus()
+        }
     }
 
     private func calculateOptimalWidth() -> CGFloat {
@@ -175,7 +214,7 @@ class MenuViewController: UIViewController, UITableViewDelegate, UITableViewData
             cell.textLabel?.font = .systemFont(ofSize: 16)
             let toggleSwitch = UISwitch()
             cell.accessoryView = toggleSwitch
-            let path = SettingsViewController.getSettingFilname()
+            let path = SettingsViewController.getSettingFilename()
             if let dic = NSDictionary(contentsOfFile: path) {
                 toggleSwitch.isOn = (dic["analog mode"] as? Bool) ?? false
             }
@@ -196,6 +235,24 @@ class MenuViewController: UIViewController, UITableViewDelegate, UITableViewData
             if let imageView = cell.imageView, let textLabel = cell.textLabel {
                 textLabel.text = option.localizedTitle
                 textLabel.font = .systemFont(ofSize: 16)
+                
+                // Check if item should be disabled due to hardcore mode
+                let isHardcoreEnabled = RetroAchievementsManager.shared?.getHardcoreEnabled() ?? false
+                if isHardcoreEnabled && (option == .loadState || option == .cheat) {
+                    // Visual indication that the item is disabled
+                    textLabel.textColor = .appDisable
+                    imageView.tintColor = .appDisable
+                    cell.isUserInteractionEnabled = true // Keep enabled so we can show the alert
+                    
+                    // Add a small badge to indicate hardcore restriction
+                    let hardcoreBadge = " 🔒"
+                    textLabel.text = option.localizedTitle + hardcoreBadge
+                } else {
+                    // Normal appearance
+                    textLabel.textColor = .adaptiveTextColor
+                    imageView.tintColor = .tint
+                    cell.isUserInteractionEnabled = true
+                }
 
                 NSLayoutConstraint.activate([
                     // イメージビューの制約
@@ -226,5 +283,183 @@ class MenuViewController: UIViewController, UITableViewDelegate, UITableViewData
         tableView.deselectRow(at: indexPath, animated: true)
         let item = MenuOptions.allCases[indexPath.row]
         delegate?.didSelect(menuItem: item)
+    }
+    
+    // MARK: - GameController Support
+    
+    private func setupGameControllerSupport() {
+        // Find connected controllers
+        if let controller = GCController.controllers().first {
+            setupControllerInput(controller)
+        }
+        
+        // Listen for controller connections
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(controllerDidConnect(_:)),
+            name: .GCControllerDidConnect,
+            object: nil
+        )
+        
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(controllerDidDisconnect(_:)),
+            name: .GCControllerDidDisconnect,
+            object: nil
+        )
+    }
+    
+    @objc private func controllerDidConnect(_ notification: Notification) {
+        guard let controller = notification.object as? GCController else { return }
+        setupControllerInput(controller)
+        
+        // Show initial focus when controller connects
+        DispatchQueue.main.async { [weak self] in
+            self?.updateVisualFocus()
+        }
+    }
+    
+    @objc private func controllerDidDisconnect(_ notification: Notification) {
+        gameController = nil
+        // Clear visual focus when controller disconnects
+        DispatchQueue.main.async { [weak self] in
+            self?.clearVisualFocus()
+        }
+    }
+    
+    private func setupControllerInput(_ controller: GCController) {
+        gameController = controller
+        
+        guard let extendedGamepad = controller.extendedGamepad else { return }
+        
+        // D-Pad Up navigation
+        extendedGamepad.dpad.up.pressedChangedHandler = { [weak self] (button, value, pressed) in
+            if pressed {
+                DispatchQueue.main.async {
+                    self?.moveFocusUp()
+                }
+            }
+        }
+        
+        // D-Pad Down navigation
+        extendedGamepad.dpad.down.pressedChangedHandler = { [weak self] (button, value, pressed) in
+            if pressed {
+                DispatchQueue.main.async {
+                    self?.moveFocusDown()
+                }
+            }
+        }
+        
+        // A button for selection
+        extendedGamepad.buttonA.pressedChangedHandler = { [weak self] (button, value, pressed) in
+            if pressed {
+                DispatchQueue.main.async {
+                    self?.handleAButtonPress()
+                }
+            }
+        }
+    }
+    
+    private func updateVisualFocus() {
+        // Clear previous focus styling
+        for i in 0..<MenuOptions.allCases.count {
+            let indexPath = IndexPath(row: i, section: 0)
+            if let cell = tableView.cellForRow(at: indexPath) {
+                cell.backgroundColor = .clear
+                cell.layer.borderWidth = 0
+            }
+        }
+        
+        // Apply focus styling to current item
+        if let cell = tableView.cellForRow(at: currentFocusedIndexPath) {
+            cell.backgroundColor = UIColor.tint.withAlphaComponent(0.3)
+            cell.layer.borderColor = UIColor.tint.cgColor
+            cell.layer.borderWidth = 2.0
+            cell.layer.cornerRadius = 8.0
+        }
+        
+        // Scroll to focused cell if needed
+        tableView.scrollToRow(at: currentFocusedIndexPath, at: .middle, animated: true)
+    }
+    
+    private func clearVisualFocus() {
+        for i in 0..<MenuOptions.allCases.count {
+            let indexPath = IndexPath(row: i, section: 0)
+            if let cell = tableView.cellForRow(at: indexPath) {
+                cell.backgroundColor = .clear
+                cell.layer.borderWidth = 0
+            }
+        }
+    }
+    
+    // MARK: - Public Methods
+    
+    func setGameController(_ controller: GCController?) {
+        gameController = controller
+        if let controller = controller {
+            // Don't set up handlers here - let GameMainViewController manage them
+            DispatchQueue.main.async { [weak self] in
+                self?.updateVisualFocus()
+            }
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.clearVisualFocus()
+            }
+        }
+    }
+    
+    // Public methods for GameMainViewController to call
+    func moveFocusUp() {
+        guard gameController != nil else { return }
+        let newRow = max(0, currentFocusedIndexPath.row - 1)
+        currentFocusedIndexPath = IndexPath(row: newRow, section: 0)
+        updateVisualFocus()
+    }
+    
+    func moveFocusDown() {
+        guard gameController != nil else { return }
+        let maxRow = MenuOptions.allCases.count - 1
+        let newRow = min(maxRow, currentFocusedIndexPath.row + 1)
+        currentFocusedIndexPath = IndexPath(row: newRow, section: 0)
+        updateVisualFocus()
+    }
+    
+    func handleAButtonPress() {
+        guard gameController != nil else { return }
+        let option = MenuOptions.allCases[currentFocusedIndexPath.row]
+        
+        // Check if this action is restricted by hardcore mode
+        let isHardcoreEnabled = RetroAchievementsManager.shared?.getHardcoreEnabled() ?? false
+        if isHardcoreEnabled && (option == .loadState || option == .cheat) {
+            // Show alert about hardcore mode restriction
+            let alert = UIAlertController(
+                title: NSLocalizedString("Hardcore Mode Active", comment: ""),
+                message: NSLocalizedString("This feature is disabled in hardcore mode. Please disable hardcore mode in the RetroAchievements settings to use this feature.", comment: ""),
+                preferredStyle: .alert
+            )
+            alert.addAction(UIAlertAction(title: NSLocalizedString("OK", comment: ""), style: .default))
+            if let presenter = self.presentingViewController ?? self.view.window?.rootViewController {
+                presenter.present(alert, animated: true)
+            }
+            return
+        }
+        
+        if option == .analogMode {
+            // Handle analog mode toggle
+            if let cell = tableView.cellForRow(at: currentFocusedIndexPath),
+               let toggleSwitch = cell.accessoryView as? UISwitch {
+                toggleSwitch.setOn(!toggleSwitch.isOn, animated: true)
+                delegate?.didChangeAnalogMode(to: toggleSwitch.isOn)
+            }
+        } else {
+            // Handle normal menu item selection
+            delegate?.didSelect(menuItem: option)
+        }
+    }
+    
+    deinit {
+        NotificationCenter.default.removeObserver(self, name: .GCControllerDidConnect, object: nil)
+        NotificationCenter.default.removeObserver(self, name: .GCControllerDidDisconnect, object: nil)
+        NotificationCenter.default.removeObserver(self, name: .retroAchievementsHardcoreModeChanged, object: nil)
     }
 }

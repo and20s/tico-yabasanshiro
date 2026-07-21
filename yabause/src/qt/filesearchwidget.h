@@ -28,11 +28,24 @@ public:
     explicit FileSearchWidget(QWidget *parent = nullptr);
     ~FileSearchWidget();
 
+    /**
+     * @brief Launch game for bug reproduction
+     * @param productNumber Game product number to search for
+     * @param saveStatePath Path to save state file to load
+     * @param memoryDumpPath Path to memory dump (backup) file
+     * @return true if game was found and launched
+     */
+    bool launchGameForReproduction(const QString& productNumber,
+                                   const QString& saveStatePath,
+                                   const QString& memoryDumpPath);
+
 signals:
   void fileSelected(const QString& filePath);
+  void viewBugReportsRequested(const QString& productNumber, const QString& gameTitle);
 
 private slots:
     void selectDirectory();
+    void refreshDirectory();
     void filterFiles(const QString &text);
     void updateFilterColumn(int column);
     void handleFileFound(const QFileInfo &fileInfo, const QGameInfo * gameInfo);
@@ -50,6 +63,7 @@ private:
     QString getFullPath(const QModelIndex& index) const;
     
     QPushButton *m_selectDirButton;
+    QPushButton *m_refreshButton;
     QLabel *m_pathLabel;
     GameTableView*m_tableView;
     QStandardItemModel *m_model;

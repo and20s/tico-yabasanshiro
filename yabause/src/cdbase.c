@@ -569,7 +569,7 @@ static FILE* YOpenFile(char* buffer, const char* cue) {
      char * fdname = GetFileDescriptorPath(buffer);
      if( fdname == NULL ){
       YabSetError(YAB_ERR_FILENOTFOUND, buffer);
-      return -1;
+      return NULL;
      }
      ret_file = fopen(fdname, "rb");
   }else{
@@ -2134,19 +2134,15 @@ static int ISOCDReadSectorFADFromCHD(u32 FAD, void *buffer) {
   chdlba = loglba;
   for (i = 0; i < disc.session_num; i++)
   {
-    for (j = 0; j < disc.session[i].track_num-1; j++)
+    // Iterate every track including the last one. The old loop stopped at
+    // track_num-1 and only compared against track[j+1].logframeofs, so a
+    // single-track disc (e.g. Crime Patrol (USA) (Proto)) never matched and
+    // every read failed. track[j].fad_end equals track[j+1].logframeofs for
+    // interior tracks, and covers the last track as well.
+    for (j = 0; j < disc.session[i].track_num; j++)
     {
-      //if (j == 1) {
-      //  int a = 0;
-      //}
-      if (loglba < disc.session[i].track[j+1].logframeofs) {
-        //if ((loglba > disc.session[i].track[j].pregap)) {
-       //   loglba -= disc.session[i].track[j].pregap;
-       // }
+      if (loglba < disc.session[i].track[j].fad_end) {
         physlba = disc.session[i].track[j].physframeofs + (loglba - disc.session[i].track[j].logframeofs);
-        //if (disc.session[i].track[j].ctl_addr == 0x01) {
-        //  physlba += disc.session[i].track[j].pregap;
-        //}
         chdlba = physlba - disc.session[i].track[j].physframeofs + disc.session[i].track[j].chdframeofs;
         track = &disc.session[i].track[j];
         break;

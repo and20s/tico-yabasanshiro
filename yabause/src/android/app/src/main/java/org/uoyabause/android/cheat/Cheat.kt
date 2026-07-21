@@ -27,15 +27,13 @@ import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Update
-import org.uoyabause.android.GameInfo
 
 /**
  * Created by shinya on 2017/03/04.
  */
 
 @Dao
-interface CheatDao{
-
+interface CheatDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     fun insert(cheat: Cheat)
 
@@ -48,7 +46,6 @@ interface CheatDao{
     @Query("SELECT * FROM Cheat")
     fun getAll(): List<Cheat>
 
-
     @Query("SELECT * FROM Cheat WHERE gameid = :gameid")
     fun select(gameid: String): List<Cheat>
 
@@ -56,10 +53,16 @@ interface CheatDao{
     fun selectEnable(gameid: String): List<Cheat>
 
     @Query("SELECT * FROM Cheat WHERE gameid = :gameid AND key = :key")
-    fun selectKey(gameid: String, key: String): Cheat
+    fun selectKey(
+        gameid: String,
+        key: String,
+    ): Cheat
 
     @Query("SELECT * FROM Cheat WHERE gameid = :gameid AND cheat_code = :cheat_code")
-    fun selectCheatCode(gameid: String, cheat_code: String): Cheat
+    fun selectCheatCode(
+        gameid: String,
+        cheat_code: String,
+    ): Cheat
 
     @Query("SELECT * FROM Cheat WHERE gameid = :gameid AND local = 1")
     fun selectLocal(gameid: String): List<Cheat>
@@ -69,7 +72,6 @@ interface CheatDao{
 
     @Query("DELETE FROM Cheat")
     fun deleteAll()
-
 }
 
 @Entity
@@ -80,9 +82,9 @@ data class Cheat(
     @ColumnInfo(name = "cheat_code") var cheat_code: String? = null,
     var key: String? = null,
     var local: Boolean = true,
-    var enable: Boolean = false
+    var enable: Boolean = false,
 ) {
-     constructor(gameid: String?, description: String?, cheat_code: String?):this() {
+    constructor(gameid: String?, description: String?, cheat_code: String?) : this() {
         this.gameid = gameid
         this.description = description
         this.cheat_code = cheat_code

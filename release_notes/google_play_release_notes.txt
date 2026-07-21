@@ -1,0 +1,110 @@
+<en-US>
+- Tenchi o Kurau II: fixed a progress blocker in Stage 3
+- Jikkyou Oshaberi Parodius: fixed a boot failure
+- Lupin the 3rd Chronicles, Dungeons & Dragons Collection: fixed boot failures
+- Die Hard Trilogy, Cyberia: fixed boot failures
+- Bubble Bobble feat. Rainbow Islands: fixed a boot failure
+- Can Can Bunny Premiere 2: fixed a boot failure
+- NHL Powerplay '96, Madden NFL 97, Independence Day: fixed boot failures
+- Added in-app news announcements
+</en-US>
+<de-DE>
+- Tenchi o Kurau II: Blockade in Stage 3 behoben
+- Jikkyou Oshaberi Parodius: Start behoben
+- Lupin the 3rd Chronicles, Dungeons & Dragons Collection: Start behoben
+- Die Hard Trilogy, Cyberia: Start behoben
+- Bubble Bobble feat. Rainbow Islands: Start behoben
+- Can Can Bunny Premiere 2: Start behoben
+- NHL Powerplay '96, Madden NFL 97, Independence Day: Start behoben
+- Neuigkeiten werden jetzt in der App angezeigt
+</de-DE>
+<es-419>
+- Tenchi o Kurau II: corregido un bloqueo en la fase 3
+- Jikkyou Oshaberi Parodius: corregido el arranque
+- Lupin the 3rd Chronicles, Dungeons & Dragons Collection: corregido el arranque
+- Die Hard Trilogy, Cyberia: corregido el arranque
+- Bubble Bobble feat. Rainbow Islands: corregido el arranque
+- Can Can Bunny Premiere 2: corregido el arranque
+- NHL Powerplay '96, Madden NFL 97, Independence Day: corregido el arranque
+- Se anadieron avisos dentro de la app
+</es-419>
+<es-ES>
+- Tenchi o Kurau II: corregido un bloqueo en la fase 3
+- Jikkyou Oshaberi Parodius: corregido el arranque
+- Lupin the 3rd Chronicles, Dungeons & Dragons Collection: corregido el arranque
+- Die Hard Trilogy, Cyberia: corregido el arranque
+- Bubble Bobble feat. Rainbow Islands: corregido el arranque
+- Can Can Bunny Premiere 2: corregido el arranque
+- NHL Powerplay '96, Madden NFL 97, Independence Day: corregido el arranque
+- Anadidos avisos dentro de la app
+</es-ES>
+<fr-FR>
+- Tenchi o Kurau II : blocage au stage 3 corrige
+- Jikkyou Oshaberi Parodius : demarrage corrige
+- Lupin the 3rd Chronicles, Dungeons & Dragons Collection : demarrage corrige
+- Die Hard Trilogy, Cyberia : demarrage corrige
+- Bubble Bobble feat. Rainbow Islands : demarrage corrige
+- Can Can Bunny Premiere 2 : demarrage corrige
+- NHL Powerplay '96, Madden NFL 97, Independence Day : demarrage corrige
+- Ajout des annonces dans l'application
+</fr-FR>
+<id>
+- Tenchi o Kurau II: perbaikan macet di Stage 3
+- Jikkyou Oshaberi Parodius: perbaikan booting
+- Lupin the 3rd Chronicles, Dungeons & Dragons Collection: perbaikan booting
+- Die Hard Trilogy, Cyberia: perbaikan booting
+- Bubble Bobble feat. Rainbow Islands: perbaikan booting
+- Can Can Bunny Premiere 2: perbaikan booting
+- NHL Powerplay '96, Madden NFL 97, Independence Day: perbaikan booting
+- Menambahkan pengumuman di dalam aplikasi
+</id>
+<it-IT>
+- Tenchi o Kurau II: risolto un blocco allo stage 3
+- Jikkyou Oshaberi Parodius: avvio risolto
+- Lupin the 3rd Chronicles, Dungeons & Dragons Collection: avvio risolto
+- Die Hard Trilogy, Cyberia: avvio risolto
+- Bubble Bobble feat. Rainbow Islands: avvio risolto
+- Can Can Bunny Premiere 2: avvio risolto
+- NHL Powerplay '96, Madden NFL 97, Independence Day: avvio risolto
+- Aggiunti gli avvisi nell'app
+</it-IT>
+<ja-JP>
+- 天地を喰らうII 赤壁の戦い: STAGE3 で先に進めなくなる問題を修正
+- 実況おしゃべりパロディウス: 起動しない問題を修正
+- ルパン三世 クロニクル、ダンジョンズ&ドラゴンズ コレクション: 起動しない問題を修正
+- ダイハード トリロジー、サイベリア: 起動しない問題を修正
+- バブルボブル feat. レインボーアイランド: 起動しない問題を修正
+- カンカンバニー プルミエール2: 起動しない問題を修正
+- NHLパワープレイ'96、マッデンNFL 97、インディペンデンス・デイ: 起動しない問題を修正
+- アプリ内でお知らせを表示する機能を追加
+</ja-JP>
+<pt-BR>
+- Tenchi o Kurau II: corrigido um bloqueio na fase 3
+- Jikkyou Oshaberi Parodius: corrigido o inicio
+- Lupin the 3rd Chronicles, Dungeons & Dragons Collection: corrigido o inicio
+- Die Hard Trilogy, Cyberia: corrigido o inicio
+- Bubble Bobble feat. Rainbow Islands: corrigido o inicio
+- Can Can Bunny Premiere 2: corrigido o inicio
+- NHL Powerplay '96, Madden NFL 97, Independence Day: corrigido o inicio
+- Adicionados avisos dentro do app
+</pt-BR>
+<th>
+- Tenchi o Kurau II: แก้ไขปัญหาติดค้างในด่าน 3
+- Jikkyou Oshaberi Parodius: แก้ไขปัญหาเริ่มเกม
+- Lupin the 3rd Chronicles, Dungeons & Dragons Collection: แก้ไขปัญหาเริ่มเกม
+- Die Hard Trilogy, Cyberia: แก้ไขปัญหาเริ่มเกม
+- Bubble Bobble feat. Rainbow Islands: แก้ไขปัญหาเริ่มเกม
+- Can Can Bunny Premiere 2: แก้ไขปัญหาเริ่มเกม
+- NHL Powerplay '96, Madden NFL 97, Independence Day: แก้ไขปัญหาเริ่มเกม
+- เพิ่มการแจ้งข่าวสารภายในแอป
+</th>
+<zh-CN>
+- 吞食天地II 赤壁之战: 修复第三关无法继续的问题
+- 实况欢乐大魔界: 修复无法启动的问题
+- 鲁邦三世 编年史、龙与地下城 合集: 修复无法启动的问题
+- 虎胆龙威 三部曲、Cyberia: 修复无法启动的问题
+- 泡泡龙 feat. 彩虹岛: 修复无法启动的问题
+- Can Can Bunny Premiere 2: 修复无法启动的问题
+- NHL Powerplay '96、Madden NFL 97、Independence Day: 修复无法启动的问题
+- 新增应用内消息公告
+</zh-CN>
