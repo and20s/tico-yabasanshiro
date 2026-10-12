@@ -18,6 +18,7 @@
 
 #include "TicoLogger.h"
 #include "TicoSafeFile.h"
+#include "UsbStorage.h"
 #include "YabaRA.h"
 #include "overlay/imgui_overlay.h"
 #include "overlay/overlay_ui.h"
@@ -371,13 +372,53 @@ OverlayUI::SlotPreview Preview(int slot) {
     return preview;
 }
 
+// The disc a state was made with, beside it: a state goes by the name of the
+// disc the game booted with, so after Change Disc it holds another disc's game.
+std::string DiscPath(int slot) {
+    return StatePath(slot) + ".disc";
+}
+
+void WriteStateDisc(int slot) {
+    // a disc on a USB drive by its drive id: the drive may mount elsewhere next time
+    const std::string disc = UsbStorage::IsMountPath(s.current_disc)
+                                 ? UsbStorage::ToToken(s.current_disc)
+                                 : s.current_disc;
+    if (FILE* fp = std::fopen(DiscPath(slot).c_str(), "wb")) {
+        std::fputs(disc.c_str(), fp);
+        std::fclose(fp);
+    }
+}
+
+// Puts the disc a state was made with in the drive before the state loads,
+// so the game finds the disc it was playing.
+void InsertStateDisc(int slot) {
+    std::string disc;
+    if (FILE* fp = std::fopen(DiscPath(slot).c_str(), "rb")) {
+        char line[1024] = {0};
+        if (std::fgets(line, sizeof(line), fp))
+            disc = Trim(line);
+        std::fclose(fp);
+    }
+    if (UsbStorage::IsToken(disc))
+        disc = UsbStorage::Resolve(disc);
+    if (disc.empty() || disc == s.current_disc || !IsFile(disc))
+        return;
+    Cs2ForceOpenTray();
+    if (Cs2ForceCloseTray(CDCORE_ISO, disc.c_str()) == 0) {
+        LOG_INFO("STATE", "slot %d was made with %s: inserted", slot, disc.c_str());
+        s.current_disc = disc;
+    }
+}
+
 bool SaveState(int slot) {
     tico_make_path(tico_states_dir());
     // the state it replaces is kept, in case this one is a mistake
     TicoSafeFile::BackupCopy(StatePath(slot), kStateBackups);
     const bool saved = YabSaveState(StatePath(slot).c_str()) == 0;
-    if (saved)
+    if (saved) {
         WritePreview(slot);
+        WriteStateDisc(slot);
+    }
     LOG_INFO("STATE", "save slot %d: %s", slot, saved ? "ok" : "failed");
     return saved;
 }
@@ -385,6 +426,7 @@ bool SaveState(int slot) {
 bool LoadState(int slot) {
     if (!IsFile(StatePath(slot)))
         return false;
+    InsertStateDisc(slot);
     const bool loaded = YabLoadState(StatePath(slot).c_str()) == 0;
     // stale samples from before the load play as noise
     SNDSDLClearBuffer();
