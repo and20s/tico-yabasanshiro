@@ -15,8 +15,11 @@ add_definitions(
     -DNDEBUG
     -DHAVE_MUSASHI
     -DYAB_WANT_SCSP
+    -DYAB_WANT_OPENGL
     -DYAB_WANT_SH2_CACHE
     -DYAB_ASYNC_RENDERING
+    # the ImGui OpenGL backend's Switch path (Mesa's GL headers, no loader)
+    -DIMGUI_IMPL_OPENGL_LOADER_CUSTOM
     -DHAVE_LIBCHDR
     -DRC_CLIENT_SUPPORTS_HASH=1
     -D_GNU_SOURCE

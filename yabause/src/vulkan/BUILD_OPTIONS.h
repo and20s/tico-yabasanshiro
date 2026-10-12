@@ -33,5 +33,8 @@ Contributors:
 // GLFW version 3.2 or newer is required.
 #if defined(ANDROID)
 #else
+// no GLFW on Switch: Window_switch.cpp makes the surface
+#if !defined(__SWITCH__)
 #define BUILD_USE_GLFW											1
+#endif
 #endif

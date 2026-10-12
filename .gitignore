@@ -47,3 +47,7 @@ release_notes/state/
 # tagged with its Firestore document id, which contain per-install
 # identifiers. Never commit it.
 aggregation_raw.json
+
+# Switch build
+build_tico/
+.cache/
