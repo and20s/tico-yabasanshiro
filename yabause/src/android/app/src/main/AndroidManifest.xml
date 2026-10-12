@@ -64,6 +64,12 @@
     <uses-feature
         android:name="android.hardware.opengles.aep"
         android:required="false" />
+    <!-- BenchmarkActivity asks for landscape. Without this, Google Play infers
+         android.hardware.screen.landscape as required from that orientation and
+         drops every device that cannot rotate to landscape. -->
+    <uses-feature
+        android:name="android.hardware.screen.landscape"
+        android:required="false" />
 
 
     <application
@@ -76,6 +82,8 @@
         android:supportsRtl="true"
         android:theme="@style/AppTheme"
         android:hasFragileUserData="true"
+        android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         tools:targetApi="34">
 
         <property
@@ -147,6 +155,11 @@
         <activity
             android:name="org.uoyabause.android.PadTestActivity"
             android:configChanges="orientation|keyboardHidden" />
+
+        <activity
+            android:name="org.uoyabause.android.BenchmarkActivity"
+            android:exported="false"
+            android:screenOrientation="landscape" />
 
         <uses-library
             android:name="com.sec.android.app.multiwindow"

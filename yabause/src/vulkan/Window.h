@@ -33,6 +33,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 
 #include "Platform.h"
 
+#include <atomic>
 #include <functional>
 #include <string>
 #include <vector>
@@ -47,8 +48,16 @@ public:
   void Close();
   bool Update();
 
+  // Acquires the next swapchain image and returns its index, or -1 when no
+  // image could be acquired (surface lost / out of date). A caller that gets
+  // -1 must not record into the window render pass or present this frame.
   int BeginRender();
   void EndRender(std::vector<VkSemaphore> wait_semaphores);
+
+  // Called from any thread when the platform is about to destroy the surface
+  // (Android surfaceDestroyed). From then on BeginRender() returns -1 without
+  // touching the swapchain, until resize() rebuilds it for a new surface.
+  void onSurfaceLost() { _surface_lost = true; }
 
   VkRenderPass GetVulkanRenderPass();
   VkRenderPass GetVulkanKeepRenderPass();
@@ -157,6 +166,10 @@ private:
   uint32_t _active_swapchain_image_id = UINT32_MAX;
 
   VkFence _swapchain_image_available = VK_NULL_HANDLE;
+
+  // Set when the surface is gone and cleared once resize() has rebuilt the
+  // swapchain. Written by the UI thread, read by the render thread.
+  std::atomic<bool> _surface_lost{false};
 
   std::vector<VkImage> _swapchain_images;
   std::vector<VkImageView> _swapchain_image_views;

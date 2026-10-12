@@ -223,7 +223,9 @@ class AddGameBottomSheetFragment : BottomSheetDialogFragment() {
 
     private fun showNoFileManagerMessage() {
         val message = getString(R.string.no_file_manager_available, requireContext().packageName)
-        android.widget.Toast.makeText(requireContext(), message, android.widget.Toast.LENGTH_LONG).show()
+        android.widget.Toast
+            .makeText(requireContext(), message, android.widget.Toast.LENGTH_LONG)
+            .show()
     }
 
     private fun showDeleteConfirmation(position: Int, item: ScanFolderItem) {

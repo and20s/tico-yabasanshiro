@@ -9,6 +9,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.FragmentActivity
 import com.firebase.ui.auth.AuthUI
 import com.firebase.ui.auth.IdpResponse
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.Dispatchers
@@ -27,8 +29,6 @@ import org.uoyabause.android.auth.models.AccountConnectionState
 import org.uoyabause.android.auth.models.ConnectedAccountsState
 import org.uoyabause.android.auth.models.UserProfile
 import org.uoyabause.android.auth.utils.AccountConstants
-import com.google.android.gms.auth.api.signin.GoogleSignIn
-import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import kotlin.coroutines.resume
 
 /**
@@ -992,7 +992,8 @@ class AccountRepository(
 
                 // Get a fresh Google OAuth ID token via silentSignIn
                 // (Firebase ID token won't work with GoogleAuthProvider::GetCredential on Windows)
-                val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+                val gso = GoogleSignInOptions
+                    .Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
                     .requestIdToken(context.getString(org.devmiyax.yabasanshiro.R.string.default_web_client_id))
                     .requestEmail()
                     .build()

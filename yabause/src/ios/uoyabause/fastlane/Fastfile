@@ -1,3 +1,4 @@
+require 'json'
 # This file contains the fastlane.tools configuration
 # You can find the documentation at https://docs.fastlane.tools
 #
@@ -14,6 +15,45 @@
 # update_fastlane
 
 default_platform(:ios)
+
+# The build number of the first free-plus-subscription release, read from the
+# app so the two can never drift. The app decides who bought the paid app by
+# comparing the build the user first downloaded against this number, so a
+# release below it would hand Pro to everyone.
+def free_business_model_start_build
+  source = File.read("../uoyabause/BuildNumber.swift")
+  match = source[/freeBusinessModelStartBuild\s*=\s*(\d+)/, 1]
+  UI.user_error!("BuildNumber.freeBusinessModelStartBuild not found") if match.nil?
+  match.to_i
+end
+
+# Parses release_notes/app_store_release_notes.txt into { locale_tag => text }.
+# The file is the single source for the store copy; this keeps App Store
+# Connect from being edited by hand, which is how a stale "What's New" text
+# survived into the v1.20.38 submission.
+def parse_app_store_release_notes(path)
+  notes = {}
+  tag = nil
+  collecting = false
+  File.read(path).each_line do |line|
+    if (m = line.match(/^\[([A-Za-z\-]+)\]/))
+      tag = m[1]
+      collecting = false
+    elsif line.start_with?("What's New:")
+      collecting = true
+      notes[tag] = []
+    elsif collecting
+      # A blank line or the next section header ends the block.
+      if line.strip.empty? || line.start_with?("[") || line.start_with?("=")
+        collecting = false
+      else
+        notes[tag] << line.rstrip
+      end
+    end
+  end
+  notes.transform_values { |lines| lines.join("\n").strip }
+end
+
 
 
 
@@ -60,6 +100,22 @@ platform :ios do
   end
 
 
+  # Run this after adding a capability to the app id. match stores the App
+  # Store profiles and CI fetches them read-only, so a profile made before a
+  # capability exists keeps being handed to exportArchive, which then refuses
+  # the entitlement -- the failure looks like a build error, not a signing one.
+  desc "Regenerate the App Store provisioning profiles after a capability change"
+  lane :refresh_appstore_profiles do
+    setup_ci
+    app_store_connect_api_key
+    match(type: 'appstore',
+          app_identifier: ["org.devMiyax.yabasanshiro2"],
+          force: true, readonly: false)
+    match(type: 'appstore',
+          app_identifier: ["org.devMiyax.yabasanshiro2-lite"],
+          force: true, readonly: false)
+  end
+
   desc "Build and sign the application for distribution, upload to TestFlight"
   lane :beta do
     # Detect if we are running in CI, and create a temporary keychain
@@ -85,7 +141,8 @@ platform :ios do
     # https://docs.fastlane.tools/actions/increment_build_number/
     # https://docs.fastlane.tools/actions/latest_testflight_build_number/
     increment_build_number(
-      build_number: latest_testflight_build_number(initial_build_number: 1) + 1,
+      build_number: [latest_testflight_build_number(initial_build_number: 1) + 1,
+                     free_business_model_start_build].max,
       xcodeproj: "YabaSnashiro.xcodeproj"
     )
 
@@ -117,7 +174,8 @@ platform :ios do
     match(type: 'appstore',  app_identifier: ["org.devMiyax.yabasanshiro2-lite"])
     app_store_connect_api_key
     increment_build_number(
-      build_number: latest_testflight_build_number(initial_build_number: 1) + 1,
+      build_number: [latest_testflight_build_number(initial_build_number: 1) + 1,
+                     free_business_model_start_build].max,
       xcodeproj: "YabaSnashiro.xcodeproj"
     )
     build_app(
@@ -133,16 +191,44 @@ platform :ios do
   end
 
   
+  # Uploads only the screenshots. deliver reads the size from each image and
+  # files it under the right device set itself, so nothing has to be dragged
+  # into App Store Connect by hand.
+  #
+  # skip_binary_upload keeps this away from the build, and skip_metadata keeps
+  # it away from the description and keywords -- neither is managed from here,
+  # and deliver would otherwise overwrite them with whatever is on disk.
+  desc "Upload the captured screenshots to App Store Connect"
+  lane :upload_screenshots do |options|
+    app_store_connect_api_key
+    # Without this deliver picks a version itself and tries to create one that
+    # already exists; the version being prepared is the one in version.json.
+    version = options[:version] || JSON.parse(
+      File.read("../../../../../version.json")).values_at("major", "minor", "patch").join(".")
+    deliver(
+      app_version: version,
+      app_identifier: options[:lite] ? "org.devMiyax.yabasanshiro2-lite"
+                                     : "org.devMiyax.yabasanshiro2",
+      # The marketing set built by tools/store_screenshots lives elsewhere, so
+      # the caller can point at it instead of the captured simulator shots.
+      screenshots_path: options[:path] || (options[:lite] ? "./screenshots/YabaSnashiro-Lite"
+                                                          : "./screenshots/YabaSnashiro"),
+      skip_binary_upload: true,
+      skip_metadata: true,
+      overwrite_screenshots: true,
+      run_precheck_before_submit: false,
+      force: true
+    )
+  end
+
   desc "Generate new localized screenshots for all targets"
   lane :screenshots_all do
     [
       { 
         scheme: "YabaSnashiro-Lite",
-        devices: [
-            "iPhone 15",
-            "iPhone 8 Plus",    
-            "iPad Pro 13-inch (M4)",
-            "iPad Pro (12.9-inch) (6th generation)"
+          devices: [
+            "iPhone 17 Pro Max",      # 6.9", covers all iPhone sizes
+            "iPad Pro 13-inch (M4)"   # 13",  covers all iPad sizes
           ],
           languages:[ 
             "en-US",
@@ -157,10 +243,8 @@ platform :ios do
       { 
           scheme: "YabaSnashiro",
           devices: [
-            "iPhone 15",
-            "iPhone 8 Plus",    
-            "iPad Pro 13-inch (M4)",
-            "iPad Pro (12.9-inch) (6th generation)"
+            "iPhone 17 Pro Max",      # 6.9", covers all iPhone sizes
+            "iPad Pro 13-inch (M4)"   # 13",  covers all iPad sizes
           ],
           languages:[ 
             "en-US",
@@ -182,4 +266,67 @@ platform :ios do
       )
     end
   end  
+
+  # Overwrites only the "What's New" text of the version being prepared, in
+  # every locale App Store Connect already has for it. Nothing else is touched:
+  # no binary, no screenshots, no description, no keywords.
+  #
+  # Pass dry_run:true to print what would be sent without writing anything.
+  desc "Overwrite the What's New text on App Store Connect from release_notes/"
+  lane :upload_release_notes do |options|
+    require 'json'
+    app_store_connect_api_key
+
+    version = options[:version] || JSON.parse(
+      File.read("../../../../../version.json")).values_at("major", "minor", "patch").join(".")
+    identifier = options[:lite] ? "org.devMiyax.yabasanshiro2-lite"
+                                : "org.devMiyax.yabasanshiro2"
+    dry_run = options[:dry_run].to_s == "true"
+
+    notes = parse_app_store_release_notes("../../../../../release_notes/app_store_release_notes.txt")
+    UI.user_error!("no What's New sections found in the release notes file") if notes.empty?
+
+    app = Spaceship::ConnectAPI::App.find(identifier)
+    UI.user_error!("app not found: #{identifier}") if app.nil?
+
+    store_version = app.get_edit_app_store_version
+    UI.user_error!("no editable App Store version; is #{version} still in review?") if store_version.nil?
+    unless store_version.version_string == version
+      UI.user_error!("the editable version on App Store Connect is " \
+                     "#{store_version.version_string}, not #{version}")
+    end
+
+    localizations = store_version.get_app_store_version_localizations
+    UI.message("editable version #{store_version.version_string} has locales: " +
+               localizations.map(&:locale).join(", "))
+
+    localizations.each do |loc|
+      # "en" in the file covers App Store Connect's en-US / en-GB, "es" covers
+      # es-ES / es-MX, and so on; fall back to the language part of the locale.
+      text = notes[loc.locale] || notes[loc.locale.split("-").first]
+      if text.nil?
+        UI.important("no release notes for #{loc.locale} - leaving it unchanged")
+        next
+      end
+
+      if dry_run
+        # Print the current text too, so a dry run is a real diff against App
+        # Store Connect rather than an echo of the local file.
+        current = loc.whats_new.to_s
+        if current.strip == text.strip
+          UI.success("#{loc.locale} already matches the release notes file")
+        else
+          UI.message("[dry run] #{loc.locale} is currently:\n#{current}\n")
+          UI.message("[dry run] #{loc.locale} would become:\n#{text}\n")
+        end
+      else
+        loc.update(attributes: { whats_new: text })
+        UI.success("updated #{loc.locale}")
+      end
+    end
+
+    UI.success(dry_run ? "dry run complete - nothing was written" :
+                         "What's New updated for #{version}")
+  end
+
 end

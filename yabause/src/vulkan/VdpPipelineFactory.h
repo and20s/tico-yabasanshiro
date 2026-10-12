@@ -44,7 +44,7 @@ public:
     VIDVulkan * vulkan,
     TextureManager * tm,
     VertexManager * vm,
-    uint8_t winflag,
+    uint32_t winflag,
     bool gbufferOutput = false
   );
 
@@ -62,7 +62,7 @@ protected:
 
   VkPipelineCache threadPipelineCache{ VK_NULL_HANDLE };
 
-  VdpPipeline * findInGarbage(YglPipelineId id, uint8_t winflg, bool gbufferOutput);
+  VdpPipeline * findInGarbage(YglPipelineId id, uint32_t winflg, bool gbufferOutput);
   vector<VdpPipeline*> garbageCollction;
 
   VkRenderPass renderPass;

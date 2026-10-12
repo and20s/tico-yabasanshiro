@@ -115,6 +115,16 @@ void PerFlush(PortData_struct * port);
 
 void PerKeyDown(u32 key);
 void PerKeyUp(u32 key);
+// A key value that can never come from real input, for "this Saturn button has
+// nothing bound to it".
+//
+// It must not be 0. Android, iOS, the Switch port and retro_arena have no host
+// key codes to map: they are handed a Saturn button directly and encode it as
+// (player << 24) | PERPAD_*, so player 1's D-pad up is exactly 0 and is real
+// input. The highest code any core produces is a mouse button (bit 31) with a
+// 16-bit payload, so an all-ones value is out of reach of every core.
+#define PERKEY_UNBOUND 0xFFFFFFFFu
+
 void PerSetKey(u32 key, u8 name, void * controller);
 void PerAxisValue(u32 key, u8 val);
 void PerAxisMove(u32 key, s32 dispx, s32 dispy);

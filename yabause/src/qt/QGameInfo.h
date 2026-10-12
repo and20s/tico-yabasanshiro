@@ -25,7 +25,11 @@ public:
     static QGameInfo* fromCcdFile(const QString& filePath);
     static QGameInfo* fromCueFile(const QString& filePath);
     static QGameInfo* fromChdFile(const QString& filePath);
-    
+
+    // Cover art URL for a product number, or an empty string when the
+    // CloudService token is unavailable.
+    static QString coverImageUrl(const QString& productNumber);
+
 private:
     static QGameInfo* fromBuffer(const QString& filePath, const QByteArray& header);
     static QString convertShiftJISToUnicode(const QByteArray& input);

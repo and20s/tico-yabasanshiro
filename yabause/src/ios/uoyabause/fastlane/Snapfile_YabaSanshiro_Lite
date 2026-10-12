@@ -1,0 +1,50 @@
+# Uncomment the lines below you want to change by removing the # in the beginning
+scheme("YabaSnashiro-Lite")
+
+# A list of devices you want to take the screenshots from
+ devices([
+    # One per App Store Connect screenshot set. The names must match the
+    # simulators exactly; snapshot skips a device it cannot find rather than
+    # failing, so a typo silently ships a missing size.
+    # App Store Connect scales the largest size in each family down to the
+    # smaller ones, so these two cover every iPhone and every iPad. The 5.5"
+    # and 12.9" sets are legacy and optional -- and their devices cannot run
+    # a current iOS, which would have put an old UI on the listing.
+    "iPhone 17 Pro Max",      # 6.9", covers all iPhone sizes
+    "iPad Pro 13-inch (M4)"   # 13",  covers all iPad sizes
+])
+
+ languages([
+   "en-US",
+   "ja-JP",
+   ["pt", "pt_BR"], # Portuguese with Brazilian locale
+   "ru",
+   "es",
+   ["cn", "zh-Hans"] # Chinese with Simplified Chinese locale
+#   "it-IT",
+
+ ])
+
+# The name of the scheme which contains the UI Tests
+#scheme("YabaSnashiro")
+#scheme("YabaSnashiro-Lite")
+
+# Where should the resulting screenshots be stored?
+
+# Only the screenshot tour. The other UI tests are smoke tests: running them
+# here would multiply their cost by devices x languages for no screenshots.
+only_testing(["YabaSnashiroUITests-Lite/ScreenshotTour"])
+
+output_directory("./screenshots_Lite")
+
+# remove the '#' to clear all previously generated screenshots before creating new ones
+clear_previous_screenshots(true)
+
+# Remove the '#' to set the status bar to 9:41 AM, and show full battery and reception. See also override_status_bar_arguments for custom options.
+# override_status_bar(true)
+
+# Arguments to pass to the app on launch. See https://docs.fastlane.tools/actions/snapshot/#launch-arguments
+# launch_arguments(["-favColor red"])
+
+# For more information about all available options run
+# fastlane action snapshot

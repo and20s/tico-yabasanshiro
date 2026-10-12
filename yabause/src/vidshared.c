@@ -162,7 +162,7 @@ int Vdp2GetBank(Vdp2* regs, u32 addr){
 			return VDP2_VRAM_A0;
 		}
 		else if (addr >= 0x20000 && addr < 0x40000){
-			if (regs->RAMCTL & 0x10){
+			if (regs->RAMCTL & 0x100){
 				return VDP2_VRAM_A1;
 			}
 			else{
@@ -174,7 +174,7 @@ int Vdp2GetBank(Vdp2* regs, u32 addr){
 			return VDP2_VRAM_B0;
 		}
 		else if (addr >= 0x60000 && addr < 0x80000){
-			if (regs->RAMCTL & 0x20){
+			if (regs->RAMCTL & 0x200){
 				return VDP2_VRAM_B1;
 			}
 			else{
@@ -189,7 +189,7 @@ int Vdp2GetBank(Vdp2* regs, u32 addr){
 			return VDP2_VRAM_A0;
 		}
 		else if (addr >= 0x40000 && addr < 0x80000){
-			if (regs->RAMCTL & 0x10){
+			if (regs->RAMCTL & 0x100){
 				return VDP2_VRAM_A1;
 			}
 			else{
@@ -200,7 +200,7 @@ int Vdp2GetBank(Vdp2* regs, u32 addr){
 			return VDP2_VRAM_B0;
 		}
 		else if (addr >= 0xc0000 && addr < 0x100000){
-			if (regs->RAMCTL & 0x20){
+			if (regs->RAMCTL & 0x200){
 				return VDP2_VRAM_B1;
 			}
 			else{
@@ -216,10 +216,8 @@ void Vdp2ReadRotationTable(int which, vdp2rotationparameter_struct *parameter, V
 {
    s32 i;
    u32 addr;
-   int bank;
 
    addr = regs->RPTA.all << 1;
-   bank = Vdp2GetBank(regs, addr);
 
    if (which == 0)
    {
@@ -356,24 +354,26 @@ void Vdp2ReadRotationTable(int which, vdp2rotationparameter_struct *parameter, V
       }
       else{
         parameter->k_mem_type = 0; // use vram
-        // hard/vdp2/hon/p06_20.htm#no6_21
-        switch (bank)
+        // hard/vdp2/hon/p06_40.md: reading the coefficient table per dot
+        // requires at least one VRAM bank to be designated as a coefficient
+        // table bank through RDBSxx.  The gate is "any bank", not "the bank
+        // that holds the rotation parameter table" - RPTA and the coefficient
+        // table are unrelated addresses, so testing RPTA's bank silently
+        // dropped DKAx (per-dot stepping) for every program that keeps the two
+        // in different banks.
+        // A bank that is not split (VRAMD/VRBMD == 0) has no upper half, so its
+        // upper RDBS field carries no meaning and the lower one covers it.
         {
-        case VDP2_VRAM_A0:
-          perdot = (regs->RAMCTL & 0x03);
-          break;
-        case VDP2_VRAM_A1:
-          perdot = ((regs->RAMCTL >> 2) & 0x03);
-          break;
-        case VDP2_VRAM_B0:
-          perdot = ((regs->RAMCTL >> 4) & 0x03);
-          break;
-        case VDP2_VRAM_B1:
-          perdot = ((regs->RAMCTL >> 6) & 0x03);
-          break;
+          int coefbank[4];
+          int b;
+          for (b = 0; b < 4; b++)
+            coefbank[b] = (((regs->RAMCTL >> (b * 2)) & 0x03) == 1);
+          if (!(regs->RAMCTL & 0x100)) coefbank[1] = coefbank[0];
+          if (!(regs->RAMCTL & 0x200)) coefbank[3] = coefbank[2];
+          perdot = coefbank[0] || coefbank[1] || coefbank[2] || coefbank[3];
         }
-        
-        if (perdot != 1){
+
+        if (!perdot){
           parameter->deltaKAx = 0.0f;
         }
         else{

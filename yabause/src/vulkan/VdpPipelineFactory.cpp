@@ -113,7 +113,7 @@ VdpPipeline * VdpPipelineFactory::getPipeline(
   VIDVulkan * vulkan,
   TextureManager * tm,
   VertexManager * vm,
-  uint8_t winflag,
+  uint32_t winflag,
   bool gbufferOutput
 ) {
 
@@ -268,12 +268,20 @@ void VdpPipelineFactory::garbage(VdpPipeline * p) {
     }
   }
 
+  // Release the cc-window companion together with its owner so a recycled
+  // pipeline never carries a stale ccPair link into its next use.
+  if (p->ccPair != NULL) {
+    VdpPipeline * pair = p->ccPair;
+    p->ccPair = NULL;
+    garbage(pair);
+  }
+
   p->indices.clear();
   p->vertices.clear();
   garbageCollction.push_back(p);
 }
 
-VdpPipeline * VdpPipelineFactory::findInGarbage(YglPipelineId id, uint8_t winflg, bool gbufferOutput) {
+VdpPipeline * VdpPipelineFactory::findInGarbage(YglPipelineId id, uint32_t winflg, bool gbufferOutput) {
 
   VdpPipeline * p;
   int removeIndex = -1;

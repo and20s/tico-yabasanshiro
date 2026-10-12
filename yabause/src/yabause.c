@@ -225,6 +225,10 @@ int YabauseInit(yabauseinit_struct *init)
    yabsys.UseThreads = init->usethreads;
    yabsys.NumThreads = init->numthreads;
    yabsys.UseAsyncRendering = init->use_async_rendering;
+#if defined(NX)
+   // Must be set before Vdp2Init() starts (or skips) the VDP thread
+   VdpSetAsyncRendering(init->use_async_rendering);
+#endif
 
    // Initialize both cpu's
    if (SH2Init(init->sh2coretype) != 0)
@@ -1615,6 +1619,11 @@ int YabauseQuickLoadGame(void)
       Cs2Area->reg.CR4 = 0x0;
       Cs2ResetSelector();
       Cs2GetToc();
+
+      // A real BIOS leaves the slave SH-2 halted until the game issues SSHON,
+      // so the HLE boot does not release it here either (Gungriffon never
+      // issues SSHON on the HLE boot path; see
+      // docs/B20/gungriffon_fmv_framedrop_investigation.md).
 
       // LANGRISSER Dramatic Edition #531
       // This game uses Color ram data written by BIOS

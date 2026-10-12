@@ -60,7 +60,6 @@ class MenuViewController: UIViewController, UITableViewDelegate, UITableViewData
         case reset = "Reset"
         case changeDisk = "Change Disk"
         case cheat = "Action Replay Code"
-        case backupManager = "Backup Manager"
         case saveState = "Save State"
         case loadState = "Load State"
         case controllerSetting = "Game Controller"
@@ -85,8 +84,6 @@ class MenuViewController: UIViewController, UITableViewDelegate, UITableViewData
                 return "switch.2"
             case .controllerSetting:
                 return "gamecontroller"
-            case .backupManager:
-                return "lock.square"
             case .cheat:
                 return "hammer"
             case .report:
@@ -116,8 +113,6 @@ class MenuViewController: UIViewController, UITableViewDelegate, UITableViewData
                 return NSLocalizedString("Report Game", comment: "Title for the report dialog")
             case .controllerSetting:
                 return NSLocalizedString("Game Controller", comment: "Game controller settings")
-            case .backupManager:
-                return NSLocalizedString("Backup Manager", comment: "Backup Manager settings")
             case .cheat:
                 return NSLocalizedString("Action Replay Code", comment: "Action Replay Code menu")
             case .leaderBoard:
@@ -214,7 +209,7 @@ class MenuViewController: UIViewController, UITableViewDelegate, UITableViewData
             cell.textLabel?.font = .systemFont(ofSize: 16)
             let toggleSwitch = UISwitch()
             cell.accessoryView = toggleSwitch
-            let path = SettingsViewController.getSettingFilename()
+            let path = EmulatorSettingsStore.settingsFilePath()
             if let dic = NSDictionary(contentsOfFile: path) {
                 toggleSwitch.isOn = (dic["analog mode"] as? Bool) ?? false
             }

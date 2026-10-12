@@ -12,7 +12,7 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_SOURCE_DIR}/CMakeTests)
 
 
 set(yabause_HEADERS
-	bios.h
+	bios.h bupstandalone.h
 	cdbase.h cheat.h coffelf.h core.h cs0.h cs1.h cs2.h
 	debug.h
 	error.h
@@ -40,7 +40,7 @@ set(YAB_PORTS "qt" CACHE STRING "List of ports to build")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -fomit-frame-pointer -DJSONCPP_NO_LOCALE_SUPPORT")
 		
 set(yabause_SOURCES
-	bios.c
+	bios.c bupstandalone.c
 	cdbase.c cheat.c coffelf.c cs0.c cs1.c cs2.c
 	debug.c
 	error.c
@@ -91,6 +91,13 @@ if( retro_arena )
   add_definitions(-D__RETORO_ARENA__)
   add_definitions(-DYAB_ASYNC_RENDERING)
 endif()
+
+string(COMPARE EQUAL ${YAB_PORTS} "qt" qt_port)
+# The Qt port selects the rendering model at runtime per session:
+# async (threaded VDP) for the Vulkan video core, synchronous for the
+# OpenGL/software cores whose draw calls stay on the emulation thread.
+# See VdpSetAsyncRendering() in YabauseThread::initEmulation, so no
+# compile-time YAB_ASYNC_RENDERING define here.
 
 if ("${CMAKE_SYSTEM_NAME}" STREQUAL "Switch")
 add_definitions(-DYAB_PORT_OSD)
@@ -549,73 +556,11 @@ if (WIN32)
 
 	set(yabause_SOURCES ${yabause_SOURCES} cd-windows.c)
 
-	option(YAB_WANT_DIRECTSOUND "use DirectX sound core if available")
-	option(YAB_WANT_DIRECTINPUT "use DirectX input core if available")
-
-	set(DXERRH_IS_BROKEN 1 CACHE INTERNAL "dxerr is broken")
-	
-	# Direct X
-	if (YAB_WANT_DIRECTSOUND OR YAB_WANT_DIRECTINPUT)
-		find_path(DirectX_INCLUDE_DIR dxerr9.h "$ENV{DXSDK_DIR}/Include")
-		if (NOT DirectX_INCLUDE_DIR)
-			find_path(DirectX_INCLUDE_DIR "dxerr.h" "$ENV{DXSDK_DIR}/Include")
-			if (DirectX_INCLUDE_DIR)
-				set(DXERRH_IS_BROKEN 1 CACHE INTERNAL "dxerr is broken")
-        		endif (DirectX_INCLUDE_DIR)
-		endif(NOT DirectX_INCLUDE_DIR)
-
-                message (STATUS "system processor = ${CMAKE_SYSTEM_PROCESSOR}")
-		if("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "x86_64" OR "${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "AMD64")
-			set (DIRECTX_SEARCH_PATH "$ENV{DXSDK_DIR}/Lib/x64")
-		else()
-			set (DIRECTX_SEARCH_PATH "$ENV{DXSDK_DIR}/Lib/x86")
-		endif()
-
-		find_library(DirectX_GUID_LIBRARY dxguid "${DIRECTX_SEARCH_PATH}" "$ENV{DXSDK_DIR}/Lib")
-		if (YAB_WANT_DIRECTINPUT)
-			find_library(DirectX_INPUT8_LIBRARY dinput8 "${DIRECTX_SEARCH_PATH}" "$ENV{DXSDK_DIR}/Lib")
-			find_library(DirectX_XINPUT_LIBRARY xinput "${DIRECTX_SEARCH_PATH}" "$ENV{DXSDK_DIR}/Lib")
-		endif(YAB_WANT_DIRECTINPUT)
-		if (YAB_WANT_DIRECTSOUND)
-			find_library(DirectX_SOUND_LIBRARY dsound "${DIRECTX_SEARCH_PATH}" "$ENV{DXSDK_DIR}/Lib")
-		endif(YAB_WANT_DIRECTSOUND)
-
-		if (DXERRH_IS_BROKEN)
-			find_library(DirectX_ERR_LIBRARY dxerr "${DIRECTX_SEARCH_PATH}" "$ENV{DXSDK_DIR}/Lib")
-		elseif(MINGW)
-			find_library(DirectX_ERR_LIBRARY dxerr8 "${DIRECTX_SEARCH_PATH}" "$ENV{DXSDK_DIR}/Lib")
-		else()
-			find_library(DirectX_ERR_LIBRARY dxerr9 "${DIRECTX_SEARCH_PATH}" "$ENV{DXSDK_DIR}/Lib")
-		endif()
-
-		if (DirectX_INCLUDE_DIR AND DirectX_GUID_LIBRARY AND DirectX_ERR_LIBRARY)
-			include_directories(${DirectX_INCLUDE_DIR})
-			set(YABAUSE_LIBRARIES ${YABAUSE_LIBRARIES} ${DirectX_GUID_LIBRARY} ${DirectX_ERR_LIBRARY})
-
-			if (YAB_WANT_DIRECTINPUT AND DirectX_INPUT8_LIBRARY)
-				add_definitions(-DHAVE_DIRECTINPUT)
-				set(yabause_SOURCES ${yabause_SOURCES} perdx.c)
-				set(yabause_HEADERS ${yabause_HEADERS} perdx.h)
-				set(YABAUSE_LIBRARIES ${YABAUSE_LIBRARIES} ${DirectX_INPUT8_LIBRARY})
-				if (DirectX_XINPUT_LIBRARY)
-					add_definitions(-DHAVE_XINPUT)
-					set(YABAUSE_LIBRARIES ${YABAUSE_LIBRARIES} ${DirectX_XINPUT_LIBRARY} wbemuuid)
-				endif()
-			endif ()
-        	if (YAB_WANT_DIRECTSOUND AND DirectX_SOUND_LIBRARY)
-				add_definitions(-DHAVE_DIRECTSOUND)
-				set(yabause_SOURCES ${yabause_SOURCES} snddx.c)
-				set(yabause_HEADERS ${yabause_HEADERS} snddx.h)
-				set(YABAUSE_LIBRARIES ${YABAUSE_LIBRARIES} ${DirectX_SOUND_LIBRARY})
-			endif ()
-
-			if (DXERRH_IS_BROKEN)
-				add_definitions(-DDXERRH_IS_BROKEN)
-				message(STATUS "Using work-around for dxerr.h")
-				set(yabause_HEADERS ${yabause_HEADERS} dx.h)
-			endif(DXERRH_IS_BROKEN)
-		endif (DirectX_INCLUDE_DIR AND DirectX_GUID_LIBRARY AND DirectX_ERR_LIBRARY)
-	endif (YAB_WANT_DIRECTSOUND OR YAB_WANT_DIRECTINPUT)
+	# No DirectX here any more. The DirectInput/XInput peripheral core and the
+	# DirectSound sound core were both removed in favour of the SDL ones, which
+	# are the same code on every desktop platform. Dropping them also drops the
+	# build dependency on the (long unsupported) DirectX SDK June 2010:
+	# dxguid, dxerr, dinput8 and xinput are no longer linked.
 	if (YAB_NETWORK OR YAB_WANT_GDBSTUB)
     	# Add Winsock if necessary
 		set(YABAUSE_LIBRARIES ${YABAUSE_LIBRARIES} "wsock32")
@@ -770,6 +715,15 @@ option(YAB_WANT_VULKAN "Vulkan Graphics Core" OFF)
 if (YAB_WANT_VULKAN)
 
 add_definitions(-DHAVE_VULKAN=1)
+
+# Vulkan validation layer + debug-utils/debug-report wiring. Deliberately
+# independent of CMAKE_BUILD_TYPE / NDEBUG: a -O0 -g build is the normal way
+# to debug the native core with lldb, and that must not force a dependency on
+# libVkLayer_khronos_validation.so being present at runtime.
+option(YAB_WANT_VULKAN_VALIDATION "Enable the Vulkan validation layer" OFF)
+if (YAB_WANT_VULKAN_VALIDATION)
+  add_definitions(-DYAB_VULKAN_VALIDATION=1)
+endif()
 
 # Experimental: enable async (threaded) VDP rendering for the standalone
 # Vulkan port, matching the Android build's model. Scoped to YAB_PORTS=vulkan
@@ -1139,7 +1093,9 @@ endif()
 
 option(YAB_TESTS "Build test programs for cores" OFF)
 if (YAB_TESTS)
+	enable_testing()
 	add_subdirectory("tools")
+	add_subdirectory("tests")
 endif()
 
 

@@ -58,7 +58,21 @@ class MessagingManager: NSObject {
     }
     
     // MARK: - Notification Settings
-    
+
+    /// Register default on/off values for notification categories.
+    /// UserDefaults.bool(forKey:) returns false for unset keys, so without
+    /// this the default-on categories (game_updates, system_notifications)
+    /// are never subscribed unless the user opens the notification settings
+    /// screen. Must run before the first subscribeToEnabledTopics() call.
+    func registerDefaultCategorySettings() {
+        for category in NotificationCategory.allCases {
+            let key = category.userDefaultsKey
+            if UserDefaults.standard.object(forKey: key) == nil {
+                UserDefaults.standard.set(category.isEnabledByDefault, forKey: key)
+            }
+        }
+    }
+
     /// Get current notification permission status
     func getNotificationPermissionStatus(completion: @escaping (UNAuthorizationStatus) -> Void) {
         UNUserNotificationCenter.current().getNotificationSettings { settings in

@@ -86,17 +86,20 @@ void Window::resize(int width, int height) {
       _surface_size_x == (uint32_t)width && _surface_size_y == (uint32_t)height;
 #if defined(__ANDROID__)
   // SurfaceView swap can keep the same dims; rebuild anyway when
-  // setNativeWindow() flags it. See Window::setNativeWindow.
-  if (sizeUnchanged && !_native_window_changed) {
+  // setNativeWindow() flags it (see Window::setNativeWindow) or when the old
+  // surface was destroyed - the new Surface can reuse the same ANativeWindow
+  // pointer, and the swapchain bound to the destroyed one stays unusable.
+  if (sizeUnchanged && !_native_window_changed && !_surface_lost) {
     return;
   }
   _native_window_changed = false;
 #else
-  if (sizeUnchanged) {
+  if (sizeUnchanged && !_surface_lost) {
     return;
   }
 #endif
   cleanupSwapChain();
+  _surface_lost = false;
 }
 
 void Window::cleanupSwapChain() {
@@ -136,10 +139,40 @@ bool Window::Update() {
 }
 
 int Window::BeginRender() {
-  ErrorCheck(vkAcquireNextImageKHR(_renderer->GetVulkanDevice(), _swapchain, UINT64_MAX, VK_NULL_HANDLE,
-                                   _swapchain_image_available, &_active_swapchain_image_id));
-  ErrorCheck(vkWaitForFences(_renderer->GetVulkanDevice(), 1, &_swapchain_image_available, VK_TRUE, UINT64_MAX));
-  ErrorCheck(vkResetFences(_renderer->GetVulkanDevice(), 1, &_swapchain_image_available));
+  if (_surface_lost) {
+    return -1;
+  }
+
+  VkDevice device = _renderer->GetVulkanDevice();
+
+  // The fence is only armed by a successful acquire. After Android destroys the
+  // surface the acquire fails with VK_ERROR_SURFACE_LOST_KHR, and waiting on the
+  // fence anyway blocked forever: the VDP thread never finished the frame, the
+  // emulation thread waited on it in Vdp2VBlankIN, and the core could no longer
+  // be shut down (seen on Mali-G615 when a benchmark run was backgrounded).
+  // ErrorCheck() is a no-op in normal builds, so the result must be checked here.
+  const uint64_t kAcquireTimeoutNs = 1000ULL * 1000ULL * 1000ULL;
+  VkResult acquired = vkAcquireNextImageKHR(device, _swapchain, kAcquireTimeoutNs, VK_NULL_HANDLE,
+                                            _swapchain_image_available, &_active_swapchain_image_id);
+  if (acquired != VK_SUCCESS && acquired != VK_SUBOPTIMAL_KHR) {
+    LOGI("BeginRender: acquire failed (%d), skipping frame", (int)acquired);
+    return -1;
+  }
+
+  // Wait in short slices so a surface lost while the image is still pending
+  // cannot pin this thread either.
+  const uint64_t kFenceSliceNs = 100ULL * 1000ULL * 1000ULL;
+  for (;;) {
+    VkResult ready = vkWaitForFences(device, 1, &_swapchain_image_available, VK_TRUE, kFenceSliceNs);
+    if (ready == VK_SUCCESS) {
+      break;
+    }
+    if (ready != VK_TIMEOUT || _surface_lost) {
+      LOGI("BeginRender: image not ready (%d), skipping frame", (int)ready);
+      return -1;
+    }
+  }
+  ErrorCheck(vkResetFences(device, 1, &_swapchain_image_available));
   // ErrorCheck( vkQueueWaitIdle( _renderer->GetVulkanQueue() ) );
 
   return _active_swapchain_image_id;
@@ -330,7 +363,22 @@ void Window::_InitSwapchain() {
   swapchain_create_info.imageExtent.width = _surface_capabilities.currentExtent.width;   //_surface_size_x;
   swapchain_create_info.imageExtent.height = _surface_capabilities.currentExtent.height; //_surface_size_y;
   swapchain_create_info.imageArrayLayers = 1;
-  swapchain_create_info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+  // The swapchain images are not only rendered into: they are also both ends
+  // of a transfer. VIDVulkan::getScreenshot() blits FROM the current image
+  // into a host-visible linear image, and blitSubRenderTarget() blits INTO it
+  // from the offscreen target. Both need the matching usage bit at creation
+  // time; a transfer involving an image that lacks it is undefined behaviour,
+  // which some drivers service anyway while others silently drop it. That is
+  // how a machine could show a perfect picture on screen (the present path
+  // needs no transfer) and still save an all-zero screenshot. Ask only for
+  // what the surface reports as supported so this cannot fail swapchain
+  // creation on a platform that does not offer the transfer usages.
+  swapchain_create_info.imageUsage =
+      VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+      ((VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT) &
+       _surface_capabilities.supportedUsageFlags);
+  LOGI("swapchain imageUsage=%08X (surface supports %08X)", swapchain_create_info.imageUsage,
+       _surface_capabilities.supportedUsageFlags);
   swapchain_create_info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
   swapchain_create_info.queueFamilyIndexCount = 0;
   swapchain_create_info.pQueueFamilyIndices = nullptr;

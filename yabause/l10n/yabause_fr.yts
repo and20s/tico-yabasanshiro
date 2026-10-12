@@ -128,8 +128,8 @@ Comment :|Commentaire :
 Common Control Registers|Registres de Contrôle Commun
 Compare Type|Type de Comparaison
 Compatibility List|Liste de Compatibilité
-CPU Tesselation|Tesselation CPU
-GPU Tesselation|Tesselation GPU
+CPU Tessellation|Tessellation CPU
+GPU Tessellation|Tessellation GPU
 DSP Control Registers|Registres de Contrôle DSP
 DSP Registers|Registres DSP
 Data Size|Taille Donnée
@@ -333,7 +333,7 @@ Run|Lancer
 S&ave State|S&auvegarder un Etat
 SCSP|SCSP
 SCSP Channels|Canaux SCSP
-SCSP Sync count per a frame ( 1 - 255 )|Compteur de synchro SCSP par image (1-255).
+SCSP Sync count per frame ( 1 - 255 )|Compteur de synchro SCSP par image (1-255).
 SCU-DSP|SCU-DSP
 SDL Joystick Interface|Interface SDL du Joystick
 SDL Sound Interface|Interface SDL du Son
@@ -491,3 +491,54 @@ Rendering Option|Options de rendu
 Render Quality|Qualité de rendu
 Low|Faible qualité
 High|Haute qualité
+Yaba Sanshiro Setup|Configuration de Yaba Sanshiro
+Next|Suivant
+Back|Précédent
+Finish|Terminer
+Graphics|Graphismes
+Choose the preset that matches your PC. You can change any of this later in Settings.|Choisissez le préréglage qui correspond à votre PC. Vous pourrez modifier cela plus tard dans les Paramètres.
+Setting|Paramètre
+Controls|Contrôles
+Press each button on your keyboard or gamepad when it is highlighted.|Appuyez sur chaque bouton de votre clavier ou de votre manette lorsqu'il est surligné.
+Press the input for|Appuyez sur l'entrée pour
+All buttons are set.|Tous les boutons sont configurés.
+Games|Jeux
+Tell Yaba Sanshiro where your games are.|Indiquez à Yaba Sanshiro où se trouvent vos jeux.
+Do not use an optical drive|Ne pas utiliser de lecteur optique
+Choose the folder that contains your games|Choisissez le dossier qui contient vos jeux
+Ready|Prêt
+Review your choices before applying them.|Vérifiez vos choix avant de les appliquer.
+High - modern high-end GPU and CPU|Élevé - GPU et CPU haut de gamme récents
+Medium - mid-range GPU and CPU|Moyen - GPU et CPU milieu de gamme
+Low - older GPU and CPU|Faible - GPU et CPU plus anciens
+Vulkan is not available in this build, so only the Low preset can be used.|Vulkan n'est pas disponible dans cette version, seul le préréglage Faible peut donc être utilisé.
+Which device do you want to play with?|Avec quel périphérique voulez-vous jouer ?
+Press the input you want to use.|Appuyez sur l'entrée que vous voulez utiliser.
+Previous button|Bouton précédent
+Skip this button|Ignorer ce bouton
+Skip input setup|Ignorer la configuration des entrées
+Folder that contains your CHD or ISO files|Dossier contenant vos fichiers CHD ou ISO
+Browse...|Parcourir...
+Optical drive to play discs from|Lecteur optique pour lire les disques
+Both are optional. You can set them later in Settings.|Les deux sont facultatifs. Vous pourrez les configurer plus tard dans les Paramètres.
+These settings will be applied when you press Finish.|Ces paramètres seront appliqués lorsque vous cliquerez sur Terminer.
+Vulkan Video|Vulkan Video
+OpenGL|OpenGL
+Other video core|Autre noyau vidéo
+Compute Rasterizer|Compute Rasterizer
+OpenAL Sound Interface|Interface Son OpenAL
+Other sound core|Autre noyau son
+SCSP sync count per frame|Nombre de synchronisations SCSP par image
+Run Setup &Wizard...|&Lancer l'Assistant de Configuration...
+Some of these settings only take effect when Yaba Sanshiro starts. Please restart it.|Certains de ces paramètres ne prennent effet qu'au démarrage de Yaba Sanshiro. Veuillez le redémarrer.
+Buttons assigned|Boutons assignés
+Not set|Non défini
+Keyboard|Clavier
+Keyboard / Mouse|Clavier / Souris
+not a known gamepad|manette non reconnue
+Unknown device|Périphérique inconnu
+not connected|non connecté
+This gamepad is recognised. It works without any setup.|Cette manette est reconnue. Elle fonctionne sans aucune configuration.
+This device cannot be set up automatically. Assign each button on the next page.|Ce périphérique ne peut pas être configuré automatiquement. Assignez chaque bouton sur la page suivante.
+Use the default assignment|Utiliser l'assignation par défaut
+Input device|Périphérique d'entrée

@@ -205,10 +205,13 @@ static void SmpcSNDOFF(void) {
 
 void SmpcCKCHG352(void) {
    // Reset VDP1, VDP2, SCU, and SCSP
-   Vdp1Reset();  
-   Vdp2Reset();  
-   ScuReset();  
-   ScspReset();  
+   Vdp1Reset();
+   Vdp2Reset();
+   ScuReset();
+   // A clock change also stops the sound CPU (power-on default state); the
+   // BIOS clock-change routine restarts it afterwards (see BiosChangeSystemClock).
+   M68KStop();
+   ScspReset();
 
    // Clear VDP1/VDP2 ram
 
@@ -228,10 +231,13 @@ void SmpcCKCHG352(void) {
 
 void SmpcCKCHG320(void) {
    // Reset VDP1, VDP2, SCU, and SCSP
-   Vdp1Reset();  
-   Vdp2Reset();  
-   ScuReset();  
-   ScspReset();  
+   Vdp1Reset();
+   Vdp2Reset();
+   ScuReset();
+   // A clock change also stops the sound CPU (power-on default state); the
+   // BIOS clock-change routine restarts it afterwards (see BiosChangeSystemClock).
+   M68KStop();
+   ScspReset();
 
    // Clear VDP1/VDP2 ram
 
@@ -569,6 +575,18 @@ void SmpcExec(s32 t) {
 
       SmpcInternalVars->timing -= t;
       if (SmpcInternalVars->timing <= 0) {
+         // YABA_SMPC_TRACE=1: one line per executed SMPC command. Used to
+         // compare the HLE-BIOS and real-BIOS boots of the same game (the
+         // slave SH-2 only runs once SSHON is seen).
+         {
+            static int smpc_trace = -1;
+            if (smpc_trace < 0)
+               smpc_trace = (getenv("YABA_SMPC_TRACE") != NULL);
+            if (smpc_trace)
+               printf("[SMPC f%u] COMREG=%02X ssh2=%d\n",
+                      (unsigned)yabsys.frame_count, SmpcRegs->COMREG,
+                      (int)yabsys.IsSSH2Running);
+         }
          switch(SmpcRegs->COMREG) {
             case 0x0:
                SMPCLOG("smpc\t: MSHON not implemented\n");
@@ -787,6 +805,15 @@ void FASTCALL SmpcWriteByte(u32 addr, u8 val) {
          }
          return;
       case 0x1F:
+         {
+            static int smpc_wtrace = -1;
+            if (smpc_wtrace < 0)
+               smpc_wtrace = (getenv("YABA_SMPC_TRACE") != NULL);
+            if (smpc_wtrace)
+               printf("[SMPCW f%u] COMREG<=%02X from PC=%08X\n",
+                      (unsigned)yabsys.frame_count, val,
+                      CurrentSH2 ? (unsigned)CurrentSH2->regs.PC : 0);
+         }
          SmpcSetTiming();
          return;
       case 0x63:

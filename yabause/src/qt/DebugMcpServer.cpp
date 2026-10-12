@@ -8,6 +8,9 @@
 #include <cstring>
 
 #include "httplib.h"
+#include "QtYabause.h"
+#include "Settings.h"
+#include "VolatileSettings.h"
 #include "YabauseThread.h"
 
 extern "C" {
@@ -383,6 +386,24 @@ QJsonObject DebugMcpServer::callTool(const QString& name,
     SSH2->debugHaltRequest = 0;
     clearStopState();
     return textResult("resumed");
+  }
+
+  if (name == "load_state") {
+    int slot = qBound(0, args.value("slot").toInt(0), 10);
+    const bool wasRunning = !isStopped();
+    if (wasRunning) {
+      if (!mYabauseThread->pauseEmulation(true, false))
+        return errorResult("failed to pause emulation for state load");
+    }
+    QString dir = QtYabause::volatileSettings()
+                      ->value("General/SaveStates", getDataDirPath())
+                      .toString();
+    int r = YabLoadStateSlot(dir.toLatin1().constData(), slot);
+    if (wasRunning)
+      mYabauseThread->pauseEmulation(false, false);
+    if (r != 0)
+      return errorResult(QString("YabLoadStateSlot failed (%1)").arg(r));
+    return textResult(QString("state slot %1 loaded").arg(slot));
   }
 
   if (name == "step") {
@@ -909,6 +930,7 @@ QJsonArray DebugMcpServer::toolDefinitions() const {
     {"name":"debug_status","description":"Get emulator debug status: run/stop state, stop reason, PCs of both SH2 CPUs, frame count, game id, CPU core, history recording state.","inputSchema":{"type":"object","properties":{}}},
     {"name":"pause","description":"Pause emulation at the next frame boundary and mark it stopped for debugging.","inputSchema":{"type":"object","properties":{}}},
     {"name":"resume","description":"Clear halt requests on both SH2 CPUs and resume emulation. Requires being stopped.","inputSchema":{"type":"object","properties":{}}},
+    {"name":"load_state","description":"Load a numbered savestate slot (<itemnum>_<slot>.yss from the configured SaveStates directory). Pauses emulation around the load and resumes if it was running.","inputSchema":{"type":"object","properties":{"slot":{"type":"integer"}}}},
     {"name":"step","description":"Single-step the given SH2 CPU by count instructions while stopped. Requires the debug interpreter core. Typical flow: pause -> step/step_over/step_out (repeat) -> resume, or set_breakpoint -> resume -> wait_for_stop.","inputSchema":{"type":"object","properties":{"cpu":{"type":"string","enum":["master","slave"]},"count":{"type":"integer"}}}},
     {"name":"step_over","description":"Step the given SH2 CPU over the next instruction, not descending into calls. Requires the debug interpreter core and being stopped.","inputSchema":{"type":"object","properties":{"cpu":{"type":"string","enum":["master","slave"]}}}},
     {"name":"step_out","description":"Run the given SH2 CPU until it returns from the current subroutine. Requires the debug interpreter core and being stopped.","inputSchema":{"type":"object","properties":{"cpu":{"type":"string","enum":["master","slave"]}}}},

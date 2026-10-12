@@ -1,4 +1,5 @@
 import UIKit
+import FirebaseAuth
 
 protocol CloudCheatTableViewCellDelegate: AnyObject {
     func didToggleActivation(_ cell: CloudCheatTableViewCell, isActive: Bool)

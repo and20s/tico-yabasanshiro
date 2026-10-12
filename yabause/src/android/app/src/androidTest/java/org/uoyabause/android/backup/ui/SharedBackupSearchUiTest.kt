@@ -61,39 +61,13 @@ class SharedBackupSearchUiTest {
     // IT-S02: Shared backup search UI
     // ==============================
 
-    /**
-     * IT-S02-10: Verify search input layout is displayed
-     */
-    @Test
-    fun searchFragment_displaysSearchInputLayout() {
-        scenario = launchSharedBackupSearchFragment()
-
-        onView(withId(R.id.til_search))
-            .check(matches(isDisplayed()))
-    }
-
-    /**
-     * IT-S02-11: Verify search edit text is displayed
-     */
-    @Test
-    fun searchFragment_displaysSearchEditText() {
-        scenario = launchSharedBackupSearchFragment()
-
-        onView(withId(R.id.et_search))
-            .check(matches(isDisplayed()))
-    }
-
-    /**
-     * IT-S02-12: Verify search hint text
-     */
-    @Test
-    fun searchFragment_hasSearchHint() {
-        scenario = launchSharedBackupSearchFragment()
-
-        // Search hint is on the TextInputLayout
-        onView(withId(R.id.til_search))
-            .check(matches(isDisplayed()))
-    }
+    // IT-S02-10 .. IT-S02-12 covered a search field (til_search / et_search)
+    // that this fragment used to own. The search box now lives in the parent
+    // BackupManagerFragment's toolbar, so a scenario that launches this
+    // fragment on its own can never see it. Coverage for the toolbar search
+    // belongs in a test that hosts the parent; these three were left asserting
+    // on ids that no longer resolve, which is what kept androidTest from
+    // compiling at all.
 
     /**
      * IT-S02-13: Verify search results RecyclerView exists

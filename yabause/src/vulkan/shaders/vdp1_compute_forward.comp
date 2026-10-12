@@ -714,10 +714,20 @@ vec4 sampleTexel16bppRGB(Vdp1Cmd c, uvec2 t, bool spd, bool endcEnabled) {
     // otherwise                  -> palette (16-bit colorindex)
     if ((word & 0x8000u) == 0u && !spd) return vec4(0);
     if (endcEnabled && word == 0x7FFFu) return vec4(0);
-    if (isShadowFor(word, c)) return packShadow(c);
     bool spctlRgb = (pc.spriteType & 0x20u) != 0u;
-    if ((word & 0x8000u) != 0u && spctlRgb) return packDirect(word, c);
-    return packPalette(word, c);
+    if ((word & 0x8000u) != 0u && spctlRgb) {
+        if (isShadowFor(word, c)) return packShadow(c);
+        return packDirect(word, c);
+    }
+    // 16bpp palette pixel: per-pixel Vdp1ProcessSpritePixel (getLutSpriteInfo),
+    // mirroring the 4bpp LUT path / vidogl.c readTexture. Without it, palette
+    // sprite types > 0 (Mr. Bones forest skeleton = type 7) lost the per-pixel
+    // priority slot (dot>>12)&7 and were discarded when that PRISA slot was 0.
+    uint pri; uint cc_; uint masked; bool ns;
+    getLutSpriteInfo(word, pc.spriteType & 0xFu, pri, cc_, masked, ns);
+    bool msb = ((c.vdp2Attrs >> 16) & ATTR_MSB_SHADOW) != 0u;
+    if (msb || ns) return packShadowWithPri(pri, c);
+    return packPaletteWithAttrs(masked, pri, cc_, c);
 }
 
 // Per-cmd processing kernel. Both per-cmd dispatch and tile-binning forward

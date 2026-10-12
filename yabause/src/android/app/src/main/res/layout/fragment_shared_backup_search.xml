@@ -46,7 +46,8 @@
     <LinearLayout
         android:id="@+id/layout_auth_required"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
         android:gravity="center"
         android:orientation="vertical"
         android:visibility="gone">
@@ -80,7 +81,8 @@
     <LinearLayout
         android:id="@+id/layout_empty"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
         android:gravity="center"
         android:orientation="vertical"
         android:visibility="gone">
@@ -108,7 +110,8 @@
     <FrameLayout
         android:id="@+id/layout_loading"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
         android:visibility="gone">
 
         <com.google.android.material.progressindicator.CircularProgressIndicator
@@ -123,7 +126,8 @@
     <LinearLayout
         android:id="@+id/layout_error"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
         android:gravity="center"
         android:orientation="vertical"
         android:visibility="gone">
@@ -158,9 +162,54 @@
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/recycler_view_shared"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
         android:clipToPadding="false"
         android:paddingBottom="16dp"
         tools:listitem="@layout/item_shared_backup" />
+
+    <!-- Footer: paging progress and the way back from hiding a poster.
+         A sibling of the list rather than a row inside it, so it survives the
+         empty state: hiding everyone must not also hide the undo. -->
+    <com.google.android.material.progressindicator.CircularProgressIndicator
+        android:id="@+id/progress_load_more"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginVertical="@dimen/margin_small"
+        android:indeterminate="true"
+        android:visibility="gone"
+        app:indicatorSize="24dp"
+        tools:visibility="visible" />
+
+    <LinearLayout
+        android:id="@+id/layout_blocked_footer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="@dimen/margin_medium"
+        android:paddingEnd="@dimen/margin_small"
+        android:visibility="gone"
+        tools:visibility="visible">
+
+        <TextView
+            android:id="@+id/tv_blocked_count"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:textColor="?attr/colorOnSurfaceVariant"
+            android:textSize="13sp"
+            tools:text="Hidden users (2)" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_show_all_hidden"
+            style="@style/Widget.Material3.Button.TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:focusable="true"
+            android:text="@string/show_all_hidden" />
+
+    </LinearLayout>
 
 </LinearLayout>

@@ -79,7 +79,10 @@ public:
   VkShaderModule compileShader(uint32_t id, const string & code, int type);
 
 private:
-  VIDVulkan * vulkan;
+  // Set by setVulkan() before the first compileShader(). Null until then, so
+  // the destructor must not dereference it unconditionally -- free() can run
+  // on a ShaderManager that never compiled anything.
+  VIDVulkan * vulkan = nullptr;
   static ShaderManager * instance;
   ShaderManager() {
 
@@ -222,13 +225,39 @@ public:
 
   bool isNeedBarrier() { return needBarrier; }
 
-  uint8_t getWinFlg() { return winflag;  }
-  void setWinFlg(uint8_t flg) { winflag = flg; }
+  uint32_t getWinFlg() { return winflag;  }
+  void setWinFlg(uint32_t flg) { winflag = flg; }
 
-  static uint8_t genWinFlag(int winmode, int bwin0, int bwin1, int bwinsp, int logwin0, int logwin1, int logwinsp) {
+  static uint32_t genWinFlag(int winmode, int bwin0, int bwin1, int bwinsp, int logwin0, int logwin1, int logwinsp) {
     return(((winmode & 0x1) << 7) | ((bwin0 & 0x1) << 3) | ((bwin1 & 0x1) << 4) | ((bwinsp & 0x1) << 5)
       | ((logwin0 & 0x1) << 0) | ((logwin1 & 0x1) << 1) | ((logwinsp & 0x1) << 2));
   }
+
+  // Color calculation window (Sega VDP2 manual ch.12, WCTLD >> 8) packed above
+  // the display-window byte in the pipeline winflag key. Bits 8..15 hold the
+  // raw cc-window control byte (bit0 W0 area, bit1 W0 enable, bit2 W1 area,
+  // bit3 W1 enable, bit4 sprite-window area, bit5 sprite-window enable, bit7
+  // AND/OR), bit 16 marks the cc clip as active, and bit 17 selects the
+  // complement region (outside the cc valid area) used by the opaque
+  // companion pass (ccPair). See createDpethStencil() for how these combine
+  // with the display window into a single stencil test.
+  static const uint32_t kCcWinByteShift = 8;
+  static const uint32_t kCcWinActive = 1u << 16;
+  static const uint32_t kCcWinComplement = 1u << 17;
+  static uint32_t genCcWinFlag(uint8_t ccByte, bool complement) {
+    return (((uint32_t)ccByte) << kCcWinByteShift) | kCcWinActive |
+           (complement ? kCcWinComplement : 0u);
+  }
+
+  // Opaque companion pipeline for the color-calc window: on hardware a pixel
+  // outside the cc-window valid area is displayed WITHOUT color calculation
+  // (mednafen ApplyWin clears only the CCE bit; vidsoft forces alpha 0x3F),
+  // so the layer must still be drawn there, just unblended. The main pipeline
+  // clips its blended draw to the cc valid area and this companion draws the
+  // complement region with blending disabled. Managed by VIDVulkan's
+  // genPolygon / genPolygonRbg0 (created via the pipeline factory, same
+  // vertex stream appended to both).
+  VdpPipeline * ccPair = nullptr;
 
 protected:
 
@@ -318,9 +347,8 @@ protected:
   }
   */
 
-  // bit spec
-  // 8 winmode
-  // 7
+  // bit spec (low byte = display window, see genWinFlag)
+  // 7 winmode
   // 6
   // 5 bwinsp
   // 4 bwin1
@@ -328,7 +356,11 @@ protected:
   // 2 logwinsp
   // 1 logwin1
   // 0 logwin0
-  uint8_t winflag;
+  // bits 8..17 = color-calc window key (see genCcWinFlag)
+  // Zero-initialized: pipelines constructed outside the factory (back screen,
+  // blit helpers) never call setWinFlg, and a garbage value here would bake a
+  // bogus stencil test into their pipeline state.
+  uint32_t winflag = 0;
 
 
   void decodeWinFlag(int & winmode, int & bwin0, int & bwin1, int & bwinsp, int & logwin0, int & logwin1, int & logwinsp ) {

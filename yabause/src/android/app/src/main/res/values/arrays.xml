@@ -51,6 +51,14 @@
         <item>2</item>
         <item>3</item>
     </string-array>
+    <string-array name="entries_vdp2_composite" translatable="false">
+        <item>@string/vdp2_composite_new</item>
+        <item>@string/vdp2_composite_legacy</item>
+    </string-array>
+    <string-array name="entryvalues_vdp2_composite" translatable="false">
+        <item>1</item>
+        <item>0</item>
+    </string-array>
 
     <string-array name="entries_sound_engine_list_preference" translatable="false">
         <item>@string/sound_curent</item>
@@ -97,6 +105,7 @@
     <string-array name="entries_rbg_resolution_list_preference" translatable="false">
         <item>@string/res_original</item>
         <item>@string/res_2x</item>
+        <item>@string/res_4x</item>
         <item>@string/res_720p</item>
         <item>@string/res_1080p</item>
         <item>@string/res_native</item>
@@ -104,6 +113,8 @@
     <string-array name="entryvalues_rbg_resolution_list_preference" translatable="false">
         <item>0</item>
         <item>1</item>
+        <!-- RBG_RES_4x was appended to the enum, so its value is 5, not 2. -->
+        <item>5</item>
         <item>2</item>
         <item>3</item>
         <item>4</item>

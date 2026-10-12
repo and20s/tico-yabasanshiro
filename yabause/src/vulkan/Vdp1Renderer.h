@@ -239,8 +239,12 @@ protected:
 
   VkSubmitInfo submitInfo;
 
-  s16 localX;
-  s16 localY;
+  // The local coordinate and the clip windows are VDP1 state that persists
+  // across frames until a command replaces it. Both drawing paths read it from
+  // Vdp1Regs - the same place the other renderers and the save state keep it -
+  // so switching the polygon mode mid-game cannot lose it. This hands that
+  // state to the compute rasterizer, which keeps its own copy per frame.
+  void syncComputePersistentState();
 
   void createUniformBuffer();
   void prepareOffscreen();

@@ -12,7 +12,19 @@ import FirebaseAuth
 import FirebaseFirestore
 import GameController
 
-
+extension Notification.Name {
+    /// Posted by an in-game modal (achievements, leaderboard) when it releases
+    /// the GCController handlers it installed.
+    ///
+    /// Handlers are one slot per button per controller, so releasing a
+    /// screen's own is only half the job: whoever was there first has to put
+    /// its handlers back, or the screen underneath goes silent - the failure
+    /// ios/CLAUDE.md's CRITICAL section records. A notification rather than a
+    /// per-screen callback because it covers every dismissal path, including
+    /// the interactive swipe-down that no completion block sees.
+    static let legacyModalDidReleaseGamepad =
+        Notification.Name("LegacyModalDidReleaseGamepad")
+}
 
 class GameMainViewController: UIViewController
 {
@@ -95,6 +107,13 @@ class GameMainViewController: UIViewController
         
         NotificationCenter.default.addObserver(
             self,
+            selector: #selector(legacyModalDidReleaseGamepad),
+            name: .legacyModalDidReleaseGamepad,
+            object: nil
+        )
+
+        NotificationCenter.default.addObserver(
+            self,
             selector: #selector(controllerDidDisconnect),
             name: .GCControllerDidDisconnect,
             object: nil
@@ -118,6 +137,17 @@ class GameMainViewController: UIViewController
         setupControllerInput(controller)
     }
     
+    /// A modal we presented has given the controller back. Take our handlers
+    /// again, on the next main-queue turn so the modal's own teardown is
+    /// finished first.
+    @objc private func legacyModalDidReleaseGamepad(_ notification: Notification) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self,
+                  let gamepad = self.gameController?.extendedGamepad else { return }
+            self.setupExtendedGamepadHandlers(gamepad)
+        }
+    }
+
     @objc private func controllerDidDisconnect(_ notification: Notification) {
         gameController = nil
         
@@ -404,6 +434,7 @@ class GameMainViewController: UIViewController
     deinit {
         NotificationCenter.default.removeObserver(self, name: .GCControllerDidConnect, object: nil)
         NotificationCenter.default.removeObserver(self, name: .GCControllerDidDisconnect, object: nil)
+        NotificationCenter.default.removeObserver(self, name: .legacyModalDidReleaseGamepad, object: nil)
     }
 }
 
@@ -552,10 +583,6 @@ extension GameMainViewController: MenuViewControllerDelegate {
             case .controllerSetting:
                 self?.gameVC?.toggleControllSetting()
                 break
-            case .backupManager:
-                self?.gameVC?.presentBackupFileListViewController()
-                doNotPause = true
-                break
             case .cheat:
                 // Check if hardcore mode is enabled first
                 if let raManager = RetroAchievementsManager.shared,
@@ -579,11 +606,15 @@ extension GameMainViewController: MenuViewControllerDelegate {
                         doNotPause = true
                     } else {
                         // 未ログインの場合、ログイン画面を表示
-                        let loginVC = LoginViewController()
+                        let loginVC = SignInHostingController()
                         let navController = UINavigationController(rootViewController: loginVC)
                         navController.modalPresentationStyle = .pageSheet
                         loginVC.modalPresentationStyle = .fullScreen
                         loginVC.completionHandler = { [weak self] success in
+                            // The sign-in screen installs no handlers of its
+                            // own, so this screen takes its own back before
+                            // whatever comes next installs any.
+                            self?.didDismissModal()
                             if success {
                                 // ログイン成功後にチート画面を表示
                                 self?.gameVC?.presentCheatViewController()
@@ -593,6 +624,11 @@ extension GameMainViewController: MenuViewControllerDelegate {
                             }
                         }
                         self?.present(navController, animated: true, completion: nil)
+
+                        // B closes the sign-in sheet. Owned here rather than by
+                        // the sheet: this screen is the controller's owner for
+                        // the whole in-game context (ios/CLAUDE.md CRITICAL).
+                        self?.enableModalGamepadSupport(for: navController)
                         doNotPause = true
 
                     }
@@ -625,11 +661,14 @@ extension GameMainViewController: MenuViewControllerDelegate {
                     doNotPause = true
                 } else {
                     // 未ログインの場合、ログイン画面を表示
-                    let loginVC = LoginViewController()
+                    let loginVC = SignInHostingController()
                     let navController = UINavigationController(rootViewController: loginVC)
                     navController.modalPresentationStyle = .pageSheet
                     loginVC.modalPresentationStyle = .fullScreen
                     loginVC.completionHandler = { [weak self] success in
+                        // See the cheat case: take the handlers back before
+                        // the next screen installs any.
+                        self?.didDismissModal()
                         if success {
                             // ログイン成功後にリーダーボード画面を表示
                             self?.gameVC?.presentLeaderBoardViewController()
@@ -638,6 +677,7 @@ extension GameMainViewController: MenuViewControllerDelegate {
                         }
                     }
                     self?.present(navController, animated: true, completion: nil)
+                    self?.enableModalGamepadSupport(for: navController)
                     doNotPause = true
                 }
                 break
@@ -664,9 +704,9 @@ extension GameMainViewController: MenuViewControllerDelegate {
     func didChangeAnalogMode(to: Bool){
 
         toggleMenu { [weak self] in
-            let plist = SettingsViewController.getSettingPlist();
+            let plist = EmulatorSettingsStore.settingsPlist();
             plist.setObject(to, forKey: "analog mode" as NSCopying)
-            plist.write(toFile: SettingsViewController.getSettingFilename(), atomically: true)
+            plist.write(toFile: EmulatorSettingsStore.settingsFilePath(), atomically: true)
             self?.gameVC?.setAnalogMode(to: to)
             self?.gameVC?.isPaused = false
         }

@@ -88,6 +88,21 @@
             app:tint="?attr/colorOnSurfaceVariant"
             tools:visibility="visible" />
 
+        <!-- Outside the free version's allowance. Kept at full opacity while the
+             rest of the card is dimmed, so the reason the card looks inactive
+             stays legible. -->
+        <ImageView
+            android:id="@+id/badge_lock"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:contentDescription="@string/game_locked_badge"
+            android:src="@drawable/ic_lock_24"
+            android:visibility="gone"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:tint="?attr/colorPrimary"
+            tools:visibility="visible" />
+
     </androidx.constraintlayout.widget.ConstraintLayout>
 
 </com.google.android.material.card.MaterialCardView>

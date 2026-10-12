@@ -1162,19 +1162,6 @@ class GameSelectFragmentPhone :
         }
     }
 
-    private var signInActivityLauncher =
-        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-
-            firebaseAnalytics?.logEvent(
-                "game_select_fragment",
-                Bundle().apply {
-                    putString("event", "onSignIn")
-                },
-            )
-
-            presenter.onSignIn(result.resultCode, result.data)
-        }
-
     private var yabauseActivityLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
 
@@ -1496,8 +1483,6 @@ class GameSelectFragmentPhone :
                                     "sample",
                                 )
                             }
-                        } else {
-                            presenter.checkSignIn(signInActivityLauncher)
                         }
                     }
                 } catch (e: Exception) {

@@ -48,10 +48,28 @@ VkShaderModule ShaderManager::getShader(uint32_t id) {
 }
 
 ShaderManager::~ShaderManager() {
-  const VkDevice device = vulkan->getDevice();
-  for (int i = 0; i < shaders.size(); i++) {
-    vkDestroyShaderModule(device, shaders[i], nullptr);
+  // `shaders` is keyed by (prgid | shaderKind << 16), plus a 0x40000000-tagged
+  // key for the issue #22 G-buffer fragment variants (see createGraphicsPipeline).
+  // That key space is sparse -- it is never a dense 0..size-1 range.
+  //
+  // The previous loop walked it as `for (int i = 0; i < shaders.size(); i++)
+  // vkDestroyShaderModule(device, shaders[i], nullptr)`. map::operator[] INSERTS
+  // a default (VK_NULL_HANDLE) entry on every miss, so size() grew by one for
+  // every increment of i and the loop could only end once i had passed the
+  // largest key. Without G-buffer pipelines that is ~327k harmless iterations;
+  // with one G-buffer key present it is 1,073,807,364 iterations and roughly
+  // 48GB of map nodes, so shutdown never finished and the app had to be killed.
+  //
+  // Iterate the map itself: exactly one visit per real entry, no insertion.
+  if (vulkan != nullptr) {
+    const VkDevice device = vulkan->getDevice();
+    for (const auto &entry : shaders) {
+      if (entry.second != VK_NULL_HANDLE) {
+        vkDestroyShaderModule(device, entry.second, nullptr);
+      }
+    }
   }
+  shaders.clear();
 }
 
 
@@ -1101,49 +1119,142 @@ void VdpPipeline::createDpethStencil(VkPipelineDepthStencilStateCreateInfo & dep
 	depthStencil.maxDepthBounds = 1.0f; // Optional
 
 
-	if (winflag == 0) {
+	// Display window part (low byte of winflag): the stencil buffer holds the
+	// window membership bits (W0 = bit0, W1 = bit1, sprite window = bit2,
+	// written by WindowRenderer / drawSpriteWindow). "and"/"or" below follow
+	// the shown-region convention: "and" passes where every enabled window's
+	// membership equals its area bit, "or" passes everywhere except where every
+	// enabled window's membership differs from its area bit. This matches the
+	// hardware wipe rule (mednafen GetCWV: logic 0 = OR of wipe conditions =
+	// AND of show conditions).
+	int dispMask = 0, dispRef = 0;
+	bool dispEqualOp = true;
+	bool dispHideAll = false;
+	{
+		int winmode, bwin0, bwin1, bwinsp, logwin0, logwin1, logwinsp = 0;
+		decodeWinFlag(winmode, bwin0, bwin1, bwinsp, logwin0, logwin1, logwinsp);
+
+		bwin1 = bwin1 << 1;
+		logwin1 = logwin1 << 1;
+		bwinsp = bwinsp << 2;
+		logwinsp = logwinsp << 2;
+
+		dispMask = (bwin0 | bwin1 | bwinsp);
+		if (winmode == 0) { // and
+			if (bwin0)  dispRef = logwin0;
+			if (bwin1)  dispRef |= logwin1;
+			if (bwinsp) dispRef |= logwinsp;
+			dispEqualOp = true;
+		}
+		else { // or
+			dispRef = dispMask;
+			if (bwin0)  dispRef &= ~logwin0;
+			if (bwin1)  dispRef &= ~logwin1;
+			if (bwinsp) dispRef &= ~logwinsp;
+			dispEqualOp = false;
+		}
+		// Degenerate display-window byte: the logic bit is set but no window is
+		// enabled. vidsoft's TestBothWindow (vidsoft.c:518-524) returns 0 for
+		// every pixel there, and its caller skips those pixels (vidsoft.c:1017),
+		// i.e. the layer is hidden across the whole screen. The pre-existing
+		// `winflag == 0` guard reproduced that via an always-failing NOT_EQUAL
+		// (mask 0, reference 0), so keep emitting it rather than letting the
+		// layer become visible everywhere.
+		dispHideAll = (dispMask == 0 && winmode != 0);
+	}
+
+	// Color-calc window part (bits 8..17 of winflag): same stencil bits and the
+	// same shown-region formula, derived from the WCTLD>>8 control byte. The
+	// main (blended) pipeline clips to the cc valid area; the ccPair companion
+	// (kCcWinComplement) clips to the complement, where the layer is drawn
+	// without color calculation, matching hardware.
+	int ccMask = 0, ccRef = 0;
+	bool ccEqualOp = true;
+	const bool ccActive = (winflag & kCcWinActive) != 0;
+	const bool ccComplement = (winflag & kCcWinComplement) != 0;
+	if (ccActive) {
+		const int cb = (winflag >> kCcWinByteShift) & 0xFF;
+		const int en0 = (cb >> 1) & 1, ar0 = (cb >> 0) & 1;
+		const int en1 = (cb >> 3) & 1, ar1 = (cb >> 2) & 1;
+		const int ensp = (cb >> 5) & 1, arsp = (cb >> 4) & 1;
+		ccMask = (en0 ? 1 : 0) | (en1 ? 2 : 0) | (ensp ? 4 : 0);
+		const int areaBits = ((en0 && ar0) ? 1 : 0) | ((en1 && ar1) ? 2 : 0) |
+		                     ((ensp && arsp) ? 4 : 0);
+		if (((cb >> 7) & 1) == 0) { // and (shown-region convention, see above)
+			ccRef = areaBits;
+			ccEqualOp = true;
+		}
+		else { // or
+			ccRef = ccMask & ~areaBits;
+			ccEqualOp = false;
+		}
+		if (ccComplement) {
+			// The complement of EQUAL(mask, ref) is NOT_EQUAL(mask, ref) and
+			// vice versa, so a single op flip selects the outside region.
+			ccEqualOp = !ccEqualOp;
+		}
+	}
+
+	if (dispHideAll) {
+		// Hidden everywhere (see dispHideAll above): an EQUAL test whose mask is
+		// 0 can only pass when the reference is 0 too, so use a non-zero
+		// reference to make it always fail.
+		depthStencil.stencilTestEnable = VK_TRUE;
+		depthStencil.front.passOp = VK_STENCIL_OP_KEEP;
+		depthStencil.front.failOp = VK_STENCIL_OP_KEEP;
+		depthStencil.front.depthFailOp = VK_STENCIL_OP_KEEP;
+		depthStencil.front.writeMask = 0;
+		depthStencil.front.compareOp = VK_COMPARE_OP_EQUAL;
+		depthStencil.front.compareMask = 0;
+		depthStencil.front.reference = 1;
+		depthStencil.back = depthStencil.front;
+	}
+	else if (dispMask == 0 && ccMask == 0) {
 		depthStencil.stencilTestEnable = VK_FALSE;
 		depthStencil.front = {}; // Optional
 		depthStencil.back = {}; // Optional
 	}
 	else {
-
-		int winmode, bwin0, bwin1, bwinsp, logwin0, logwin1, logwinsp = 0;
-		decodeWinFlag(winmode, bwin0, bwin1, bwinsp, logwin0, logwin1, logwinsp);
+		int winmask;
+		int swinflag;
+		bool equalOp;
+		if (dispMask != 0 && ccMask != 0) {
+			if (dispEqualOp && ccEqualOp && !ccComplement && (dispMask & ccMask) == 0) {
+				// Both are EQUAL-form over disjoint bits: a single EQUAL test
+				// expresses "inside display window AND inside cc valid area".
+				winmask = dispMask | ccMask;
+				swinflag = dispRef | ccRef;
+				equalOp = true;
+			}
+			else {
+				// Not expressible in one stencil compare (an OR-form window,
+				// overlapping bits, or the complement pass). Keep the display
+				// window and drop the cc clip (pre-fix behavior for this rare
+				// combination).
+				winmask = dispMask;
+				swinflag = dispRef;
+				equalOp = dispEqualOp;
+			}
+		}
+		else if (dispMask != 0) {
+			winmask = dispMask;
+			swinflag = dispRef;
+			equalOp = dispEqualOp;
+		}
+		else {
+			winmask = ccMask;
+			swinflag = ccRef;
+			equalOp = ccEqualOp;
+		}
 
 		depthStencil.stencilTestEnable = VK_TRUE;
 		depthStencil.front.passOp = VK_STENCIL_OP_KEEP;
 		depthStencil.front.failOp = VK_STENCIL_OP_KEEP;
 		depthStencil.front.depthFailOp = VK_STENCIL_OP_KEEP;
 		depthStencil.front.writeMask = 0;
-
-    bwin1 = bwin1 << 1;
-    logwin1 = logwin1 << 1;
-    bwinsp = bwinsp << 2;
-    logwinsp = logwinsp << 2;
-
-		int winmask = (bwin0 | bwin1 | bwinsp);
-		int swinflag = 0;
-		if (winmode == 0) { // and
-			if (bwin0)  swinflag = logwin0;
-			if (bwin1)  swinflag |= logwin1;
-			if (bwinsp) swinflag |= logwinsp;
-
-			depthStencil.front.compareOp = VK_COMPARE_OP_EQUAL;
-			depthStencil.front.compareMask = winmask;
-			depthStencil.front.reference = swinflag;
-		}
-		else { // or
-			swinflag = winmask;
-			if (bwin0)  swinflag &= ~logwin0;
-			if (bwin1)  swinflag &= ~logwin1;
-			if (bwinsp) swinflag &= ~logwinsp;
-
-			depthStencil.front.compareOp = VK_COMPARE_OP_NOT_EQUAL;
-			depthStencil.front.compareMask = winmask;
-			depthStencil.front.reference = swinflag;
-
-		}
+		depthStencil.front.compareOp = equalOp ? VK_COMPARE_OP_EQUAL : VK_COMPARE_OP_NOT_EQUAL;
+		depthStencil.front.compareMask = winmask;
+		depthStencil.front.reference = swinflag;
 
 		depthStencil.back = depthStencil.front;
 

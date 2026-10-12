@@ -441,16 +441,6 @@ class GameSelectFragment :
         return fragmentView
     }
 
-    private var signInActivityLauncher =
-        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            presenter.onSignIn(result.resultCode, result.data)
-            if (presenter.currentUserName != null) {
-                // val m = navigationView!!.menu
-                // val miLogin = m.findItem(R.id.menu_item_login)
-                // miLogin.setTitle(R.string.sign_out)
-            }
-        }
-
     private var updateJob: Job? = null
 
     fun updateGameList() {
@@ -479,8 +469,6 @@ class GameSelectFragment :
                             } else {
                                 newInstance().show(childFragmentManager, "sample")
                             }
-                        } else {
-                            presenter.checkSignIn(signInActivityLauncher)
                         }
                     }
                 } catch (e: Exception) {

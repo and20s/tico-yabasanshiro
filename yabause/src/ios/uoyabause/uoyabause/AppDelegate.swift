@@ -1,4 +1,5 @@
 import UIKit
+import SwiftUI
 import FirebaseCore
 import FirebaseMessaging
 import FirebaseInAppMessaging
@@ -17,7 +18,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationCenterD
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
 
-        // ダークモード対応の設定
+        // Appearance proxies are global, so they must be installed before the
+        // first view controller is created.
         setupAppearance()
 
         var filePath: String?
@@ -50,61 +52,99 @@ class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationCenterD
                 NSLog("RetroAchievements: Auto-login failed on app startup: \(error ?? "Unknown error")")
             }
         }
-        
+
+        // SP1: the legacy home screen is gone, so Main.storyboard no longer
+        // has an initial view controller and the window is created here.
+        // Main.storyboard is still used to instantiate the emulator screen
+        // (GameMainViewController) via GameLauncher.
+        // Legacy cart/invalid.ram cleanup (see CartridgeFileMigration).
+        CartridgeFileMigration().run()
+
+        window = UIWindow(frame: UIScreen.main.bounds)
+        applyWindowAppearance()
+        window?.rootViewController = UIHostingController(rootView: MainTabView())
+        window?.makeKeyAndVisible()
+
+        // Begins the StoreKit work once, at launch: the transaction listener,
+        // the product request, and the first read of both entitlement sources.
+        ProEntitlementStore.shared.start()
+
         return true
     }
 
-    // アプリ全体の外観設定
+    // Window level appearance. Must run after the window exists.
+    private func applyWindowAppearance() {
+        window?.tintColor = .themePrimary
+        // The Material 3 theme ported from Android has no light variant, so the
+        // app is dark only. Info.plist sets UIUserInterfaceStyle as well; this
+        // covers windows created before the plist value is honoured.
+        window?.overrideUserInterfaceStyle = .dark
+    }
+
+    // App wide appearance (global appearance proxies only).
     private func setupAppearance() {
-        
-        window?.tintColor = .tint
-        
-        if #available(iOS 13.0, *) {
-            // iOS 13以降はシステムのダークモード設定に従う
-            window?.overrideUserInterfaceStyle = .unspecified
+        // Navigation bar: Material 3 puts the app bar on colorSurface with
+        // on-surface text. The accent is reserved for controls, not titles.
+        let navBarAppearance = UINavigationBarAppearance()
+        navBarAppearance.configureWithOpaqueBackground()
+        navBarAppearance.backgroundColor = UIColor.themeSurface
+        navBarAppearance.shadowColor = UIColor.themeOutlineVariant
+        navBarAppearance.titleTextAttributes = [.foregroundColor: UIColor.themeOnSurface]
+        navBarAppearance.largeTitleTextAttributes = [.foregroundColor: UIColor.themeOnSurface]
 
-            // ナビゲーションバーの外観設定
-            let navBarAppearance = UINavigationBarAppearance()
-            navBarAppearance.configureWithOpaqueBackground()
-            navBarAppearance.backgroundColor = UIColor.colorPrimary
-            navBarAppearance.titleTextAttributes = [.foregroundColor: UIColor.tint]
-            navBarAppearance.largeTitleTextAttributes = [.foregroundColor: UIColor.tint]
+        UINavigationBar.appearance().standardAppearance = navBarAppearance
+        UINavigationBar.appearance().compactAppearance = navBarAppearance
+        // scrollEdgeAppearance is deliberately left at the system default.
+        //
+        // On iOS 26 an opaque scrollEdgeAppearance installed through the
+        // UINavigationBar appearance proxy stops the large title from being
+        // drawn whenever scrollable content sits directly under the bar: the
+        // title is still set (it shows in the accessibility tree at its normal
+        // frame) but the label never renders, leaving a blank bar with only the
+        // toolbar items visible. It reproduced on an iPhone 16 Pro running
+        // iOS 26.1 on the Games, Settings and Account tabs; Backup escaped it
+        // only because a segmented picker sits between the bar and the list.
+        //
+        // Dropping it costs nothing visually: themeSurface and themeBackground
+        // are the same colour (0x131315), so the default transparent scroll
+        // edge paints exactly what the opaque appearance painted, and the
+        // separator is meant to be hidden at the top anyway. Once the user
+        // scrolls, standardAppearance above supplies the Material 3 surface.
+        UINavigationBar.appearance().tintColor = UIColor.themePrimary
 
-            UINavigationBar.appearance().standardAppearance = navBarAppearance
-            UINavigationBar.appearance().scrollEdgeAppearance = navBarAppearance
-            UINavigationBar.appearance().compactAppearance = navBarAppearance
-
-            // タブバーの外観設定
-            let tabBarAppearance = UITabBarAppearance()
-            tabBarAppearance.configureWithOpaqueBackground()
-            tabBarAppearance.backgroundColor = UIColor.colorPrimary
-
-            UITabBar.appearance().standardAppearance = tabBarAppearance
-            if #available(iOS 15.0, *) {
-                UITabBar.appearance().scrollEdgeAppearance = tabBarAppearance
-            }
-
-            // テーブルビューの外観設定
-            UITableView.appearance().backgroundColor = UIColor.defaultBackground
-
-            // テーブルビューセルの外観設定
-            UITableViewCell.appearance().backgroundColor = UIColor.defaultBackground
-
-            // コレクションビューの外観設定
-            UICollectionView.appearance().backgroundColor = UIColor.defaultBackground
-        } else {
-            // iOS 13未満の場合は独自のダークテーマを適用
-            UINavigationBar.appearance().barTintColor = UIColor.colorPrimary
-            UINavigationBar.appearance().tintColor = UIColor.appWhite
-            UINavigationBar.appearance().titleTextAttributes = [.foregroundColor: UIColor.appWhite]
-
-            UITabBar.appearance().barTintColor = UIColor.colorPrimary
-            UITabBar.appearance().tintColor = UIColor.appWhite
-
-            UITableView.appearance().backgroundColor = UIColor.defaultBackground
-            UITableViewCell.appearance().backgroundColor = UIColor.defaultBackground
-            UICollectionView.appearance().backgroundColor = UIColor.defaultBackground
+        // Tab bar: navigation bar surface one step up the elevation ladder,
+        // primary for the selected item and on-surface-variant for the rest.
+        let tabBarAppearance = UITabBarAppearance()
+        tabBarAppearance.configureWithOpaqueBackground()
+        tabBarAppearance.backgroundColor = UIColor.themeSurfaceContainer
+        tabBarAppearance.shadowColor = UIColor.themeOutlineVariant
+        for itemAppearance in [
+            tabBarAppearance.stackedLayoutAppearance,
+            tabBarAppearance.inlineLayoutAppearance,
+            tabBarAppearance.compactInlineLayoutAppearance
+        ] {
+            itemAppearance.selected.iconColor = UIColor.themePrimary
+            itemAppearance.selected.titleTextAttributes = [.foregroundColor: UIColor.themePrimary]
+            itemAppearance.normal.iconColor = UIColor.themeOnSurfaceVariant
+            itemAppearance.normal.titleTextAttributes = [.foregroundColor: UIColor.themeOnSurfaceVariant]
         }
+
+        UITabBar.appearance().standardAppearance = tabBarAppearance
+        UITabBar.appearance().scrollEdgeAppearance = tabBarAppearance
+
+        // Segmented controls otherwise keep the iOS system greys, which read
+        // as a lighter, bluer surface than the Material 3 containers.
+        let segmented = UISegmentedControl.appearance()
+        segmented.backgroundColor = UIColor.themeSurfaceContainer
+        segmented.selectedSegmentTintColor = UIColor.themeSecondaryContainer
+        segmented.setTitleTextAttributes(
+            [.foregroundColor: UIColor.themeOnSurfaceVariant], for: .normal)
+        segmented.setTitleTextAttributes(
+            [.foregroundColor: UIColor.themeOnSurface], for: .selected)
+
+        UITableView.appearance().backgroundColor = UIColor.themeBackground
+        UITableViewCell.appearance().backgroundColor = UIColor.themeBackground
+        UICollectionView.appearance().backgroundColor = UIColor.themeBackground
     }
 
     func applicationWillResignActive(_ application: UIApplication) {
@@ -125,37 +165,66 @@ class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationCenterD
         // Restart any tasks that were paused (or not yet started) while the application was inactive. If the application was previously in the background, optionally refresh the user interface.
         //StoreReviewHelper.shared.incrementAppLaunchCount()
         //StoreReviewHelper.shared.requestReviewIfAppropriate()
+
+        // Re-asks StoreKit about both entitlement sources. A launch read that
+        // failed with nothing cached leaves the entitlement undecided, and
+        // undecided keeps every gate permissive; coming back to the app with
+        // connectivity is the moment that can be settled.
+        ProEntitlementStore.shared.recheck()
     }
 
     func applicationWillTerminate(_ application: UIApplication) {
         // Called when the application is about to terminate. Save data if appropriate. See also applicationDidEnterBackground:.
     }
 
-    // URLハンドリング
+    // URL handling.
     func application(_ app: UIApplication,
                     open url: URL,
                     options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
-        // Google SignInのURLハンドリング
+        // Google Sign-In URL handling.
         if GIDSignIn.sharedInstance.handle(url) {
             return true
         }
 
-        // Discord OAuth リダイレクトのハンドリング
+        // Discord OAuth redirect handling.
         if discordRedirectHandler.handleUrl(url) {
             return true
         }
 
-        // 他のアプリからファイルを開く処理
+        // Shared-save links, before the file fallback: yabasanshiro://backup/{id}
+        // shares its scheme with the Discord callback, so this has to run
+        // after that handler and before "treat the URL as a file".
+        if SharedBackupLinkRouter.shared.handle(url: url) {
+            return true
+        }
+
+        // Opening a file handed over by another app.
         openMainScreenController(withFileAt: url)
         return true
     }
 
-    // MainScreenControllerを起動してファイルを処理するためのカスタムメソッド
+    /// Universal Links arrive here rather than through `open url:`.
+    ///
+    /// Inert until the Associated Domains entitlement is provisioned and the
+    /// apple-app-site-association file is served from www.yabasanshiro.com;
+    /// until then the same links open Safari and the custom scheme is the
+    /// only route in.
+    func application(_ application: UIApplication,
+                     continue userActivity: NSUserActivity,
+                     restorationHandler: @escaping ([UIUserActivityRestoring]?) -> Void) -> Bool {
+        SharedBackupLinkRouter.shared.handle(userActivity: userActivity)
+    }
+
+    // Custom hook that would launch MainScreenController to handle the file.
     func openMainScreenController(withFileAt url: URL) {
     }
     
     // MARK: - Firebase Messaging Configuration
     private func configureFirebaseMessaging() {
+        // Register default notification category values before any
+        // subscribeToEnabledTopics() call (fired from token callbacks)
+        MessagingManager.shared.registerDefaultCategorySettings()
+
         // Set messaging delegate
         Messaging.messaging().delegate = self
         

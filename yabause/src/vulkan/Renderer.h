@@ -106,6 +106,11 @@ private:
   VkDebugUtilsMessengerCreateInfoEXT dbg_messenger_create_info;
   VkDebugUtilsMessengerEXT dbg_messenger;
 
+  // Set by _SetupDebug() once the validation layer has actually been found
+  // and requested. When it stays false the debug callbacks are skipped
+  // instead of aborting the process.
+  bool _debug_enabled = false;
+
   bool canUseTess = false;
 
 };

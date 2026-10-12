@@ -1,6 +1,6 @@
-# YabaSanshiro 1.20.28 - Source Distribution (GPL)
+# YabaSanshiro 1.20.46 - Source Distribution (GPL)
 
-This archive is the corresponding source for YabaSanshiro 1.20.28,
+This archive is the corresponding source for YabaSanshiro 1.20.46,
 provided to comply with the GNU General Public License.
 
 ## Sanitized / redacted for security

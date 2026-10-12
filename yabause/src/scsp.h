@@ -124,6 +124,7 @@ int ScspChangeSoundCore(int coreid);
 void ScspDeInit(void);
 void M68KStart(void);
 void M68KStop(void);
+int M68KIsRunning(void);
 void ScspReset(void);
 int ScspChangeVideoFormat(int type);
 void M68KExec(s32 cycles);

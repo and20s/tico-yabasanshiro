@@ -19,11 +19,11 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.devmiyax.yabasanshiro.BuildConfig
+import org.devmiyax.yabasanshiro.R
 import org.uoyabause.android.CloudGameInfo
+import org.uoyabause.android.FreeGameSlots
 import org.uoyabause.android.GameInfo
 import org.uoyabause.android.GameSelectPresenter
-import org.uoyabause.android.YabauseApplication
 import org.uoyabause.android.YabauseStorage
 import org.uoyabause.android.backup.GameBackupManager
 import java.util.Locale
@@ -80,18 +80,20 @@ class GameSelectViewModel(
                             listState = GameListUiState.Empty,
                             gameCount = 0,
                             selectedGame = null,
-                            isGameListLimited = false,
+                            unlockedPaths = null,
+                            lockedCount = 0,
                         )
                     }
                 } else {
                     val sorted = applySortAndFilter(combined, _screenState.value.sortMode, _screenState.value.searchQuery)
-                    val limited = applyGameLimit(sorted)
+                    val unlocked = freeSlots()
                     _screenState.update {
                         it.copy(
-                            listState = GameListUiState.Success(limited),
+                            listState = GameListUiState.Success(sorted),
                             gameCount = combined.size,
-                            selectedGame = limited.firstOrNull(),
-                            isGameListLimited = limited.size < sorted.size,
+                            selectedGame = sorted.firstOrNull(),
+                            unlockedPaths = unlocked,
+                            lockedCount = FreeGameSlots.lockedCount(combined, unlocked),
                         )
                     }
                 }
@@ -151,6 +153,10 @@ class GameSelectViewModel(
         if (item.isCloudOnly && item.cloudBackupInfo != null) {
             downloadCloudGame(item.cloudBackupInfo!!)
         } else {
+            // Asked again here rather than trusted from the caller: the
+            // landscape pane holds its selection across a rescan, so the game
+            // it is showing can become locked while the pane is still open.
+            if (!allowOpen(item)) return
             presenter?.startGame(item, launcher)
         }
     }
@@ -190,20 +196,51 @@ class GameSelectViewModel(
         val state = _screenState.value
         val sorted = applySortAndFilter(allGames, state.sortMode, state.searchQuery)
         if (sorted.isEmpty() && allGames.isEmpty()) {
-            _screenState.update { it.copy(listState = GameListUiState.Empty, isGameListLimited = false) }
+            _screenState.update {
+                it.copy(listState = GameListUiState.Empty, unlockedPaths = null, lockedCount = 0)
+            }
         } else {
-            val limited = applyGameLimit(sorted)
+            // Computed from the whole library, not from `sorted`: the free slots
+            // must not follow the sort or the search box.
+            val unlocked = freeSlots()
             _screenState.update {
                 it.copy(
-                    listState = GameListUiState.Success(limited),
-                    selectedGame = if (it.selectedGame != null && limited.contains(it.selectedGame)) {
+                    listState = GameListUiState.Success(sorted),
+                    selectedGame = if (it.selectedGame != null && sorted.contains(it.selectedGame)) {
                         it.selectedGame
                     } else {
-                        limited.firstOrNull()
+                        sorted.firstOrNull()
                     },
-                    isGameListLimited = limited.size < sorted.size,
+                    unlockedPaths = unlocked,
+                    lockedCount = FreeGameSlots.lockedCount(allGames, unlocked),
                 )
             }
+        }
+    }
+
+    /** The current free allowance over the whole library, or null when unlimited. */
+    private fun freeSlots(): Set<String>? =
+        FreeGameSlots.unlockedPaths(allGames, _screenState.value.isSubscribed, getApplication())
+
+    /**
+     * Whether this game may be opened. A locked one asks for the subscription
+     * instead, and returns false so the caller shows nothing else.
+     *
+     * Every route into a game goes through here - tapping a card, the gamepad A
+     * button, and the play button in the detail sheet and the landscape pane.
+     */
+    fun allowOpen(item: GameInfo): Boolean {
+        if (!FreeGameSlots.isLocked(item, _screenState.value.unlockedPaths)) {
+            return true
+        }
+        presentProGate(R.string.game_locked_pro_gate_message)
+        return false
+    }
+
+    /** Opens the subscription gate, from the banner or from a locked game. */
+    fun presentProGate(messageResId: Int? = null) {
+        viewModelScope.launch {
+            _uiEvents.send(GameSelectUiEvent.ShowProGate(messageResId))
         }
     }
 
@@ -223,17 +260,6 @@ class GameSelectViewModel(
             GameSortMode.NAME -> filtered.sortedWith(compareBy({ it.game_title.lowercase(Locale.getDefault()) }, { it.device_infomation }))
             GameSortMode.DATE -> filtered.sortedBy { it.release_date }
             GameSortMode.RECENTLY_PLAYED -> filtered.sortedByDescending { it.lastplay_date }
-        }
-    }
-
-    private fun applyGameLimit(games: List<GameInfo>): List<GameInfo> {
-        if (YabauseApplication.isPro() || _screenState.value.isSubscribed) {
-            return games
-        }
-        return if (games.size > BuildConfig.MAX_FREE_GAMES) {
-            games.take(BuildConfig.MAX_FREE_GAMES)
-        } else {
-            games
         }
     }
 

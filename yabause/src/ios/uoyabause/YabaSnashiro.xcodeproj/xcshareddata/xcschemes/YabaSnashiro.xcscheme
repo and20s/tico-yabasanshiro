@@ -34,9 +34,12 @@
             default = "YES">
          </TestPlanReference>
       </TestPlans>
+      <StoreKitConfigurationFileReference
+         identifier = "../../../YabaSanshiro.storekit">
+      </StoreKitConfigurationFileReference>
       <Testables>
          <TestableReference
-            skipped = "YES">
+            skipped = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "644232BE1C6580010050611E"
@@ -77,6 +80,9 @@
             ReferencedContainer = "container:YabaSnashiro.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
+      <StoreKitConfigurationFileReference
+         identifier = "../../../YabaSanshiro.storekit">
+      </StoreKitConfigurationFileReference>
    </LaunchAction>
    <ProfileAction
       buildConfiguration = "Release"

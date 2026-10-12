@@ -20,31 +20,43 @@
 */
 
 #include <QApplication>
+#include <QSurfaceFormat>
 
 #include "QtYabause.h"
 #include "Settings.h"
 #include "ui/UIYabause.h"
+#include "ui/UISetupWizard.h"
 #include "services/PreferenceManager.h"
 #ifndef NO_CLI
 #include "Arguments.h"
 #endif
 
 
-#include <QSurfaceFormat>
 #include <crtdbg.h>
 int main( int argc, char** argv )
 {
 	//HeapSetInformation(NULL, HeapEnableTerminationOnCorruption, NULL, 0);
 	//_CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
 
-	QSurfaceFormat fmt;
-	fmt.setSwapBehavior(QSurfaceFormat::DoubleBuffer);
-	fmt.setSwapInterval(0);
-	fmt.setDepthBufferSize(24);
-	fmt.setStencilBufferSize(8);
-	fmt.setVersion(3, 2);
-	fmt.setProfile(QSurfaceFormat::CompatibilityProfile);
-	QSurfaceFormat::setDefaultFormat(fmt);
+	// The OpenGL renderer's context request belongs on the render widget, not
+	// in QSurfaceFormat::setDefaultFormat(): the default format is inherited by
+	// every surface Qt creates, including the widget backingstore composition
+	// context. Drivers that cannot present from the requested context (Intel
+	// UHD Graphics) then leave the whole main window black even when OpenGL is
+	// never used for emulation. The format is requested in the YabauseGL
+	// constructor instead.
+	//
+	// The swap interval, however, has to stay here. QOpenGLWidget renders into
+	// an FBO and the visible buffer swap is performed by the top-level window's
+	// context, which is built from this default format - setting it on the
+	// widget alone leaves presentation locked to vsync, and the frame limiter
+	// and fast-forward then have no effect. Asking for no version here is what
+	// keeps this safe on the drivers above.
+	{
+		QSurfaceFormat fmt = QSurfaceFormat::defaultFormat();
+		fmt.setSwapInterval( 0 );
+		QSurfaceFormat::setDefaultFormat( fmt );
+	}
 
 	// create application
 	QApplication app( argc, argv );
@@ -73,6 +85,14 @@ int main( int argc, char** argv )
 #ifndef NO_CLI
 	Arguments::parse();
 #endif
+	// First-launch onboarding. It runs before the main window exists, so a
+	// video core change here needs no restart.
+	if ( UISetupWizard::shouldRun() )
+	{
+		UISetupWizard wizard;
+		wizard.exec();
+	}
+
 	// show main window
 	QtYabause::mainWindow()->setWindowTitle( app.applicationName() );
 	QtYabause::mainWindow()->show();

@@ -55,6 +55,77 @@ fun SharedPreferences.migrateStringToIntPreference(
     }
 }
 
+/**
+ * A setting that exists per game.
+ *
+ * Each one is seeded from the global settings the first time a game is played,
+ * and mirrored between the Harmony store (written by the settings UI) and the
+ * plain SharedPreferences named after the game code (read by the emulator).
+ * Adding a per-game setting means adding one entry to [IN_GAME_PREFS] and
+ * nothing else.
+ */
+sealed class InGamePref(
+    val key: String,
+) {
+    class Str(
+        key: String,
+        val default: String,
+    ) : InGamePref(key)
+
+    class Bool(
+        key: String,
+        val default: Boolean,
+    ) : InGamePref(key)
+}
+
+val IN_GAME_PREFS =
+    listOf(
+        InGamePref.Bool("pref_fps", false),
+        InGamePref.Bool("pref_frameskip", false),
+        InGamePref.Bool("pref_rotate_screen", false),
+        InGamePref.Bool("pref_use_compute_shader", false),
+        InGamePref.Str("pref_polygon_generation", "0"),
+        InGamePref.Str("pref_frameLimit", "0"),
+        InGamePref.Str("pref_resolution", "0"),
+        InGamePref.Str("pref_aspect_rate", "0"),
+        InGamePref.Str("pref_rbg_resolution", "0"),
+        InGamePref.Str(Vdp2Composite.KEY, Vdp2Composite.DEFAULT_VALUE),
+        InGamePref.Str(VideoCore.KEY, VideoCore.OPENGL),
+    )
+
+/** Copies every per-game setting from [from] to [to]. */
+fun copyInGamePreferences(
+    from: SharedPreferences,
+    to: SharedPreferences,
+) {
+    val editor = to.edit()
+    for (pref in IN_GAME_PREFS) {
+        when (pref) {
+            is InGamePref.Bool -> editor.putBoolean(pref.key, from.getBoolean(pref.key, pref.default))
+            is InGamePref.Str -> editor.putString(pref.key, from.getStringSafe(pref.key, pref.default))
+        }
+    }
+    editor.apply()
+}
+
+/** Fills in settings a game does not have yet from the global settings. */
+private fun seedFromGlobalPreferences(
+    gamePreference: SharedPreferences,
+    defaultPreference: SharedPreferences,
+) {
+    val editor = gamePreference.edit()
+    for (pref in IN_GAME_PREFS) {
+        if (gamePreference.contains(pref.key)) continue
+        when (pref) {
+            is InGamePref.Bool ->
+                editor.putBoolean(pref.key, defaultPreference.getBoolean(pref.key, pref.default))
+            is InGamePref.Str ->
+                editor.putString(pref.key, defaultPreference.getStringSafe(pref.key, pref.default))
+        }
+    }
+    editor.apply()
+}
+
 fun setupInGamePreferences(
     context: Context,
     gameCode: String?,
@@ -66,123 +137,21 @@ fun setupInGamePreferences(
     val key = gameCode.replace(" ", "-")
     val gamePreference = context.getHarmonySharedPreferences(key)
     val defaultPreference = PreferenceManager.getDefaultSharedPreferences(context)
-    if (!gamePreference.contains("pref_fps")) {
-        val editor = gamePreference.edit()
-        editor.putBoolean("pref_fps", defaultPreference.getBoolean("pref_fps", false))
-        editor.apply()
+
+    seedFromGlobalPreferences(gamePreference, defaultPreference)
+
+    // Polygon generation is the one setting whose global value cannot be copied
+    // as is: the Vulkan path only accepts GPU_TESSERATION (2) and
+    // COMPUTE_RASTERIZER (3).
+    if (defaultPreference.getStringSafe(VideoCore.KEY, "0") == VideoCore.VULKAN) {
+        val current = gamePreference.getStringSafe("pref_polygon_generation", "0")
+        if (current !in setOf("2", "3")) {
+            gamePreference.edit().putString("pref_polygon_generation", "2").apply()
+        }
     }
 
-    if (!gamePreference.contains("pref_frameskip")) {
-        val editor = gamePreference.edit()
-        editor.putBoolean("pref_frameskip", defaultPreference.getBoolean("pref_frameskip", false))
-        editor.apply()
-    }
-
-    if (!gamePreference.contains("pref_rotate_screen")) {
-        val editor = gamePreference.edit()
-        editor.putBoolean(
-            "pref_rotate_screen",
-            defaultPreference.getBoolean("pref_rotate_screen", false),
-        )
-        editor.apply()
-    }
-
-    if (!gamePreference.contains("pref_polygon_generation")) {
-        val editor = gamePreference.edit()
-        val globalValue = defaultPreference.getStringSafe("pref_polygon_generation", "0")
-        val initial =
-            if (defaultPreference.getStringSafe("pref_video", "0") == "4") {
-                // Vulkan accepts only GPU_TESSERATION (2) and COMPUTE_RASTERIZER (3).
-                if (globalValue in setOf("2", "3")) globalValue else "2"
-            } else {
-                globalValue
-            }
-        editor.putString("pref_polygon_generation", initial)
-        editor.apply()
-    }
-
-    if (!gamePreference.contains("pref_frameLimit")) {
-        val editor = gamePreference.edit()
-        editor.putString(
-            "pref_frameLimit",
-            defaultPreference.getStringSafe("pref_frameLimit", "0"),
-        )
-        editor.apply()
-    }
-
-    if (!gamePreference.contains("pref_resolution")) {
-        val editor = gamePreference.edit()
-        editor.putString("pref_resolution", defaultPreference.getStringSafe("pref_resolution", "0"))
-        editor.apply()
-    }
-
-    if (!gamePreference.contains("pref_aspect_rate")) {
-        val editor = gamePreference.edit()
-/*
-            val displayMetrics = DisplayMetrics()
-            windowManager.defaultDisplay.getMetrics(displayMetrics)
-            val height = displayMetrics.heightPixels
-            val width = displayMetrics.widthPixels
-            val arate = width.toDouble() / height.toDouble()
-
-
-            if( arate >= 1.2 && arate <= 1.34 ){
-                // for 4:3 display force default setting is 4:3
-                val v = defaultPreference.getString("pref_aspect_rate","1")
-                editor.putString("pref_aspect_rate", v)
-            }else{
-                val v = defaultPreference.getString("pref_aspect_rate","0")
-                editor.putString("pref_aspect_rate", v)
-            }
-*/
-        val v = defaultPreference.getStringSafe("pref_aspect_rate", "0")
-        editor.putString("pref_aspect_rate", v)
-        editor.apply()
-    }
-
-    if (!gamePreference.contains("pref_rbg_resolution")) {
-        val editor = gamePreference.edit()
-        editor.putString(
-            "pref_rbg_resolution",
-            defaultPreference.getStringSafe("pref_rbg_resolution", "0"),
-        )
-        editor.apply()
-    }
-
-    if (!gamePreference.contains("pref_use_compute_shader")) {
-        val editor = gamePreference.edit()
-        editor.putBoolean(
-            "pref_use_compute_shader",
-            defaultPreference.getBoolean("pref_use_compute_shader", false),
-        )
-        editor.apply()
-    }
-
-    if (!gamePreference.contains("pref_video")) {
-        val editor = gamePreference.edit()
-        editor.putString(
-            "pref_video",
-            defaultPreference.getStringSafe("pref_video", "1"),
-        )
-        editor.apply()
-    }
-
-    val gameSharedPreference = context.getSharedPreferences(gameCode, 0)
-    val editor = gameSharedPreference.edit()
-    editor.putBoolean("pref_fps", gamePreference.getBoolean("pref_fps", false))
-    editor.putBoolean("pref_frameskip", gamePreference.getBoolean("pref_frameskip", false))
-    editor.putBoolean("pref_rotate_screen", gamePreference.getBoolean("pref_rotate_screen", false))
-    editor.putString(
-        "pref_polygon_generation",
-        gamePreference.getStringSafe("pref_polygon_generation", "0"),
-    )
-    editor.putBoolean("pref_use_compute_shader", gamePreference.getBoolean("pref_use_compute_shader", false))
-    editor.putString("pref_frameLimit", gamePreference.getStringSafe("pref_frameLimit", "0"))
-    val v = gamePreference.getStringSafe("pref_aspect_rate", "0")
-    editor.putString("pref_aspect_rate", v)
-    editor.putString("pref_rbg_resolution", gamePreference.getStringSafe("pref_rbg_resolution", "0"))
-    editor.putString("pref_video", gamePreference.getStringSafe("pref_video", "1"))
-    editor.apply()
+    // The emulator reads the plain SharedPreferences named after the game code.
+    copyInGamePreferences(gamePreference, context.getSharedPreferences(gameCode, 0))
 }
 
 class InGamePreference :
@@ -225,6 +194,7 @@ class InGamePreference :
         showSummary(findPreference<ListPreference?>("pref_rbg_resolution")!!)
         showSummary(findPreference<ListPreference?>("pref_aspect_rate")!!)
         showSummary(findPreference<ListPreference?>("pref_frameLimit")!!)
+        showSummary(findPreference<ListPreference?>(Vdp2Composite.KEY)!!)
     }
 
     override fun onAttach(context: Context) {
@@ -257,19 +227,23 @@ class InGamePreference :
 
             if (supportsEs3) {
                 videoLabels.add(res.getString(R.string.opengl_video_interface))
-                videoValues.add("1")
+                videoValues.add(VideoCore.OPENGL)
             }
 
-            videoLabels.add(res.getString(R.string.software_video_interface))
-            videoValues.add("2")
-
-            if (activityContext.packageManager.hasSystemFeature(PackageManager.FEATURE_VULKAN_HARDWARE_LEVEL)) {
+            // The software renderer is no longer supported and is not offered.
+            val vulkanSupported =
+                activityContext.packageManager.hasSystemFeature(PackageManager.FEATURE_VULKAN_HARDWARE_LEVEL)
+            if (vulkanSupported) {
                 videoLabels.add(res.getString(R.string.vulkan_video_interface))
-                videoValues.add("4")
+                videoValues.add(VideoCore.VULKAN)
             }
 
             videoPref.entries = videoLabels.toTypedArray()
             videoPref.entryValues = videoValues.toTypedArray()
+            val resolvedCore = VideoCore.resolve(videoPref.value, vulkanSupported)
+            if (resolvedCore != VideoCore.UNSET && resolvedCore != videoPref.value) {
+                videoPref.value = resolvedCore
+            }
         }
 
         val currentVideoValue = defaultPreference.getStringSafe("pref_video", "0")
@@ -282,30 +256,22 @@ class InGamePreference :
 
         setSummaries()
 
-        // Pro gate must be installed AFTER setSummaries(), because showSummary() inside
-        // setSummaries() overwrites OnPreferenceChangeListener on each ListPreference.
-        // This listener subsumes showSummary's summary-update behavior on accepted changes.
+        // Installed AFTER setSummaries(), because showSummary() inside setSummaries()
+        // overwrites OnPreferenceChangeListener on each ListPreference. This listener
+        // subsumes showSummary's summary-update behavior.
         findPreference<ListPreference?>("pref_polygon_generation")?.setOnPreferenceChangeListener { preference, newValue ->
-            if (newValue == "3" && !YabauseApplication.isPro()) {
-                YabauseApplication.checkDonated(
-                    requireActivity(),
-                    getString(R.string.pro_gate_compute_rasterizer_message),
+            if (newValue == "3") {
+                // VDP1 Compute Rasterizer is experimental: show the report-bugs notice once.
+                ExperimentalFeatureNotice.maybeShow(
+                    requireContext(),
+                    ExperimentalFeatureNotice.KEY_VDP1_COMPUTE_RASTERIZER,
                 )
-                false
-            } else {
-                if (newValue == "3") {
-                    // VDP1 Compute Rasterizer is experimental: show the report-bugs notice once.
-                    ExperimentalFeatureNotice.maybeShow(
-                        requireContext(),
-                        ExperimentalFeatureNotice.KEY_VDP1_COMPUTE_RASTERIZER,
-                    )
-                }
-                if (preference is ListPreference) {
-                    val index = preference.findIndexOfValue(newValue.toString())
-                    if (index >= 0) preference.summary = preference.entries[index]
-                }
-                true
             }
+            if (preference is ListPreference) {
+                val index = preference.findIndexOfValue(newValue.toString())
+                if (index >= 0) preference.summary = preference.entries[index]
+            }
+            true
         }
 
         this.preferenceScreen.sharedPreferences!!.registerOnSharedPreferenceChangeListener(this)
@@ -359,33 +325,18 @@ class InGamePreference :
         val prefKey = gamecode.replace(" ", "-")
         val gamePreference = requireContext().getHarmonySharedPreferences(prefKey)
 
-        val editor = gamePreference.edit()
-        editor.putBoolean("pref_fps", sharedPreferences.getBoolean("pref_fps", false))
-        editor.putBoolean("pref_frameskip", sharedPreferences.getBoolean("pref_frameskip", false))
-        editor.putBoolean("pref_rotate_screen", sharedPreferences.getBoolean("pref_rotate_screen", false))
-        editor.putString("pref_polygon_generation", sharedPreferences.getStringSafe("pref_polygon_generation", "0"))
-        editor.putString("pref_frameLimit", sharedPreferences.getStringSafe("pref_frameLimit", "0"))
-        val v = sharedPreferences.getStringSafe("pref_aspect_rate", "0")
-        editor.putString("pref_aspect_rate", v)
-        editor.putString(
-            "pref_resolution",
-            sharedPreferences.getStringSafe("pref_resolution", "0"),
-        )
-        editor.putString(
-            "pref_rbg_resolution",
-            sharedPreferences.getStringSafe("pref_rbg_resolution", "0"),
-        )
-        editor.putBoolean(
-            "pref_use_compute_shader",
-            sharedPreferences.getBoolean("pref_use_compute_shader", false),
-        )
-        editor.putString("pref_video", sharedPreferences.getStringSafe("pref_video", "1"))
-        editor.apply()
+        copyInGamePreferences(sharedPreferences, gamePreference)
     }
 
     private fun updateVideoRelatedSettings(videoValue: String?) {
         val polygonPref = findPreference<ListPreference?>("pref_polygon_generation")
         val computeShaderPref = findPreference<CheckBoxPreference?>("pref_use_compute_shader")
+        val compositePref = findPreference<ListPreference?>(Vdp2Composite.KEY)
+
+        // Only the Vulkan renderer reads VDP_SETTING_VDP2_NEW_COMPOSITE, so the
+        // item stays greyed out on the other cores.
+        compositePref?.isEnabled =
+            Vdp2Composite.isSelectable(videoValue?.toIntOrNull() ?: -1)
 
         when (videoValue) {
             "1" -> {
@@ -404,8 +355,8 @@ class InGamePreference :
                 computeShaderPref?.isEnabled = true
             }
             "4" -> {
-                // Vulkan: GPU_TESSERATION (2) または COMPUTE_RASTERIZER (3) を
-                // 選択可能。compute shader (VDP2 layer) は強制 ON のままにする。
+                // Vulkan: GPU_TESSERATION (2) and COMPUTE_RASTERIZER (3) are
+                // selectable. The VDP2 compute shader stays forced on.
                 polygonPref?.isEnabled = true
                 polygonPref?.entries =
                     arrayOf(
@@ -459,28 +410,7 @@ class InGamePreference :
         val prefKey = gamecode.replace(" ", "-")
         val gamePreference = requireContext().getHarmonySharedPreferences(prefKey)
 
-        val editor = gamePreference.edit()
-        editor.putBoolean("pref_fps", sharedPreferences.getBoolean("pref_fps", false))
-        editor.putBoolean("pref_frameskip", sharedPreferences.getBoolean("pref_frameskip", false))
-        editor.putBoolean("pref_rotate_screen", sharedPreferences.getBoolean("pref_rotate_screen", false))
-        editor.putString("pref_polygon_generation", sharedPreferences.getStringSafe("pref_polygon_generation", "0"))
-        editor.putString("pref_frameLimit", sharedPreferences.getStringSafe("pref_frameLimit", "0"))
-        val v = sharedPreferences.getStringSafe("pref_aspect_rate", "0")
-        editor.putString("pref_aspect_rate", v)
-        editor.putString(
-            "pref_resolution",
-            sharedPreferences.getStringSafe("pref_resolution", "0"),
-        )
-        editor.putString(
-            "pref_rbg_resolution",
-            sharedPreferences.getStringSafe("pref_rbg_resolution", "0"),
-        )
-        editor.putBoolean(
-            "pref_use_compute_shader",
-            sharedPreferences.getBoolean("pref_use_compute_shader", false),
-        )
-        editor.putString("pref_video", sharedPreferences.getStringSafe("pref_video", "1"))
-        editor.apply()
+        copyInGamePreferences(sharedPreferences, gamePreference)
 
         // Update previous value
         previousVideoValue = sharedPreferences.getStringSafe("pref_video", "1")

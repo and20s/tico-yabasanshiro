@@ -363,6 +363,9 @@ extern "C" {
   void Cs2GetFileInfo(void);                 // 0x73
   void Cs2ReadFile(void);                    // 0x74
   void Cs2AbortFile(void);                   // 0x75
+
+  // HLE BIOS helper (see BiosCheckMPEGCard in bios.c)
+  void Cs2BiosMpegProbe(void);
   void Cs2MpegGetStatus(void);               // 0x90
   void Cs2MpegGetInterrupt(void);            // 0x91
   void Cs2MpegSetInterruptMask(void);        // 0x92

@@ -119,14 +119,22 @@ set( yabause_qt_FORMS
     ui/UIMemoryEditor.ui 
 	ui/UIMemorySearch.ui
 	ui/WebLoginWindow.ui
-	ui/UIReportList.ui )
+	ui/UIReportList.ui
+	ui/UISetupPresetPage.ui
+	ui/UISetupDevicePage.ui
+	ui/UISetupInputPage.ui
+	ui/UISetupGamePage.ui
+	ui/UISetupSummaryPage.ui )
 
 # pure C headers
 set( yabause_qt_HEADERS
 	QtYabause.h
 	CommonDialogs.h
 	PerQt.h
-	Arguments.h )
+	Arguments.h
+	ui/GraphicsPreset.h
+	ui/InputDeviceCombo.h
+	ui/UISetupInputPlan.h )
 
 # C headers needing moc
 set( yabause_qt_MOC_HEADERS
@@ -191,6 +199,12 @@ set( yabause_qt_MOC_HEADERS
 	services/ImageCacheManager.h
 	widgets/ReportListItemDelegate.h
 	widgets/ToastNotification.h
+	ui/UISetupWizard.h
+	ui/UISetupPresetPage.h
+	ui/UISetupDevicePage.h
+	ui/UISetupInputPage.h
+	ui/UISetupGamePage.h
+	ui/UISetupSummaryPage.h
 	)
 
 # C sources
@@ -202,6 +216,8 @@ set( yabause_qt_SOURCES
 	GetPin.cpp
 	ui/UIYabause.cpp
 	ui/UISettings.cpp
+	ui/GraphicsPreset.cpp
+	ui/GraphicsPresetCores.cpp
 	ui/UIAbout.cpp
 	ui/UICheats.cpp
 	ui/UICheatAR.cpp
@@ -210,6 +226,7 @@ set( yabause_qt_SOURCES
 	ui/UIBackupRam.cpp
 	ui/UIPortManager.cpp
 	ui/UIControllerSetting.cpp
+	ui/InputDeviceCombo.cpp
 	ui/UIPadSetting.cpp
 	ui/UI3DControlPadSetting.cpp
     ui/UIWheelSetting.cpp
@@ -242,6 +259,7 @@ set( yabause_qt_SOURCES
     qprogressindicator.cpp
 	Settings.cpp
 	VolatileSettings.cpp
+	InputPortConfig.cpp
 	YabauseThread.cpp
 	QGameInfo.cpp
 	GameInfoCache.cpp
@@ -264,6 +282,13 @@ set( yabause_qt_SOURCES
 	ui/UIReportList.cpp
 	widgets/ReportListItemDelegate.cpp
 	widgets/ToastNotification.cpp
+	ui/UISetupWizard.cpp
+	ui/UISetupPresetPage.cpp
+	ui/UISetupDevicePage.cpp
+	ui/UISetupInputPage.cpp
+	ui/UISetupGamePage.cpp
+	ui/UISetupSummaryPage.cpp
+	ui/UISetupInputPlan.cpp
 	)
 
 if( OPENGL_FOUND )

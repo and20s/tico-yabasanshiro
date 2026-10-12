@@ -13,7 +13,8 @@ import org.devmiyax.yabasanshiro.BuildConfig
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
-// Fetches app_news.json on launch and shows the newest unseen item, if any.
+// Fetches app_news.json on launch and shows the newest item published since
+// the last one shown, if any.
 object NewsManager {
     const val NEWS_URL = "https://www.yabasanshiro.com/app_news.json"
     private const val TAG = "NewsManager"
@@ -31,7 +32,15 @@ object NewsManager {
                 val json = withContext(Dispatchers.IO) { fetch() } ?: return@launch
                 val feed = AppNewsParser.parse(json) ?: return@launch
                 val store = NewsSeenStore(activity)
-                val item = NewsLogic.selectLatestUnseen(feed.items, store.seenIds()) ?: return@launch
+                // Persist the mark before deciding anything: on an install
+                // upgrading from a build that only stored ids, this is where
+                // the derived starting point becomes the stored one. It records
+                // only what has already been seen, so an early return below
+                // cannot swallow an item this way.
+                val watermark =
+                    NewsLogic.watermark(feed.items, store.seenIds(), store.lastShownDate())
+                store.raiseWatermark(watermark)
+                val item = NewsLogic.selectNext(feed.items, watermark) ?: return@launch
 
                 val locale = Locale.getDefault()
                 val langKey = NewsLogic.toNewsLangKey(locale.language, locale.country)
@@ -59,8 +68,9 @@ object NewsManager {
                 NewsDialogFragment
                     .newInstance(title, body, item.imageUrl, item.linkUrl, showUpdate, playUrl)
                     .show(fm, NewsDialogFragment.TAG)
-                // "Shown == seen": mark now so it does not reappear next launch.
-                store.markSeen(item.id)
+                // "Shown == seen": mark now so neither it nor anything older
+                // than it appears on the next launch.
+                store.markShown(item.id, item.date)
             } catch (e: Exception) {
                 Log.i(TAG, "news check skipped: ${e.message}")
             }

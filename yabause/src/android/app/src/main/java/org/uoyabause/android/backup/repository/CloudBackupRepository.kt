@@ -16,6 +16,7 @@
 package org.uoyabause.android.backup.repository
 
 import android.content.Context
+import com.google.firebase.firestore.DocumentSnapshot
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
@@ -23,7 +24,9 @@ import org.uoyabause.android.backup.datasource.FirebaseBackupDataSource
 import org.uoyabause.android.backup.model.BackupItem
 import org.uoyabause.android.backup.model.CloudBackupMetadata
 import org.uoyabause.android.backup.model.SharedBackupItem
-import org.uoyabause.android.backup.viewmodel.SharedBackupSortOrder
+import org.uoyabause.android.backup.model.SharedBackupPage
+import org.uoyabause.android.backup.model.SharedBackupReport
+import org.uoyabause.android.backup.model.SharedBackupReportReason
 import java.util.Date
 
 /**
@@ -212,27 +215,55 @@ class CloudBackupRepository(
     }
 
     /**
-     * Search for shared backups.
-     * @param query Optional text search query
-     * @param gameTitle Optional game title filter
-     * @param productNumber Optional product number filter
-     * @param productNumbers Optional list of product numbers for library filter
-     * @param sortOrder Sort order for results
-     * @return Flow of matching shared backup items
+     * Fetch one page of shared backups, newest first.
+     * @param productNumber Optional exact product number, applied server-side
+     * @param after Cursor from a previous page, or null to start the walk
+     * @return Result with the page, including the cursor for the next call
      */
-    fun searchSharedBackups(
-        query: String? = null,
-        gameTitle: String? = null,
+    suspend fun pageSharedBackups(
         productNumber: String? = null,
-        productNumbers: List<String>? = null,
-        sortOrder: SharedBackupSortOrder = SharedBackupSortOrder.DATE_DESC,
-    ): Flow<List<SharedBackupItem>> = firebaseDataSource.searchSharedBackups(
-        query = query,
-        gameTitle = gameTitle,
-        productNumber = productNumber,
-        productNumbers = productNumbers,
-        sortOrder = sortOrder,
-    )
+        after: DocumentSnapshot? = null,
+    ): Result<SharedBackupPage> = withContext(Dispatchers.IO) {
+        try {
+            Result.success(
+                firebaseDataSource.pageSharedBackups(
+                    productNumber = productNumber,
+                    after = after,
+                ),
+            )
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * File a report against a shared backup.
+     * @param item The reported shared backup
+     * @param reason Why it was reported
+     * @return Result indicating success or failure
+     */
+    suspend fun reportSharedBackup(
+        item: SharedBackupItem,
+        reason: SharedBackupReportReason,
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        val reporterId = firebaseDataSource.getCurrentUserId()
+        if (reporterId.isNullOrEmpty()) {
+            return@withContext Result.failure(IllegalStateException("Sign-in required to report"))
+        }
+        try {
+            val sent = firebaseDataSource.addSharedBackupReport(
+                SharedBackupReport(
+                    backupId = item.id,
+                    ownerId = item.ownerId,
+                    reporterId = reporterId,
+                    reason = reason,
+                ),
+            )
+            if (sent) Result.success(Unit) else Result.failure(Exception("Failed to send report"))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
 
     /**
      * Fetch a single shared backup by id (used by deep-link import).

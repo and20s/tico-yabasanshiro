@@ -22,9 +22,15 @@
 #include "Settings.h"
 #include "VolatileSettings.h"
 #include "ui/UIPortManager.h"
+#include "ui/UIControllerSetting.h"
 #include "ui/UIYabause.h"
+#include "InputPortConfig.h"
 
 #include "../peripheral.h"
+#ifdef HAVE_LIBSDL
+#include "../persdljoy.h"
+#endif
+#include "../vdp2.h"
 
 #ifdef HAVE_VULKAN
 #include "vulkan/VIDVulkan.h"
@@ -33,6 +39,7 @@
 
 #include <QDateTime>
 #include <QStringList>
+#include <QMap>
 #include <QDebug>
 #include <cwchar>
 
@@ -127,9 +134,11 @@ void YabauseThread::resize(int w, int h) {
 
 	VolatileSettings* vs = QtYabause::volatileSettings();
 	VideoSetSetting(VDP_SETTING_ROTATE_SCREEN, vs->value("Video/RotateScreen", false).toBool());
-	// issue #22 (T-007): apply the new VDP2 composite toggle from settings.
-	// Default OFF (legacy fixed-function path).
-	VideoSetSetting(VDP_SETTING_VDP2_NEW_COMPOSITE, vs->value("Video/vdp2_new_composite", false).toBool());
+	// The per-pixel VDP2 compositor is the only supported path in this port.
+	// There is no runtime toggle back to the legacy compositor anywhere in
+	// yabause/src/qt; the F11 switch lives in the Vulkan standalone build's
+	// DebugUI, which this port does not build.
+	VideoSetSetting(VDP_SETTING_VDP2_NEW_COMPOSITE, 1);
 	int aspectRatio = QtYabause::volatileSettings()->value("Video/AspectRatio", 0).toInt();
 
 	if(VIDCore)
@@ -206,6 +215,13 @@ void YabauseThread::initEmulation()
 
   VolatileSettings* vs = QtYabause::volatileSettings();
   int vidcoretype = vs->value("Video/VideoCore", mYabauseConf.vidcoretype).toInt();
+
+  // Pick the rendering model for this session before YabauseInit():
+  // the Vulkan core renders on the dedicated VDP thread (async), while
+  // the OpenGL and software cores issue their draw calls on the
+  // emulation thread (the Qt GL context never leaves it), so they must
+  // run synchronous. The flag must not change until the next init.
+  VdpSetAsyncRendering(vidcoretype == VIDCORE_VULKAN);
 
 #ifdef HAVE_VULKAN	
   if (vidcoretype == VIDCORE_VULKAN) {
@@ -306,6 +322,7 @@ bool YabauseThread::pauseEmulation( bool pause, bool reset, std::function<void()
 		vs->setValue("autostart", false);
 	}
 
+
 	emit this->pause( mPause );
 	
 	return true;
@@ -324,6 +341,40 @@ bool YabauseThread::resetEmulation()
 	return true;
 }
 
+// SDL hands out device indices in connection order, and a stored binding embeds
+// the index it was recorded against. Replug a pad and that index moves, so the
+// binding has to be retargeted at the device the port is actually configured
+// for, which is persisted by GUID.
+static u32 retargetToConfiguredDevice( const QString& deviceId, u32 key )
+{
+#ifdef HAVE_LIBSDL
+	if ( !InputPortConfig::isPhysicalDevice( deviceId ) )
+		return key;
+	const int index = PERSDLJoyGetDeviceIndexForId( deviceId.toLatin1().constData() );
+	if ( index < 0 )
+	{
+		// The configured device is not plugged in. Keeping the stored code would
+		// leave it pointing at whatever device now occupies that index, so the
+		// port would be driven by a pad it was never configured for. Leave the
+		// button unbound instead - the port is simply inert until the device
+		// comes back.
+		return PERKEY_UNBOUND;
+	}
+	return PERSDLJoyRetargetKey( key, index );
+#else
+	Q_UNUSED( deviceId );
+	return key;
+#endif
+}
+
+// Every peripheral type now stores a physical device per port, so all of them
+// have to resolve their bindings through it. Reading the device once per port
+// keeps the settings lookup out of the per-button loops.
+static QString configuredDeviceFor( Settings* settings, uint port, const QString& id )
+{
+	return InputPortConfig::configuredDevice( settings, port, id.toUInt() );
+}
+
 void YabauseThread::reloadControllers()
 {
 	PerPortReset();
@@ -340,35 +391,15 @@ void YabauseThread::reloadControllers()
 		settings->endGroup();
 
     if (port == 1 && ids.size() == 0) {
+      // First run: seed port 1 so the emulator is playable with no setup. The
+      // mapping depends on what is plugged in, and it is written to the
+      // settings file so the configuration dialog shows it as the initial
+      // value and the user can edit it from there.
       PerPad_struct* padbits = PerPadAdd(&PORTDATA1);
-      PerSetKey(Qt::Key_Up, PERPAD_UP, padbits);
-      PerSetKey(Qt::Key_Right, PERPAD_RIGHT, padbits);
-      PerSetKey(Qt::Key_Down, PERPAD_DOWN, padbits);
-      PerSetKey(Qt::Key_Left, PERPAD_LEFT, padbits);
-      PerSetKey(Qt::Key_E, PERPAD_RIGHT_TRIGGER, padbits);
-      PerSetKey(Qt::Key_Q, PERPAD_LEFT_TRIGGER, padbits);
-      PerSetKey(Qt::Key_Return, PERPAD_START, padbits);
-      PerSetKey(Qt::Key_Z, PERPAD_A, padbits);
-      PerSetKey(Qt::Key_X, PERPAD_B, padbits);
-      PerSetKey(Qt::Key_C, PERPAD_C, padbits);
-      PerSetKey(Qt::Key_A, PERPAD_X, padbits);
-      PerSetKey(Qt::Key_S, PERPAD_Y, padbits);
-      PerSetKey(Qt::Key_D, PERPAD_Z, padbits);
-      Settings* settings = QtYabause::settings();
-      settings->setValue("Input/Port/1/Id/1/Type", 2);
-      settings->setValue("Input/Port/1/Id/1/Controller/2/Key/0", Qt::Key_Up);
-      settings->setValue("Input/Port/1/Id/1/Controller/2/Key/1", Qt::Key_Right);
-      settings->setValue("Input/Port/1/Id/1/Controller/2/Key/2", Qt::Key_Down);
-      settings->setValue("Input/Port/1/Id/1/Controller/2/Key/3", Qt::Key_Left);
-      settings->setValue("Input/Port/1/Id/1/Controller/2/Key/4", Qt::Key_E);
-      settings->setValue("Input/Port/1/Id/1/Controller/2/Key/5", Qt::Key_Q);
-      settings->setValue("Input/Port/1/Id/1/Controller/2/Key/6", Qt::Key_Return);
-      settings->setValue("Input/Port/1/Id/1/Controller/2/Key/7", Qt::Key_Z);
-      settings->setValue("Input/Port/1/Id/1/Controller/2/Key/8", Qt::Key_X);
-      settings->setValue("Input/Port/1/Id/1/Controller/2/Key/9", Qt::Key_C);
-      settings->setValue("Input/Port/1/Id/1/Controller/2/Key/10", Qt::Key_A);
-      settings->setValue("Input/Port/1/Id/1/Controller/2/Key/11", Qt::Key_S);
-      settings->setValue("Input/Port/1/Id/1/Controller/2/Key/12", Qt::Key_D);
+      InputPortConfig::SdlDeviceSource source;
+      const QMap<u8, u32> defaults = InputPortConfig::seedPort(settings, source, 1, 1);
+      for (QMap<u8, u32>::const_iterator it = defaults.constBegin(); it != defaults.constEnd(); ++it)
+        PerSetKey(it.value(), it.key(), padbits);
       return;
     }
 		
@@ -376,7 +407,10 @@ void YabauseThread::reloadControllers()
 		foreach ( const QString& id, ids )
 		{
 			uint type = settings->value( QString( UIPortManager::mSettingsType ).arg( port ).arg( id ) ).toUInt();
-			
+			// Read once here rather than per branch: every peripheral type has a
+			// device selector now, so every branch below resolves through it.
+			const QString deviceId = configuredDeviceFor( settings, port, id );
+
 			switch ( type )
 			{
 				case PERPAD:
@@ -390,7 +424,7 @@ void YabauseThread::reloadControllers()
           padKeys.sort();
           foreach(const QString& padKey, padKeys) {
             const QString key = settings->value(QString(UIPortManager::mSettingsKey).arg(port).arg(id).arg(type).arg(padKey)).toString();
-            PerSetKey(key.toUInt(), padKey.toUInt(), padbits);
+            PerSetKey(retargetToConfiguredDevice(deviceId, key.toUInt()), padKey.toUInt(), padbits);
           }
 					break;
 				}
@@ -407,7 +441,7 @@ void YabauseThread::reloadControllers()
                {
                   const QString key = settings->value(QString(UIPortManager::mSettingsKey).arg(port).arg(id).arg(type).arg(analogKey)).toString();
 
-                  PerSetKey(key.toUInt(), analogKey.toUInt(), analogbits);
+                  PerSetKey(retargetToConfiguredDevice(deviceId, key.toUInt()), analogKey.toUInt(), analogbits);
                }
                break;
             }
@@ -424,7 +458,7 @@ void YabauseThread::reloadControllers()
                {
                   const QString key = settings->value(QString(UIPortManager::mSettingsKey).arg(port).arg(id).arg(type).arg(analogKey)).toString();
 
-                  PerSetKey(key.toUInt(), analogKey.toUInt(), analogbits);
+                  PerSetKey(retargetToConfiguredDevice(deviceId, key.toUInt()), analogKey.toUInt(), analogbits);
                }
                break;
             }
@@ -441,7 +475,7 @@ void YabauseThread::reloadControllers()
                {
                   const QString key = settings->value(QString(UIPortManager::mSettingsKey).arg(port).arg(id).arg(type).arg(analogKey)).toString();
 
-                  PerSetKey(key.toUInt(), analogKey.toUInt(), analogbits);
+                  PerSetKey(retargetToConfiguredDevice(deviceId, key.toUInt()), analogKey.toUInt(), analogbits);
                }
                break;
             }
@@ -458,7 +492,7 @@ void YabauseThread::reloadControllers()
 					{
 						const QString key = settings->value( QString( UIPortManager::mSettingsKey ).arg( port ).arg( id ).arg( type ).arg( analogKey ) ).toString();
 
-						PerSetKey( key.toUInt(), analogKey.toUInt(), analogbits );
+						PerSetKey( retargetToConfiguredDevice( deviceId, key.toUInt() ), analogKey.toUInt(), analogbits );
 					}
 					break;
 				}
@@ -474,7 +508,7 @@ void YabauseThread::reloadControllers()
 					{
 						const QString key = settings->value( QString( UIPortManager::mSettingsKey ).arg( port ).arg( id ).arg( type ).arg( gunKey ) ).toString();
 
-						PerSetKey( key.toUInt(), gunKey.toUInt(), gunbits );
+						PerSetKey( retargetToConfiguredDevice( deviceId, key.toUInt() ), gunKey.toUInt(), gunbits );
 					}
 					break;
 				}
@@ -494,7 +528,7 @@ void YabauseThread::reloadControllers()
 					{
 						const QString key = settings->value( QString( UIPortManager::mSettingsKey ).arg( port ).arg( id ).arg( type ).arg( mouseKey ) ).toString();
 
-						PerSetKey( key.toUInt(), mouseKey.toUInt(), mousebits );
+						PerSetKey( retargetToConfiguredDevice( deviceId, key.toUInt() ), mouseKey.toUInt(), mousebits );
 					}
 
 					emit toggleEmulateMouse( true );
@@ -564,6 +598,11 @@ void YabauseThread::reloadSettings()
 	// read & apply settings
    mYabauseConf.m68kcoretype = vs->value("Advanced/68kCore", mYabauseConf.m68kcoretype).toInt();
 	mYabauseConf.percoretype = vs->value( "Input/PerCore", mYabauseConf.percoretype ).toInt();
+	// Same self-healing as the sound core below: the DirectInput peripheral core
+	// was removed, so an ini written before that still says PerCore=2. PerInit()
+	// returns -1 for an id it cannot find, which fails the whole YabauseInit().
+	if ( !QtYabause::getPERCore( mYabauseConf.percoretype ) )
+		mYabauseConf.percoretype = QtYabause::defaultPERCore().id;
 	mYabauseConf.sh2coretype = vs->value( "Advanced/SH2Interpreter", mYabauseConf.sh2coretype ).toInt();
 	mYabauseConf.vidcoretype = vs->value( "Video/VideoCore", mYabauseConf.vidcoretype ).toInt();
 
@@ -586,6 +625,12 @@ void YabauseThread::reloadSettings()
 
 	}
 	mYabauseConf.sndcoretype = vs->value( "Sound/SoundCore", mYabauseConf.sndcoretype ).toInt();
+	// A settings file can name a sound core this build no longer has - the
+	// DirectSound backend was removed, so every ini written before that still
+	// says SoundCore=2. Passing an unknown id to ScspInit() fails the whole
+	// YabauseInit(), so validate it here and fall back to the default instead.
+	if ( !QtYabause::getSNDCore( mYabauseConf.sndcoretype ) )
+		mYabauseConf.sndcoretype = QtYabause::defaultSNDCore().id;
 	mYabauseConf.cdcoretype = vs->value( "General/CdRom", mYabauseConf.cdcoretype ).toInt();
 	mYabauseConf.carttype = vs->value( "Cartridge/Type", mYabauseConf.carttype ).toInt();
 	const QString r = vs->value( "Advanced/Region", mYabauseConf.regionid ).toString();
@@ -627,10 +672,15 @@ void YabauseThread::reloadSettings()
 	mYabauseConf.cartpath = strdup( vs->value( "Cartridge/Path", mYabauseConf.cartpath ).toString().toUtf8().constData() );
 	mYabauseConf.modemip = strdup( vs->value( "Cartridge/ModemIP", mYabauseConf.modemip ).toString().toUtf8().constData() );
 	mYabauseConf.modemport = strdup( vs->value( "Cartridge/ModemPort", mYabauseConf.modemport ).toString().toUtf8().constData() );
-	mYabauseConf.videoformattype = vs->value( "Video/VideoFormat", mYabauseConf.videoformattype ).toInt();
+	// The video format is decided by SMPC from the detected region (see
+	// smpc.c), so there is nothing for the user to choose here.
+	mYabauseConf.videoformattype = VIDEOFORMATTYPE_NTSC;
    mYabauseConf.use_new_scsp = (int)vs->value("Sound/NewScsp", mYabauseConf.use_new_scsp).toBool();
 
-	mYabauseConf.video_filter_type = vs->value("Video/filter_type", mYabauseConf.video_filter_type).toInt();
+	// The filter (FXAA / scanline) is no longer user-selectable. It was only
+	// ever implemented in the OpenGL renderer -- VIDVulkan::SetFilterMode is an
+	// empty stub -- so the control is gone and the mode stays off.
+	mYabauseConf.video_filter_type = 0;
 	mYabauseConf.polygon_generation_mode = vs->value("Video/polygon_generation_mode", mYabauseConf.polygon_generation_mode).toInt();
   mYabauseConf.resolution_mode = vs->value("Video/resolution_mode", mYabauseConf.resolution_mode).toInt();
   mYabauseConf.rbg_resolution_mode = vs->value("Video/rbg_resolution_mode", mYabauseConf.rbg_resolution_mode).toInt();

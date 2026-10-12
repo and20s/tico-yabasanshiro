@@ -190,7 +190,13 @@ class AchievementListViewController: UIViewController {
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         removeGameControllerObserver()
-        
+        // The observer is not the handlers. Without this the closures below
+        // outlive the screen and keep answering for a dismissed controller,
+        // which is the failure ios/CLAUDE.md's CRITICAL section describes:
+        // one slot per button, last writer wins, everything else dies quietly.
+        Self.clearGamepadHandlers()
+        NotificationCenter.default.post(name: .legacyModalDidReleaseGamepad, object: self)
+
         // Unpause game when leaving the achievement list
         if let gameMainVC = self.presentingViewController as? GameMainViewController {
             gameMainVC.gameVC?.isPaused = false
@@ -562,7 +568,43 @@ class AchievementListViewController: UIViewController {
             gameControllerObserver = nil
         }
     }
-    
+
+    /// Releases every button this screen wrote, on every connected
+    /// controller. Every connected one rather than the first, because
+    /// configureGameController may have run against a different controller
+    /// than the one that is first now.
+    ///
+    /// nonisolated so `deinit` can call it as well: a screen that is torn
+    /// down without `viewWillDisappear` (dismissed while off screen) would
+    /// otherwise still leave its closures installed.
+    nonisolated private static func clearGamepadHandlers() {
+        for controller in GCController.controllers() {
+            if let pad = controller.extendedGamepad {
+                pad.dpad.up.pressedChangedHandler = nil
+                pad.dpad.down.pressedChangedHandler = nil
+                pad.dpad.left.pressedChangedHandler = nil
+                pad.dpad.right.pressedChangedHandler = nil
+                pad.leftTrigger.pressedChangedHandler = nil
+                pad.rightTrigger.pressedChangedHandler = nil
+                pad.leftShoulder.pressedChangedHandler = nil
+                pad.rightShoulder.pressedChangedHandler = nil
+                pad.buttonA.pressedChangedHandler = nil
+                pad.buttonB.pressedChangedHandler = nil
+            } else if let pad = controller.gamepad {
+                pad.dpad.up.pressedChangedHandler = nil
+                pad.dpad.down.pressedChangedHandler = nil
+                pad.dpad.left.pressedChangedHandler = nil
+                pad.dpad.right.pressedChangedHandler = nil
+                pad.buttonA.pressedChangedHandler = nil
+                pad.buttonB.pressedChangedHandler = nil
+            }
+        }
+    }
+
+    deinit {
+        Self.clearGamepadHandlers()
+    }
+
     private func configureGameController() {
         guard let controller = GCController.controllers().first else { return }
         

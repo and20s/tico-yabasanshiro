@@ -27,6 +27,8 @@
 
 #include <QMap>
 
+class QComboBox;
+
 class QTimer;
 
 class UIControllerSetting : public QDialog
@@ -37,6 +39,10 @@ public:
 	UIControllerSetting( PerInterface_struct* core, uint port, uint pad, uint perType, QWidget* parent = 0 );
 	virtual ~UIControllerSetting();
 	void setInfos(QLabel *lInfos);
+	// Call after setupUi(): inserts the physical input device selector at the top
+	// of the dialog. A Saturn port is driven by exactly one physical device, so
+	// this is where that device is chosen.
+	void installDeviceSelector();
 
 protected:
 	PerInterface_struct* mCore;
@@ -51,6 +57,27 @@ protected:
 	QLabel *mlInfos;
 	u32 scanFlags;
 	QToolButton * curTb;
+	QComboBox* mDeviceCombo;
+	QTimer* mDeviceTimer;
+	int mDeviceGeneration;
+
+	// (Re)fill the device list, keeping the current selection. Used both when
+	// the dialog opens and when a device is plugged in or unplugged while it
+	// is open.
+	void populateDeviceCombo();
+
+	// Point the peripheral core's scan at the currently selected device so a
+	// button press on another pad cannot be bound here by accident.
+	void applyScanDevice();
+	// Repaint the "assigned" marks from what is currently stored.
+	void refreshPadIcons();
+	// The device the selector is currently showing.
+	QString selectedDeviceId() const;
+	// True when this port is driven by input Qt delivers (keyboard, and the
+	// mouse for the Saturn mouse and gun). False for an SDL device, in which
+	// case a key or mouse press must not be bindable here - the port is driven
+	// by exactly one physical device.
+	bool bindsHostInput() const;
 
 	void keyPressEvent( QKeyEvent* event );
 	void mouseMoveEvent(QMouseEvent * event);
@@ -63,6 +90,8 @@ protected:
 
 protected slots:
 	void tbButton_clicked();
+	void deviceCombo_currentIndexChanged( int index );
+	void deviceTimer_timeout();
 	void timer_timeout();
 };
 

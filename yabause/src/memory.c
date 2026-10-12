@@ -279,10 +279,16 @@ void *YabMemMap(char *filename, u32 size)
    char *p;
    int fd;
 
+  // FILE_SHARE_WRITE as well: this handle stays open for the whole session,
+  // and sharing only reads used to make every later open-for-write of the
+  // backup file fail with a sharing violation, so a second emulator
+  // instance could not boot. Concurrent instances share the file at their
+  // own risk (same as other ports; Windows keeps views of the same file
+  // coherent across processes).
    hFile = CreateFileA(
        filename,
        GENERIC_READ | GENERIC_WRITE,
-       FILE_SHARE_READ,
+    FILE_SHARE_READ|FILE_SHARE_WRITE,
        0,
        OPEN_EXISTING,
        FILE_ATTRIBUTE_NORMAL,
@@ -297,15 +303,22 @@ void *YabMemMap(char *filename, u32 size)
       return NULL;
    }
 
+  // Unnamed mapping: the old session-global name "BACKUP" made a second
+  // instance silently attach to the first instance's mapping object (wrong
+  // file when the instances use different backup paths).
    hFMWrite = CreateFileMapping(
        hFile,
        NULL,
        PAGE_READWRITE,
        0,
        size,
-       "BACKUP");
-   if (hFMWrite == INVALID_HANDLE_VALUE)
+    NULL);
+  // CreateFileMapping reports failure with NULL, not INVALID_HANDLE_VALUE.
+  if (hFMWrite == NULL) {
+    CloseHandle(hFile);
+    hFile = INVALID_HANDLE_VALUE;
       return NULL;
+  }
 
    return MapViewOfFile(hFMWrite, FILE_MAP_ALL_ACCESS, 0, 0, size);
 }
@@ -954,27 +967,16 @@ u32 getMemClock(u32 addr)
 // bus cost on CS0 regions. This function returns the write cost for the
 // regions covered so far; regions not listed keep their legacy behavior.
 //
-// Default ON; set YABA_SH2_WRITE_COST_MODEL=old to A/B the legacy
-// (uncharged) behavior. Note: Techno Motor's song load can sporadically
-// take ~2000 frames longer -- confirmed to be a pre-existing host-async
-// race, not caused by this model (tools/sh2timing/README.md).
-static int write_cost_model_new = -1;
-
-int sh2_write_cost_new(void)
-{
-  if (write_cost_model_new < 0)
-  {
-    const char *e = getenv("YABA_SH2_WRITE_COST_MODEL");
-    write_cost_model_new = !(e != NULL && strcmp(e, "old") == 0);
-  }
-  return write_cost_model_new;
-}
-
+// Note: Techno Motor's song load can sporadically take ~2000 frames
+// longer -- confirmed to be a pre-existing host-async race, not caused
+// by this model (tools/sh2timing/README.md).
 // Per-region write costs. Defaults follow mednafen (SDRAM posted issue +2;
 // WorkRAM-L same bucket as reads). Overridable for diagnosis/tuning via
 // YABA_SH2_WRITE_COST_H / YABA_SH2_WRITE_COST_L (integers).
 static int write_cost_wramh = -1;
 static int write_cost_wraml = -1;
+static int write_cost_vdp2 = -1;
+static int write_cost_vdp2_l = -1;
 
 static int env_cost(const char *name, int defval)
 {
@@ -991,19 +993,6 @@ static int env_cost(const char *name, int defval)
 // backup +8 each, ss/ss.cpp:192-276) and WorkRAM-H is 32-bit SDRAM
 // (+7 per read regardless of size, ss/sh7095.inc:2282).
 // Regions not listed keep the legacy table.
-// Set YABA_SH2_READ_COST_MODEL=old to A/B the legacy behavior.
-static int read_cost_model_new = -1;
-
-int sh2_read_cost_new(void)
-{
-  if (read_cost_model_new < 0)
-  {
-    const char *e = getenv("YABA_SH2_READ_COST_MODEL");
-    read_cost_model_new = !(e != NULL && strcmp(e, "old") == 0);
-  }
-  return read_cost_model_new;
-}
-
 // IF/MA contention approximation (cycle-cost accuracy Phase 2).
 //
 // On real SH2 (and in mednafen's pipeline model, ss/sh7095.inc:2604,3156)
@@ -1011,143 +1000,10 @@ int sh2_read_cost_new(void)
 // has to share that slot, so back-to-back cached loads cost ~1.5 cycles
 // on average while isolated loads cost 1. We approximate this with an
 // alternating +1 charged only when the previous data access was recent.
-// Set YABA_SH2_MA_MODEL=old to disable.
-static int ma_model_new = -1;
-
-int sh2_ma_model_new(void)
-{
-  if (ma_model_new < 0)
-  {
-    const char *e = getenv("YABA_SH2_MA_MODEL");
-    ma_model_new = !(e != NULL && strcmp(e, "old") == 0);
-  }
-  return ma_model_new;
-}
-
-// Slave bus-access penalty (cycle-cost accuracy Phase 3).
-//
-// The two SH2s share the external bus and the slave is deprioritized.
-// mednafen models this only in full cache-emulation mode (SlavePenalty
-// templates, ss/sh7095.inc:2326-2370): reads +2..3 around the access,
-// writes lose their posted-write overlap. Measured effective costs on
-// the timing disc (tools/sh2timing, mednafen -ss.dbg_cem full vs data):
-// uncached reads +4.7/access regardless of bus width (S16 vs S17 pin it
-// to per-access, not per-transaction), writes +5.5, line refills +6.25.
-// We charge flat +5 per slave bus access and +6 per slave line refill.
-//
-// Opt-in (YABA_SH2_SLAVE_BUS_MODEL=new), default OFF: mednafen only
-// models this penalty in full cache-emulation mode, i.e. it is absent
-// from its default per-game configuration, and enabling it on top of
-// the SCU-DMA and DMAC models pushes Bio Hazard's CD streaming buffer
-// into the (badly modeled) buffer-full path where playback never
-// resumes -> title freeze. It also shifts DOA's load phases. Penalties
-// tunable via YABA_SH2_SLAVE_RW_PENALTY / YABA_SH2_SLAVE_REFILL_PENALTY.
-static int slave_bus_model_new = -1;
-static int slave_rw_penalty = -1;
-static int slave_refill_penalty_v = -1;
-
-int sh2_slave_bus_model_new(void)
-{
-  if (slave_bus_model_new < 0)
-  {
-    const char *e = getenv("YABA_SH2_SLAVE_BUS_MODEL");
-    slave_bus_model_new = (e != NULL && strcmp(e, "new") == 0);
-    slave_rw_penalty = env_cost("YABA_SH2_SLAVE_RW_PENALTY", 5);
-    slave_refill_penalty_v = env_cost("YABA_SH2_SLAVE_REFILL_PENALTY", 6);
-  }
-  return slave_bus_model_new;
-}
-
-u32 sh2_slave_bus_penalty(void)
-{
-  if (!sh2_slave_bus_model_new() || CurrentSH2 == NULL || !CurrentSH2->isslave)
-    return 0;
-  return (u32)slave_rw_penalty;
-}
-
-u32 sh2_slave_refill_penalty(void)
-{
-  if (!sh2_slave_bus_model_new() || CurrentSH2 == NULL || !CurrentSH2->isslave)
-    return 0;
-  return (u32)slave_refill_penalty_v;
-}
-
-// On-chip DMAC bus contention (cycle-cost accuracy Phase 3c).
-//
-// While a DMAC channel is running the CPU and the DMAC share the external
-// bus. mednafen charges every CPU external bus access +19 while a channel
-// runs (sh7095.inc DMA_PenaltyKludge) and leaves cache-resident code
-// untouched. The legacy yabause approximation instead charges the CPU
-// half of the accumulated DMA bus time unconditionally (penerly>>1),
-// which slows down pure-ALU loops that never touch the bus (timing disc
-// S20: 36.4 cyc/iter vs mednafen's 20.0).
-//
-// New model (default ON; YABA_SH2_DMAC_MODEL=old reverts): per-access
-// charge only. +12 per CPU bus access (tuned on S21: 101.3 cyc/iter
-// measured) while a channel of the executing CPU is active; the penerly
-// charge and the DMAC transfer-speed hacks are disabled (see sh2core.c
-// DMAProc; CD-block-sourced transfers keep the legacy speed there).
-// Override the charge via YABA_SH2_DMAC_RW_PENALTY.
-static int dmac_model_new_v = -1;
-static int dmac_rw_penalty_v = -1;
-static int dmac_transfer_active_v = 0;
-
-int sh2_dmac_model_new(void)
-{
-  if (dmac_model_new_v < 0)
-  {
-    // Back to opt-in (2026-07-12): combined with the Phase 7 CD-block
-    // timing model, the DMAC model gives Bio Hazard's title a ~20%%
-    // freeze rate when START skips the intro (interaction race, 2/7
-    // frozen with both on; 0/15+ with the DMAC model off). Enable with
-    // YABA_SH2_DMAC_MODEL=new for timing-accuracy work (S20-S22).
-    const char *e = getenv("YABA_SH2_DMAC_MODEL");
-    dmac_model_new_v = (e != NULL && strcmp(e, "new") == 0);
-    dmac_rw_penalty_v = env_cost("YABA_SH2_DMAC_RW_PENALTY", 12);
-  }
-  return dmac_model_new_v;
-}
-
-// Diagnostic knob (Dragon Force black-screen investigation): with the
-// new DMAC model, YABA_SH2_DMAC_UCOST=legacy keeps the legacy transfer
-// speed (MAX(read,write) unit cost + the 1.5x budget) while retaining
-// the rest of the new model. Isolates "accurate transfer speed" as the
-// trigger for timing-sensitive games.
-static int dmac_ucost_legacy_v = -1;
-
-int sh2_dmac_ucost_legacy(void)
-{
-  if (dmac_ucost_legacy_v < 0)
-  {
-    const char *e = getenv("YABA_SH2_DMAC_UCOST");
-    dmac_ucost_legacy_v = (e != NULL && strcmp(e, "legacy") == 0);
-  }
-  return dmac_ucost_legacy_v;
-}
-
-// Suppress the contention charge for the DMAC's own transfer accesses
-// (they go through the same MappedMemory*Nocache choke points).
-void sh2_dmac_transfer_begin(void) { dmac_transfer_active_v = 1; }
-void sh2_dmac_transfer_end(void)   { dmac_transfer_active_v = 0; }
-
-u32 sh2_dmac_bus_penalty(void)
-{
-  SH2_struct *sh = CurrentSH2;
-  if (!sh2_dmac_model_new() || sh == NULL || dmac_transfer_active_v)
-    return 0;
-  if ((sh->onchip.DMAOR & 7) != 1)
-    return 0;
-  if (((sh->onchip.CHCR0 & 3) == 1 && sh->onchip.TCR0 != 0) ||
-      ((sh->onchip.CHCR1 & 3) == 1 && sh->onchip.TCR1 != 0))
-    return (u32)dmac_rw_penalty_v;
-  return 0;
-}
 
 u32 getMemReadClock(u32 addr, int size)
 {
   u32 a;
-  if (!sh2_read_cost_new())
-    return getMemClock(addr);
   a = addr & 0xDFFFFFFF;
   if (a >= 0x06000000 && a < 0x06100000) {
     return 7;                              // SDRAM, 32-bit bus: any size
@@ -1216,7 +1072,19 @@ u32 getMemWriteClock(u32 addr, int size)
     return size == 4 ? 10 : 9;   // VDP1 VRAM / FB / registers
   }
   if (addr >= 0x05E00000 && addr < 0x05FC0000) {
-    return size == 4 ? 4 : 3;    // VDP2 VRAM / CRAM / registers
+    // VDP2 VRAM / CRAM / registers. Mednafen posts these writes (CPU pays
+    // 2, drain 3-4 runs in the background), but lowering the direct charge
+    // to the issue cost measurably WORSENED Gungriffon's TrueMotion frame
+    // pacing (3.6% vs 1.5% dropped movie frames on a fixed span), so the
+    // sustained-loop calibration stays the default. Diagnostic overrides:
+    // YABA_SH2_WRITE_COST_VDP2 (word cost, default 3) and
+    // YABA_SH2_WRITE_COST_VDP2_L (long cost, default word+1).
+    if (write_cost_vdp2 < 0) {
+      write_cost_vdp2 = env_cost("YABA_SH2_WRITE_COST_VDP2", 3);
+      write_cost_vdp2_l = env_cost("YABA_SH2_WRITE_COST_VDP2_L",
+                                   write_cost_vdp2 + 1);
+    }
+    return size == 4 ? (u32)write_cost_vdp2_l : (u32)write_cost_vdp2;
   }
   // A-bus writes are synchronous (no posted-write finish time). CS0/CS1
   // cost follows the BIOS-default SCU ASR0 ((5+wait+ext) per 16-bit
@@ -1230,6 +1098,7 @@ u32 getMemWriteClock(u32 addr, int size)
   }
   return 0;                      // other regions: legacy (uncharged here)
 }
+
 
 #endif
 
@@ -1286,7 +1155,7 @@ u8 FASTCALL MappedMemoryReadByte(u32 addr, u32 *cycle)
 #endif
 {
   if (cycle != NULL) { 
-    *cycle = getMemReadClock(addr, 1) + sh2_slave_bus_penalty() + sh2_dmac_bus_penalty();
+    *cycle = getMemReadClock(addr, 1);
    }
 
    switch (addr >> 29)
@@ -1373,7 +1242,7 @@ u16 FASTCALL MappedMemoryReadWord(u32 addr, u32 *cycle)
 #endif
 {
   if (cycle != NULL) {
-    *cycle = getMemReadClock(addr, 2) + sh2_slave_bus_penalty() + sh2_dmac_bus_penalty();
+    *cycle = getMemReadClock(addr, 2);
    }
 
    switch (addr >> 29)
@@ -1452,7 +1321,7 @@ u32 FASTCALL MappedMemoryReadLong(u32 addr, u32 *cycle)
 {
 
   if (cycle != NULL) {
-    *cycle = getMemReadClock(addr, 4) + sh2_slave_bus_penalty() + sh2_dmac_bus_penalty();
+    *cycle = getMemReadClock(addr, 4);
    }
 
    switch (addr >> 29)

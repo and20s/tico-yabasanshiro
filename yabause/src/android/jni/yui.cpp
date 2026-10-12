@@ -67,6 +67,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 #include <GLES3/gl3.h>
 #include <GLES3/gl3ext.h>
 #include <pthread.h>
+#include <map>
+#include <mutex>
 
 //#include "sndaudiotrack.h"
 #ifdef HAVE_OPENSL
@@ -138,7 +140,20 @@ static int g_scsp_sync_count = 1;
 static int g_cpu_sync_shift = 1;
 static int g_scsp_sync_time_mode = 1;
 static int g_aspect_rate_mode = 0;
-static int g_vdp2_new_composite = 0; // issue #22: 0 = legacy path, 1 = new per-pixel compositor
+// Java pushes video settings before the emulation thread has created the
+// video core, and VideoSetSetting() is a no-op while VIDCore is NULL -- such
+// values used to be lost silently. Every setting now goes through
+// SetVideoSetting(), which remembers the last value per setting id so that
+// ApplyVideoSettings() can replay them once the core exists. The handlers
+// ignore values that did not change, so replaying costs nothing.
+static std::mutex s_videoSettingsMutex;
+static std::map<int, int> s_videoSettings = {
+    // issue #22: 0 = legacy fixed-function path, 1 = new per-pixel
+    // compositor. The new path is the default, but VIDVulkan starts on the
+    // legacy one, so the value has to be pushed even if Java stays quiet.
+    {VDP_SETTING_VDP2_NEW_COMPOSITE, 1},
+};
+
 static int s_use_cpu_affinity = 1;
 static int s_use_sh2_cache = 1;
 int frameLimitMode = 0;
@@ -902,6 +917,27 @@ extern "C" JNIEXPORT int JNICALL Java_org_uoyabause_android_YabauseRunnable_isRu
     return s_isRunning;
 }
 
+// Called from SurfaceHolder.Callback.surfaceDestroyed, before the surface is torn
+// down. Deliberately not under g_mtxGlLock: it blocks until the VDP thread is
+// between frames, and waiting on a queue while holding a mutex is what ADR-0007
+// forbids.
+extern "C" JNIEXPORT void JNICALL Java_org_uoyabause_android_YabauseRunnable_surfaceLost(JNIEnv *env, jobject obj)
+{
+#if HAVE_VULKAN
+    if (s_vidcoretype != VIDCORE_VULKAN || !s_isRunning)
+    {
+        return;
+    }
+    // From here on BeginRender() drops frames instead of touching the swapchain.
+    VIDVulkan::getInstance()->onSurfaceLost();
+    // With Vulkan, VDPEV_REVOKE only acknowledges (YuiRevokeOGLOnThisThread does
+    // nothing), so this is a pure barrier: a frame that acquired an image before
+    // the flag was set has finished presenting once it returns. The OpenGL path
+    // is left as it was; it would need a matching VdpResume().
+    VdpRevoke();
+#endif
+}
+
 
 extern "C" JNIEXPORT int JNICALL Java_org_uoyabause_android_YabauseRunnable_lockGL()
 {
@@ -1541,6 +1577,29 @@ int initEgl(ANativeWindow *window)
     return 0;
 }
 
+static void SetVideoSetting(int type, int value)
+{
+    {
+        std::lock_guard<std::mutex> lock(s_videoSettingsMutex);
+        s_videoSettings[type] = value;
+    }
+    VideoSetSetting(type, value);
+}
+
+// Called on the emulation thread right after the video core is created.
+static void ApplyVideoSettings()
+{
+    std::map<int, int> settings;
+    {
+        std::lock_guard<std::mutex> lock(s_videoSettingsMutex);
+        settings = s_videoSettings;
+    }
+    for (const auto &setting : settings) {
+        VideoSetSetting(setting.first, setting.second);
+    }
+    YUI_LOG("Video settings replayed after init: %d entries", (int)settings.size());
+}
+
 int YabauseInit()
 {
     int i;
@@ -1623,6 +1682,11 @@ int YabauseInit()
         YUI_LOG("Fail to YabauseInit %d", res);
         return -1;
     }
+
+    // VideoInit() has now created the core, so anything Java pushed before
+    // this point can finally be applied. Cores ignore settings they do not
+    // implement.
+    ApplyVideoSettings();
 
     // Log game info to Crashlytics for crash diagnostics
     if (s_crashlytics_context != NULL) {
@@ -1925,14 +1989,14 @@ extern "C"
     Java_org_uoyabause_android_YabauseRunnable_enableRotateScreen(JNIEnv *env, jobject obj, jint enable)
     {
         g_rotate_screen = enable;
-        VideoSetSetting(VDP_SETTING_ROTATE_SCREEN, g_rotate_screen);
+        SetVideoSetting(VDP_SETTING_ROTATE_SCREEN, g_rotate_screen);
     }
 
     void
     Java_org_uoyabause_android_YabauseRunnable_enableComputeShader(JNIEnv *env, jobject obj, jint enable)
     {
         g_use_compute_shader = enable;
-        VideoSetSetting(VDP_SETTING_RBG_USE_COMPUTESHADER, g_use_compute_shader);
+        SetVideoSetting(VDP_SETTING_RBG_USE_COMPUTESHADER, g_use_compute_shader);
     }
 
     void
@@ -1957,14 +2021,14 @@ extern "C"
     Java_org_uoyabause_android_YabauseRunnable_setResolutionMode(JNIEnv *env, jobject obj, jint resolution_mode)
     {
         g_resolution_mode = resolution_mode;
-        VideoSetSetting(VDP_SETTING_RESOLUTION_MODE, g_resolution_mode);
+        SetVideoSetting(VDP_SETTING_RESOLUTION_MODE, g_resolution_mode);
     }
 
     void
     Java_org_uoyabause_android_YabauseRunnable_setRbgResolutionMode(JNIEnv *env, jobject obj, jint resolution_mode)
     {
         g_rbg_resolution_mode = resolution_mode;
-        VideoSetSetting(VDP_SETTING_RBG_RESOLUTION_MODE, g_rbg_resolution_mode);
+        SetVideoSetting(VDP_SETTING_RBG_RESOLUTION_MODE, g_rbg_resolution_mode);
     }
 
     void
@@ -2006,24 +2070,23 @@ extern "C"
     Java_org_uoyabause_android_YabauseRunnable_setPolygonGenerationMode(JNIEnv *env, jobject obj, jint pgm)
     {
         g_PolygonGenerationMode = pgm;
-        VideoSetSetting(VDP_SETTING_POLYGON_MODE, g_PolygonGenerationMode);
+        SetVideoSetting(VDP_SETTING_POLYGON_MODE, g_PolygonGenerationMode);
     }
 
     void
     Java_org_uoyabause_android_YabauseRunnable_setAspectRateMode(JNIEnv *env, jobject obj, jint ka)
     {
         g_aspect_rate_mode = ka;
-        VideoSetSetting(VDP_SETTING_ASPECT_RATE_MODE, g_aspect_rate_mode);
+        SetVideoSetting(VDP_SETTING_ASPECT_RATE_MODE, g_aspect_rate_mode);
     }
 
     void
     Java_org_uoyabause_android_YabauseRunnable_setVdp2NewComposite(JNIEnv *env, jobject obj, jint enable)
     {
         // issue #22: toggle the new per-pixel VDP2 compositor (Vulkan only).
-        // 0 = legacy fixed-function path (default), 1 = new path. Read each
-        // frame in Vdp2DrawEnd(), so it can be switched at runtime.
-        g_vdp2_new_composite = enable;
-        VideoSetSetting(VDP_SETTING_VDP2_NEW_COMPOSITE, g_vdp2_new_composite);
+        // 0 = legacy fixed-function path, 1 = new path. Read each frame in
+        // Vdp2DrawEnd(), so it can be switched at runtime.
+        SetVideoSetting(VDP_SETTING_VDP2_NEW_COMPOSITE, enable);
     }
 
     void
@@ -2134,6 +2197,104 @@ extern "C"
         rtn = env->NewStringUTF(buf);
         free(buf);
         return rtn;
+    }
+
+    // Returns {vendorID, deviceID, tessellationUsable} for the first Vulkan
+    // physical device, or NULL when Vulkan is unavailable. Uses a throwaway
+    // instance so that it can be called before the emulation thread has created
+    // the renderer.
+    //
+    // tessellationUsable mirrors Renderer::canUseTess exactly: the GPU
+    // tessellation polygon path needs the tessellation AND geometry shader
+    // features together, and a device can advertise Vulkan without having
+    // either. Reporting it here lets the recommendation pick a configuration the
+    // device can actually run, instead of handing the renderer a polygon mode it
+    // will refuse at runtime.
+    jintArray
+    Java_org_uoyabause_android_YabauseRunnable_getVulkanDeviceInfo(JNIEnv *env, jobject obj)
+    {
+#if HAVE_VULKAN
+        VkApplicationInfo app_info{};
+        app_info.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+        app_info.apiVersion = VK_API_VERSION_1_1;
+        app_info.pApplicationName = "YabaSanshiro GPU query";
+
+        VkInstanceCreateInfo create_info{};
+        create_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+        create_info.pApplicationInfo = &app_info;
+
+        VkInstance instance = VK_NULL_HANDLE;
+        if (vkCreateInstance(&create_info, nullptr, &instance) != VK_SUCCESS) {
+            return NULL;
+        }
+
+        uint32_t count = 0;
+        vkEnumeratePhysicalDevices(instance, &count, nullptr);
+        if (count == 0) {
+            vkDestroyInstance(instance, nullptr);
+            return NULL;
+        }
+        std::vector<VkPhysicalDevice> devices(count);
+        vkEnumeratePhysicalDevices(instance, &count, devices.data());
+
+        VkPhysicalDeviceProperties props{};
+        vkGetPhysicalDeviceProperties(devices[0], &props);
+        VkPhysicalDeviceFeatures features{};
+        vkGetPhysicalDeviceFeatures(devices[0], &features);
+        vkDestroyInstance(instance, nullptr);
+
+        const jint tessellation =
+            (features.tessellationShader == VK_TRUE && features.geometryShader == VK_TRUE) ? 1 : 0;
+        jint ids[3] = {(jint)props.vendorID, (jint)props.deviceID, tessellation};
+        jintArray result = env->NewIntArray(3);
+        if (result == NULL) return NULL;
+        env->SetIntArrayRegion(result, 0, 3, ids);
+        YUI_LOG("Vulkan GPU ids: vendor=%x device=%x tessellation=%d", props.vendorID, props.deviceID,
+                (int)tessellation);
+        return result;
+#else
+        return NULL;
+#endif
+    }
+
+    // Reads emulated Saturn memory into a Java byte array. Returns NULL when the
+    // emulation is not running or the request is out of range, so that the caller
+    // can treat "not ready" and "no such data" the same way. Used by the benchmark
+    // to read the status block the benchmark ROM writes to Work RAM.
+    jbyteArray
+    Java_org_uoyabause_android_YabauseRunnable_peekMemory(JNIEnv *env, jobject obj, jint address, jint length)
+    {
+        // Work RAM Low only, read straight out of the array.
+        //
+        // Deliberately NOT MappedMemoryReadByte: with CACHE_ENABLE that helper
+        // dispatches through CurrentSH2->onchip.cache, which is NULL until the
+        // core is initialized (a null dereference from this thread) and is live
+        // emulation state that must not be mutated from outside the emulation
+        // thread. LowWram is a plain array, so this read has no side effects.
+        //
+        // The LowWram NULL check is also the "core is not ready" guard.
+        // s_isRunning is set just before the emulation thread is created and says
+        // nothing about whether memory has been allocated yet.
+        const u32 LOW_WRAM_BASE = 0x00200000;
+        const u32 LOW_WRAM_SIZE = 0x00100000;
+
+        if (length <= 0 || length > 4096) return NULL;
+        if (LowWram == NULL) return NULL;
+
+        u32 addr = (u32)address;
+        if (addr < LOW_WRAM_BASE) return NULL;
+        u32 offset = addr - LOW_WRAM_BASE;
+        if ((u64)offset + (u64)length > (u64)LOW_WRAM_SIZE) return NULL;
+
+        std::vector<jbyte> buffer(length);
+        for (jint i = 0; i < length; i++) {
+            buffer[i] = (jbyte)T2ReadByte(LowWram, offset + (u32)i);
+        }
+
+        jbyteArray result = env->NewByteArray(length);
+        if (result == NULL) return NULL;
+        env->SetByteArrayRegion(result, 0, length, buffer.data());
+        return result;
     }
 
 #if 0

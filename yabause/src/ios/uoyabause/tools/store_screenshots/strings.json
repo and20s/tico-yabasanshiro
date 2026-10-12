@@ -1,0 +1,159 @@
+{
+  "_comment": "Copy for the App Store marketing screenshots, one entry per locale. The keys are App Store locale codes, which is what fastlane deliver accepts as directory names; ru is rendered on request only, since the listing has no Russian localization. Brand names (Action Replay, RetroAchievements) stay untranslated.",
+  "en-US": {
+    "font": "'Archivo',sans-serif",
+    "footnote": "Game content is blurred for illustration.",
+    "shots": {
+      "ui": {
+        "eyebrow": "INTERFACE",
+        "title": "A clean, quiet interface",
+        "body": "Your whole library, ready to play. No clutter, no ceremony."
+      },
+      "play": {
+        "eyebrow": "RENDERING",
+        "title": "Nostalgia in high resolution",
+        "body": "Internal upscaling makes 90s 3D look right on a modern display."
+      },
+      "cloud": {
+        "eyebrow": "CLOUD SAVES",
+        "title": "Save data that follows you",
+        "body": "Back up, restore and manage every save in the cloud, on iPhone and iPad."
+      },
+      "enh": {
+        "eyebrow": "ENHANCEMENTS",
+        "title": "Codes and achievements",
+        "body": "Action Replay codes and RetroAchievements support, built in."
+      }
+    }
+  },
+  "ja": {
+    "font": "'Archivo','Hiragino Sans','Hiragino Kaku Gothic ProN',sans-serif",
+    "footnote": "ゲーム画面はイメージのためぼかしています。",
+    "shots": {
+      "ui": {
+        "eyebrow": "インターフェース",
+        "title": "静かで無駄のない画面",
+        "body": "ライブラリをそのまま、すぐ遊べる形で。余計なものはありません。"
+      },
+      "play": {
+        "eyebrow": "描画",
+        "title": "高解像度でよみがえる記憶",
+        "body": "内部解像度を引き上げ、90 年代の 3D を今の画面にふさわしい姿へ。"
+      },
+      "cloud": {
+        "eyebrow": "クラウドセーブ",
+        "title": "どこでも続きから",
+        "body": "セーブのバックアップ・復元・管理をクラウドで。iPhone でも iPad でも。"
+      },
+      "enh": {
+        "eyebrow": "拡張機能",
+        "title": "コードと実績",
+        "body": "Action Replay コードと RetroAchievements に標準対応。"
+      }
+    }
+  },
+  "es-MX": {
+    "font": "'Archivo',sans-serif",
+    "footnote": "El contenido del juego aparece difuminado a modo de ilustración.",
+    "shots": {
+      "ui": {
+        "eyebrow": "INTERFAZ",
+        "title": "Una interfaz limpia y silenciosa",
+        "body": "Toda tu biblioteca, lista para jugar. Sin estorbos ni ceremonias."
+      },
+      "play": {
+        "eyebrow": "RENDERIZADO",
+        "title": "Nostalgia en alta resolución",
+        "body": "El escalado interno hace que el 3D de los 90 luzca bien en una pantalla moderna."
+      },
+      "cloud": {
+        "eyebrow": "GUARDADOS EN LA NUBE",
+        "title": "Partidas que te acompañan",
+        "body": "Copia, restaura y gestiona cada partida en la nube, en iPhone y iPad."
+      },
+      "enh": {
+        "eyebrow": "MEJORAS",
+        "title": "Códigos y logros",
+        "body": "Códigos Action Replay y compatibilidad con RetroAchievements, integrados."
+      }
+    }
+  },
+  "pt-BR": {
+    "font": "'Archivo',sans-serif",
+    "footnote": "O conteúdo do jogo está desfocado a título de ilustração.",
+    "shots": {
+      "ui": {
+        "eyebrow": "INTERFACE",
+        "title": "Uma interface limpa e silenciosa",
+        "body": "Toda a sua biblioteca, pronta para jogar. Sem excessos."
+      },
+      "play": {
+        "eyebrow": "RENDERIZAÇÃO",
+        "title": "Nostalgia em alta resolução",
+        "body": "O upscaling interno faz o 3D dos anos 90 ficar certo em uma tela moderna."
+      },
+      "cloud": {
+        "eyebrow": "SAVES NA NUVEM",
+        "title": "Saves que acompanham você",
+        "body": "Faça backup, restaure e gerencie cada save na nuvem, no iPhone e no iPad."
+      },
+      "enh": {
+        "eyebrow": "EXTRAS",
+        "title": "Códigos e conquistas",
+        "body": "Códigos Action Replay e suporte a RetroAchievements, integrados."
+      }
+    }
+  },
+  "ru": {
+    "font": "'IBM Plex Sans',sans-serif",
+    "footnote": "Игровое изображение размыто в иллюстративных целях.",
+    "shots": {
+      "ui": {
+        "eyebrow": "ИНТЕРФЕЙС",
+        "title": "Спокойный и чистый интерфейс",
+        "body": "Вся библиотека — и сразу можно играть. Ничего лишнего."
+      },
+      "play": {
+        "eyebrow": "ГРАФИКА",
+        "title": "Ностальгия в высоком разрешении",
+        "body": "Внутреннее масштабирование делает 3D девяностых уместным на современном экране."
+      },
+      "cloud": {
+        "eyebrow": "СОХРАНЕНИЯ В ОБЛАКЕ",
+        "title": "Сохранения всегда с вами",
+        "body": "Резервное копирование, восстановление и управление сохранениями в облаке — на iPhone и iPad."
+      },
+      "enh": {
+        "eyebrow": "ДОПОЛНЕНИЯ",
+        "title": "Коды и достижения",
+        "body": "Коды Action Replay и поддержка RetroAchievements — уже внутри."
+      }
+    }
+  },
+  "zh-Hans": {
+    "font": "'Archivo','PingFang SC',sans-serif",
+    "footnote": "游戏画面为示意，已做模糊处理。",
+    "shots": {
+      "ui": {
+        "eyebrow": "界面",
+        "title": "干净利落的界面",
+        "body": "整个游戏库，随时开玩。没有多余的装饰。"
+      },
+      "play": {
+        "eyebrow": "渲染",
+        "title": "高分辨率的怀旧",
+        "body": "内部超采样让 90 年代的 3D 在现代屏幕上依然出色。"
+      },
+      "cloud": {
+        "eyebrow": "云端存档",
+        "title": "存档随身而行",
+        "body": "在云端备份、恢复和管理每一个存档，iPhone 与 iPad 通用。"
+      },
+      "enh": {
+        "eyebrow": "增强功能",
+        "title": "金手指与成就",
+        "body": "内置 Action Replay 金手指与 RetroAchievements 支持。"
+      }
+    }
+  }
+}

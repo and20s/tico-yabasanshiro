@@ -21,10 +21,12 @@ import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
 import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.database.ValueEventListener
+import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
 import com.google.firebase.storage.FirebaseStorage
+import com.google.firebase.storage.StorageReference
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -36,7 +38,8 @@ import org.uoyabause.android.backup.model.BackupItem
 import org.uoyabause.android.backup.model.BackupRating
 import org.uoyabause.android.backup.model.CloudBackupMetadata
 import org.uoyabause.android.backup.model.SharedBackupItem
-import org.uoyabause.android.backup.viewmodel.SharedBackupSortOrder
+import org.uoyabause.android.backup.model.SharedBackupPage
+import org.uoyabause.android.backup.model.SharedBackupReport
 import java.util.UUID
 
 /**
@@ -57,10 +60,12 @@ class FirebaseBackupDataSource(
         // Firestore collections (for shared backups)
         private const val SHARED_BACKUPS_COLLECTION = "shared_backups"
         private const val RATINGS_SUBCOLLECTION = "ratings"
+        private const val SHARED_BACKUP_REPORTS_COLLECTION = "shared_backup_reports"
 
         // Firebase Storage paths
         private const val CLOUD_BACKUP_STORAGE_PATH = "backups"
         private const val SHARED_BACKUP_STORAGE_PATH = "shared_backups"
+        private const val SHARED_BACKUP_SCREENSHOT_NAME = "screenshot.png"
 
         // Limits
         private const val DEFAULT_MAX_BACKUP_COUNT = 0
@@ -374,27 +379,37 @@ class FirebaseBackupDataSource(
         val userName = getCurrentUserName()
         val userPhotoUrl = getCurrentUserPhotoUrl()
 
+        // Checked before anything is uploaded: the filename is both the
+        // Storage path and the name the save is restored under, so a nameless
+        // save cannot become a record. Finding that out afterwards would
+        // leave objects in Storage that no document points at.
+        if (backup.filename.isEmpty()) {
+            Log.e(TAG, "Cannot share a save with no filename")
+            return@withContext null
+        }
+
+        // Generate unique ID
+        val backupId = UUID.randomUUID().toString()
+        val saveRef = storage.reference
+            .child(SHARED_BACKUP_STORAGE_PATH)
+            .child(backupId)
+            .child(backup.filename)
+        val screenshotRef = storage.reference
+            .child(SHARED_BACKUP_STORAGE_PATH)
+            .child(backupId)
+            .child(SHARED_BACKUP_SCREENSHOT_NAME)
+        var screenshotUploaded = false
+
         try {
-            // Generate unique ID
-            val backupId = UUID.randomUUID().toString()
-
             // Upload to shared storage
-            val storageRef = storage.reference
-                .child(SHARED_BACKUP_STORAGE_PATH)
-                .child(backupId)
-                .child(backup.filename)
-
-            storageRef.putBytes(backupData).await()
-            val downloadUrl = storageRef.downloadUrl.await().toString()
+            saveRef.putBytes(backupData).await()
+            val downloadUrl = saveRef.downloadUrl.await().toString()
 
             // Upload screenshot if provided
             var screenshotUrl = backup.screenshotUrl
             if (screenshotData != null) {
-                val screenshotRef = storage.reference
-                    .child(SHARED_BACKUP_STORAGE_PATH)
-                    .child(backupId)
-                    .child("screenshot.png")
                 screenshotRef.putBytes(screenshotData).await()
+                screenshotUploaded = true
                 screenshotUrl = screenshotRef.downloadUrl.await().toString()
             }
 
@@ -422,87 +437,81 @@ class FirebaseBackupDataSource(
             backupId
         } catch (e: Exception) {
             Log.e(TAG, "Error sharing backup: ${e.message}", e)
+            // Roll the uploads back rather than leaving objects nobody can
+            // reach: without the document there is no id to find them by, so
+            // they would stay in the bucket, billed and unreferenced, forever.
+            rollBackShare(saveRef, if (screenshotUploaded) screenshotRef else null)
             null
         }
     }
 
     /**
-     * Search for shared backups.
-     * @param query Search query (matches game title or product number)
-     * @param gameTitle Optional exact game title filter
-     * @param productNumber Optional exact product number filter
-     * @param productNumbers Optional list of product numbers for library filter
-     * @param sortOrder Sort order for results
-     * @return Flow of matching shared backup items
+     * Removes the objects an aborted [shareBackup] had already uploaded.
+     * Best effort: the share has already failed, and a failed cleanup must not
+     * replace that error with a different one.
      */
-    fun searchSharedBackups(
-        query: String? = null,
-        gameTitle: String? = null,
-        productNumber: String? = null,
-        productNumbers: List<String>? = null,
-        sortOrder: SharedBackupSortOrder = SharedBackupSortOrder.DATE_DESC,
-    ): Flow<List<SharedBackupItem>> = callbackFlow {
-        val fetchLimit = if (!productNumbers.isNullOrEmpty()) {
-            100L
-        } else {
-            SHARED_BACKUPS_PAGE_SIZE
+    private suspend fun rollBackShare(
+        saveRef: StorageReference,
+        screenshotRef: StorageReference?,
+    ) {
+        try {
+            saveRef.delete().await()
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not roll back shared save object: ${e.message}")
         }
+        if (screenshotRef != null) {
+            try {
+                screenshotRef.delete().await()
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not roll back shared screenshot object: ${e.message}")
+            }
+        }
+    }
 
+    /**
+     * Fetch one page of shared backups, newest first.
+     *
+     * This replaced a snapshot listener that fetched a fixed 20 documents and
+     * filtered them on the client: anything older than the newest 20 could
+     * never be reached, however the user searched. The cursor makes the whole
+     * collection walkable.
+     *
+     * Dropping the listener also fixed a second problem. Firestore's latency
+     * compensation fires a snapshot for a pending local delete before the
+     * server has agreed, so a refused delete still made the row vanish; an
+     * explicit get() only ever reports what the server actually holds.
+     *
+     * @param productNumber Optional exact product number, applied server-side
+     *   so a page comes back full of usable rows rather than 20 arbitrary ones
+     *   that the client then throws away.
+     * @param limit Page size.
+     * @param after Cursor from a previous page, or null to start the walk.
+     */
+    suspend fun pageSharedBackups(
+        productNumber: String? = null,
+        limit: Long = SHARED_BACKUPS_PAGE_SIZE,
+        after: DocumentSnapshot? = null,
+    ): SharedBackupPage = withContext(Dispatchers.IO) {
         var firestoreQuery: Query = firestore
             .collection(SHARED_BACKUPS_COLLECTION)
             .whereEqualTo("isPublic", true)
-            .orderBy("sharedAt", Query.Direction.DESCENDING)
-            .limit(fetchLimit)
 
-        // Apply exact product number filter
         if (!productNumber.isNullOrBlank()) {
             firestoreQuery = firestoreQuery.whereEqualTo("productNumber", productNumber)
         }
 
-        val listener = firestoreQuery.addSnapshotListener { snapshot, error ->
-            if (error != null) {
-                Log.e(TAG, "Error searching shared backups: ${error.message}", error)
-                trySend(emptyList())
-                return@addSnapshotListener
-            }
+        firestoreQuery = firestoreQuery.orderBy("sharedAt", Query.Direction.DESCENDING)
 
-            var items = snapshot
-                ?.documents
-                ?.mapNotNull { doc ->
-                    SharedBackupItem.fromDocument(doc)
-                }?.filter { item ->
-                    // Client-side filtering for text search
-                    if (query.isNullOrBlank()) {
-                        true
-                    } else {
-                        item.gameTitle.contains(query, ignoreCase = true) ||
-                            item.productNumber.contains(query, ignoreCase = true) ||
-                            item.comment.contains(query, ignoreCase = true) ||
-                            item.description.contains(query, ignoreCase = true)
-                    }
-                }?.filter { item ->
-                    // Client-side library filter
-                    if (productNumbers.isNullOrEmpty()) {
-                        true
-                    } else {
-                        productNumbers.contains(item.productNumber)
-                    }
-                } ?: emptyList()
-
-            // Client-side sorting
-            items = when (sortOrder) {
-                SharedBackupSortOrder.RATING_DESC ->
-                    items.sortedByDescending { it.averageRating }
-                SharedBackupSortOrder.DATE_DESC ->
-                    items // Already sorted by sharedAt DESC from Firestore
-            }
-
-            trySend(items)
+        if (after != null) {
+            firestoreQuery = firestoreQuery.startAfter(after)
         }
 
-        awaitClose {
-            listener.remove()
-        }
+        val snapshot = firestoreQuery.limit(limit).get().await()
+        val items = snapshot.documents.mapNotNull { SharedBackupItem.fromDocument(it) }
+        // A short page means the end of the collection. A full one may or may
+        // not, so the cursor is offered and the next call finds out.
+        val cursor = if (snapshot.documents.size < limit) null else snapshot.documents.lastOrNull()
+        SharedBackupPage(items = items, cursor = cursor)
     }
 
     /**
@@ -632,11 +641,29 @@ class FirebaseBackupDataSource(
         }
 
         try {
-            // Delete from Storage
+            // Storage first: a failed document delete leaves an unreachable
+            // record, but a failed object delete after the document is gone
+            // leaves an orphan nobody can find.
             try {
                 storage.getReferenceFromUrl(item.downloadUrl).delete().await()
             } catch (e: Exception) {
                 Log.w(TAG, "Storage file already deleted: ${e.message}")
+            }
+
+            // The screenshot lives at a fixed path beside the save and is not
+            // referenced by any other document, so deleting only downloadUrl
+            // left it behind. Addressed by path rather than by screenshotUrl:
+            // the object can exist even when the document never recorded a
+            // URL for it (a share whose screenshot upload outlived a failure).
+            try {
+                storage.reference
+                    .child(SHARED_BACKUP_STORAGE_PATH)
+                    .child(item.id)
+                    .child(SHARED_BACKUP_SCREENSHOT_NAME)
+                    .delete()
+                    .await()
+            } catch (e: Exception) {
+                Log.w(TAG, "Shared screenshot already deleted or absent: ${e.message}")
             }
 
             // Delete from Firestore
@@ -649,6 +676,29 @@ class FirebaseBackupDataSource(
             true
         } catch (e: Exception) {
             Log.e(TAG, "Error deleting shared backup: ${e.message}", e)
+            false
+        }
+    }
+
+    /**
+     * File a report against one shared backup.
+     *
+     * Create-only from the client: a reporter must not be able to read, edit
+     * or withdraw any report, including their own, so nothing here reads the
+     * collection back. Reporting does not remove the save from the list --
+     * taking it down is a decision for whoever reads the reports.
+     *
+     * @return true when the report was written.
+     */
+    suspend fun addSharedBackupReport(report: SharedBackupReport): Boolean = withContext(Dispatchers.IO) {
+        try {
+            firestore
+                .collection(SHARED_BACKUP_REPORTS_COLLECTION)
+                .add(report.toMap())
+                .await()
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Error reporting shared backup: ${e.message}", e)
             false
         }
     }

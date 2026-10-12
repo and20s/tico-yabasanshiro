@@ -170,6 +170,25 @@
     <string name="menu_set_as_gametitle">Set As Title Icon</string>
     <string name="add_new_code">Add New Code</string>
     <string name="str_use_compute_shader">Use Compute Shader</string>
+    <string name="apply_recommended_settings">Apply settings recommended for this device</string>
+    <string name="apply_recommended_settings_summary">Choose renderer settings that match this device</string>
+    <string name="recommended_settings_no_change">The current settings already match the recommendation.</string>
+    <string name="recommended_settings_scope_note">This changes the global default settings. Games that already have their own saved settings keep them unchanged.</string>
+    <string name="recommended_settings_apply">Apply</string>
+    <string name="recommended_settings_offer_message">These settings are recommended for this device. Apply them?</string>
+    <string name="benchmark_confirm_title">Measure this device\'s performance?</string>
+    <string name="benchmark_confirm_message">This device\'s GPU is not in the recommendation database yet. Running three short test discs (about a minute) lets YabaSanshiro pick better graphics settings automatically. Skipping keeps the current safe default settings.</string>
+    <string name="benchmark_confirm_run">Run benchmark</string>
+    <string name="benchmark_confirm_skip">Skip</string>
+    <string name="benchmark_confirm_upload">Send the result to the developer</string>
+    <string name="benchmark_confirm_upload_note">Only the device model, the GPU and the measured frame rates are sent. Game names, save data and account information never are. The results are used to pick better default settings for this GPU.</string>
+    <string name="benchmark_settings_entry_message">This device\'s GPU has not been measured yet, so a specific recommendation is not available. Run the benchmark now?</string>
+    <string name="benchmark_result_title">Measurement complete</string>
+    <string name="benchmark_result_message">These settings were chosen for this device and have been applied.</string>
+    <string name="benchmark_progress_step">Disc %1$d of %2$d</string>
+    <string name="benchmark_disc_name_1">VDP1 sprite rendering</string>
+    <string name="benchmark_disc_name_2">VDP2 background rendering</string>
+    <string name="benchmark_disc_name_3">VDP2 rotation rendering</string>
     <string name="enable">Enable</string>
     <string name="disable">Disable</string>
     <string name="edit">Edit</string>
@@ -201,7 +220,11 @@
     <string name="poly_cpu_tess">CPU Tessellation</string>
     <string name="poly_gpu_tess">GPU Tessellation</string>
     <string name="poly_compute_rasterizer">Compute Rasterizer (Experimental)</string>
-    <string name="pro_gate_compute_rasterizer_message">Compute Rasterizer is a Pro-only feature. Subscribe or buy Pro to enable it.</string>
+    <string name="vdp2_composite_type">VDP2 Compositing</string>
+    <string name="choose_vdp2_composite_type">Choose VDP2 compositing method</string>
+    <string name="pref_vdp2_composite_summary">Select how VDP2 background layers are combined</string>
+    <string name="vdp2_composite_new">Accurate (per-pixel)</string>
+    <string name="vdp2_composite_legacy">Fast (legacy)</string>
     <string name="menu_load">Load</string>
     <string name="menu_delete">Delete</string>
     <string name="title_activity_iso_download">IsoDownload</string>
@@ -273,14 +296,7 @@
     <string name="decline">Decline</string>
     <string name="sign_out">Sign out</string>
     <string name="sign_in">Sign in</string>
-    <string name="siginin_message">
-        Signing in enable to backup save data and state data to the cloud and share them between devices.\n
-        However, these functions are experimental, so they do not work as expected, specifications may be changed or terminated without prior notice.
-        Even if you don\'t sign in, libraries such as Firebase collect the information to improve your app. A detailed privacy policy can be found at https://www.yabasanshiro.com/privacy.
-    </string>
     <string name="agree">I agree</string>
-    <string name="do_you_want_to_sign_in">Do you want to sign in?</string>
-    <string name="never_ask_me_again">Never ask me again</string>
     <string name="deleting_file">Deleting file</string>
     <string name="sure_delete">Are you sure want to delete this file?</string>
     <string name="copy_to_cloud">Copy to cloud</string>
@@ -326,7 +342,6 @@
     <string name="need_to_accept">You need to accept the permission request for using this app. Please restart again.</string>
 
     <string name="cpu_sync_per_line">Emulation Priority</string>
-    <string name="sel_cpu_sync_per_line"></string>
     <string name="speed">Speed</string>
     <string name="accuracy">Accuracy</string>
 
@@ -458,11 +473,9 @@
     <string name="leaderboard_not_supported">This game does not support leaderboard yet</string>
     <string name="menu_leaderboard">Leaderboard</string>
 
-    <string name="restore_defaults">
-        Restore defaults
-    </string>
-    <string name="restore_defaults_confirm">Reset all game-specific settings to defaults?</string>
-    <string name="restore_defaults_success">Settings restored to defaults</string>
+    <string name="restore_defaults">Reset to global settings</string>
+    <string name="restore_defaults_confirm">Discard this game\'s own settings and use the global settings?</string>
+    <string name="restore_defaults_success">Reset to the global settings</string>
     <string name="menu_detail">Detail</string>
     <string name="create_home_shortcut">Create Home Shortcut</string>
     <string name="shortcut_created">Shortcut created on home screen</string>
@@ -830,6 +843,10 @@
     <string name="notification_channel_admin_reports">Admin Report Notifications</string>
     <string name="notification_channel_admin_reports_desc">Notifications for new user reports (admin only)</string>
 
+    <!-- Release Announcement Notification Channel -->
+    <string name="notification_channel_release">Release Announcements</string>
+    <string name="notification_channel_release_desc">Notifications about new YabaSanshiro releases</string>
+
     <!-- Firebase Login Required for RetroAchievements -->
     <string name="firebase_login_required_title">Sign In Required</string>
     <string name="firebase_login_required_for_ra_message">Please sign in to your YabaSanshiro account first before logging in to RetroAchievements.</string>
@@ -1014,7 +1031,6 @@
     <string name="pro_gate_subscribe">Subscribe</string>
     <string name="pro_gate_subscribe_with_price">Subscribe (%s/year)</string>
     <string name="pro_gate_buy_pro">Buy Pro version</string>
-    <string name="game_list_limit_banner">To view all games, please subscribe or purchase the Pro version.</string>
 
     <!-- Migration dialog -->
     <string name="migration_dialog_title">Major Update</string>
@@ -1073,4 +1089,29 @@
     <string name="news_close">Close</string>
     <string name="news_read_more">Read more</string>
     <string name="news_update">Update</string>
+    <!-- Shared backup: reporting and hiding (issue #159) -->
+    <string name="report_backup">Report</string>
+    <string name="report_dialog_title">Report this save</string>
+    <string name="report_reason_inappropriate">Inappropriate content</string>
+    <string name="report_reason_spam">Spam or misleading</string>
+    <string name="report_reason_other">Something else</string>
+    <string name="report_send">Send report</string>
+    <string name="report_sent">Report sent. Thank you.</string>
+    <string name="report_failed">Could not send the report.</string>
+    <string name="hide_owner">Hide this user</string>
+    <string name="hide_owner_confirm_title">Hide this user?</string>
+    <string name="hide_owner_confirm_message">Saves shared by %1$s will stop appearing in this list on this device. You can undo this at any time.</string>
+    <string name="hidden_owners_count">Hidden users (%1$d)</string>
+    <string name="show_all_hidden">Show all</string>
+    <string name="shared_backup_load_more_failed">Could not load more shared saves.</string>
+
+    <!-- Free game limit: locked cards and the subscribe offer -->
+    <string name="game_limit_banner_message">The free version plays %1$d games. Subscribe to unlock your whole library.</string>
+    <string name="game_limit_banner_action">Unlock all games</string>
+    <string name="game_locked_badge">Locked</string>
+    <string name="game_locked_content_description">%1$s, locked in the free version</string>
+    <string name="game_locked_pro_gate_message">This game is outside the limit of the free version.</string>
+    <!-- Used where a switch preference's value has to be named in running text. -->
+    <string name="setting_on">On</string>
+    <string name="setting_off">Off</string>
 </resources>

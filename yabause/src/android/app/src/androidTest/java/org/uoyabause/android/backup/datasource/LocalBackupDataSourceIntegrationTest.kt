@@ -69,7 +69,11 @@ class LocalBackupDataSourceIntegrationTest {
     fun getStorageStatusFromStandardFormat() = runBlocking {
         val testFile = createStandardBackupFile("standard_storage.ram")
 
-        val (totalSize, freeSize) = dataSource.getStorageStatusFromFile(testFile.absolutePath)
+        val (totalSize, freeSize) = dataSource.getStorageStatusFromFile(
+            testFile.absolutePath,
+            INTERNAL_BIOS_SIZE,
+            INTERNAL_BIOS_BLOCK_SIZE,
+        )
 
         assertTrue(totalSize > 0)
         assertTrue(freeSize >= 0)
@@ -106,7 +110,11 @@ class LocalBackupDataSourceIntegrationTest {
     fun getStorageStatusFromInterleavedFormat() = runBlocking {
         val testFile = createInterleavedBackupFile("interleaved_storage.ram")
 
-        val (totalSize, freeSize) = dataSource.getStorageStatusFromFile(testFile.absolutePath)
+        val (totalSize, freeSize) = dataSource.getStorageStatusFromFile(
+            testFile.absolutePath,
+            INTERNAL_BIOS_SIZE,
+            INTERNAL_BIOS_BLOCK_SIZE,
+        )
 
         // For interleaved format, totalSize should be the logical size (after de-interleaving)
         assertTrue(totalSize > 0)
@@ -266,5 +274,14 @@ class LocalBackupDataSourceIntegrationTest {
             interleaved[i * 2 + 1] = data[i]
         }
         return interleaved
+    }
+
+    companion object {
+        // Geometry of the internal (non-extended) backup RAM, which is what
+        // the fixtures in this file emulate. Mirrors LocalBackupFile's entry
+        // for the internal device; getStorageStatusFromFile needs it to know
+        // how many blocks the medium holds.
+        private const val INTERNAL_BIOS_SIZE = 0x8000
+        private const val INTERNAL_BIOS_BLOCK_SIZE = 0x40
     }
 }

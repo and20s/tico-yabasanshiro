@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Auto Backup / device-transfer content rules (API 31+; API 23-30 uses
+    backup_rules.xml). See backup_rules.xml for why these two entries are
+    excluded from both cloud backup and device-to-device transfer.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="benchmark_prefs.xml" />
+        <exclude domain="file" path="benchmark_report_pending.json" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="benchmark_prefs.xml" />
+        <exclude domain="file" path="benchmark_report_pending.json" />
+    </device-transfer>
+</data-extraction-rules>

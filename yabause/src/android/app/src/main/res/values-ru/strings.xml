@@ -235,11 +235,6 @@
     <string name="decline">Отклонить</string>
     <string name="sign_out">Выйти</string>
     <string name="sign_in">Войти</string>
-    <string name="siginin_message">
-        Вход в систему позволяет создавать резервные копии сохраненных данных и данных о состоянии в облаке и делиться ими между устройствами.\n
-        Однако эти функции являются экспериментальными, поэтому они не работают должным образом, спецификации могут быть изменены или прекращены без предварительного уведомления.
-        Даже если вы не войдете в систему, библиотеки, такие как Firebase, собирают информацию для улучшения вашего приложения. Подробную политику конфиденциальности можно найти по адресу https://www.yabasanshiro.com/privacy.
-    </string>
     <string name="pro_version_available">Доступна версия Pro!\n\n * Нет ограничений на добавление игр\n * Сохранять / загружать состояние игры между устройствами\n * Нет рекламы\n\n</string>
     <string name="remaining_installation_count">Remaining installation count</string>
     <string name="remaining_installation_count_is">Remaining installation count is </string>
@@ -331,9 +326,7 @@
     Нажимая кнопку СТАРТ, вы соглашаетесь с <a href="https://www.yabasanshiro.com/terms-of-use"> Лицензионным соглашением с конечным пользователем </a>.
     Примечание. <a href="https://www.yabasanshiro.com/privacy"> Политика конфиденциальности </a> описывает, как обрабатываются данные. YabaSanshiro отправляет диагностические данные в devMiyax и сторонние службы, чтобы помочь улучшить приложение.
     </string>
-    <string name="restore_defaults">
-        восстановить настройки по-умолчанию
-    </string>
+    <string name="restore_defaults">Вернуть глобальные настройки</string>
     <string name="last_play_game">Последняя игра:</string>
     <string name="device">Устройство:</string>
     <string name="auto_backup_memory_sync">Автоматическая синхронизация резервных копий</string>
@@ -568,6 +561,20 @@
     <string name="choose_rbg_resolution">Выберите разрешение экрана RBG (вращающийся фон)</string>
     <string name="menu_set_as_gametitle">Установить как иконку заголовка</string>
     <string name="str_use_compute_shader">Использовать Compute Shader</string>
+    <string name="apply_recommended_settings">Применить рекомендуемые настройки для этого устройства</string>
+    <string name="apply_recommended_settings_summary">Выбрать настройки рендеринга, подходящие для этого устройства</string>
+    <string name="recommended_settings_no_change">Текущие настройки уже соответствуют рекомендации.</string>
+    <string name="recommended_settings_scope_note">Это изменит глобальные настройки по умолчанию. Игры, у которых уже есть собственные сохранённые настройки, сохранят их без изменений.</string>
+    <string name="recommended_settings_apply">Применить</string>
+    <string name="benchmark_confirm_title">Измерить производительность этого устройства?</string>
+    <string name="benchmark_confirm_message">GPU этого устройства ещё нет в базе рекомендаций. Запуск трёх коротких тестовых дисков (около минуты) позволит YabaSanshiro автоматически подобрать более подходящие настройки графики. Если пропустить, останутся текущие безопасные настройки по умолчанию.</string>
+    <string name="benchmark_confirm_run">Запустить измерение</string>
+    <string name="benchmark_confirm_skip">Пропустить</string>
+    <string name="benchmark_settings_entry_message">GPU этого устройства ещё не измерялся, поэтому конкретная рекомендация недоступна. Запустить измерение сейчас?</string>
+    <string name="benchmark_progress_step">Диск %1$d из %2$d</string>
+    <string name="benchmark_disc_name_1">Рендеринг спрайтов VDP1</string>
+    <string name="benchmark_disc_name_2">Рендеринг фона VDP2</string>
+    <string name="benchmark_disc_name_3">Рендеринг вращения VDP2</string>
     <string name="res_1080p">1080p</string>
     <string name="res_720p">720p</string>
     <string name="ar_original">Оригинал</string>
@@ -577,8 +584,6 @@
     <string name="apple_sign_in_error">Ошибка входа Apple</string>
     <string name="apple_sign_in_cancelled">Вход Apple был отменен</string>
     <string name="agree">Я согласен</string>
-    <string name="do_you_want_to_sign_in">Хотите войти?</string>
-    <string name="never_ask_me_again">Больше не спрашивать</string>
     <string name="deleting_file">Удаление файла</string>
     <string name="sure_delete">Вы уверены, что хотите удалить этот файл?</string>
     <string name="copy_to_cloud">Копировать в облако</string>
@@ -608,8 +613,8 @@
     <string name="select_install_location">Место установки</string>
     <string name="use_cpu_affinity">Использовать привязку к CPU</string>
     <string name="use_sh2_cache">Использовать кэш SH2</string>
-    <string name="restore_defaults_confirm">Сбросить все настройки игры на значения по умолчанию?</string>
-    <string name="restore_defaults_success">Настройки восстановлены по умолчанию</string>
+    <string name="restore_defaults_confirm">Отменить собственные настройки этой игры и использовать глобальные?</string>
+    <string name="restore_defaults_success">Возвращены глобальные настройки</string>
     <string name="menu_detail">Подробности</string>
     <string name="create_home_shortcut">Создать ярлык на главном экране</string>
     <string name="shortcut_created">Ярлык создан на главном экране</string>
@@ -864,13 +869,11 @@
     <string name="benefit_data_export">Доступ к общим кодам Action Replay</string>
 
     <!-- Pro feature strings -->
-    <string name="sel_cpu_sync_per_line"></string>
     <string name="pro_gate_title">Функция Pro</string>
     <string name="pro_gate_message">Для этой функции требуется версия Pro.\nВыберите вариант для разблокировки:</string>
     <string name="pro_gate_subscribe">Подписаться</string>
     <string name="pro_gate_subscribe_with_price">Подписаться (%s/год)</string>
     <string name="pro_gate_buy_pro">Купить Pro версию</string>
-    <string name="game_list_limit_banner">Чтобы увидеть все игры, оформите подписку или купите Pro версию.</string>
     <string name="pro_feature_only">Для этой функции требуется подписка Pro.</string>
     <string name="pro_gate_dialog_title">Разблокировать YabaSanshiro Pro</string>
     <string name="pro_gate_dialog_subtitle">Получите полный опыт с этими премиум-функциями</string>
@@ -912,4 +915,55 @@
     <string name="experimental_notice_title">Экспериментальная функция включена</string>
     <string name="experimental_notice_message">«%1$s» — экспериментальная функция. В некоторых играх возможны графические артефакты.\n\nЕсли вы обнаружите проблему, пожалуйста, сообщите о ней — ваши отчёты помогают нам становиться лучше. Во время игры откройте меню и выберите «Отчёт»; скриншот и текущее состояние прикрепляются автоматически. Вход в аккаунт не требуется.</string>
     <string name="experimental_notice_ok">Понятно</string>
+
+    <!-- Shared backup: reporting and hiding (issue #159) -->
+    <string name="report_backup">Пожаловаться</string>
+    <string name="report_dialog_title">Пожаловаться на это сохранение</string>
+    <string name="report_reason_inappropriate">Неприемлемый контент</string>
+    <string name="report_reason_spam">Спам или введение в заблуждение</string>
+    <string name="report_reason_other">Другое</string>
+    <string name="report_send">Отправить жалобу</string>
+    <string name="report_sent">Жалоба отправлена. Спасибо.</string>
+    <string name="report_failed">Не удалось отправить жалобу.</string>
+    <string name="hide_owner">Скрыть этого пользователя</string>
+    <string name="hide_owner_confirm_title">Скрыть этого пользователя?</string>
+    <string name="hide_owner_confirm_message">Сохранения, опубликованные %1$s, перестанут появляться в этом списке на этом устройстве. Это можно отменить в любой момент.</string>
+    <string name="hidden_owners_count">Скрытые пользователи (%1$d)</string>
+    <string name="show_all_hidden">Показать все</string>
+    <string name="shared_backup_load_more_failed">Не удалось загрузить больше общих сохранений.</string>
+
+    <!-- Free game limit: locked cards and the subscribe offer -->
+    <string name="game_limit_banner_message">В бесплатной версии доступно %1$d игры. Оформите подписку, чтобы открыть всю библиотеку.</string>
+    <string name="game_limit_banner_action">Открыть все игры</string>
+    <string name="game_locked_badge">Заблокировано</string>
+    <string name="game_locked_content_description">%1$s, заблокировано в бесплатной версии</string>
+    <string name="game_locked_pro_gate_message">Эта игра выходит за предел бесплатной версии.</string>
+    <string name="vdp2_composite_type">Композиция VDP2</string>
+    <string name="choose_vdp2_composite_type">Выберите метод композиции VDP2</string>
+    <string name="pref_vdp2_composite_summary">Выберите, как объединяются фоновые слои VDP2</string>
+    <string name="vdp2_composite_new">Точный (попиксельно)</string>
+    <string name="vdp2_composite_legacy">Быстрый (прежний)</string>
+    <string name="benchmark_result_title">Измерение завершено</string>
+    <string name="benchmark_result_message">Для этого устройства выбраны и уже применены следующие настройки.</string>
+    <string name="benchmark_confirm_upload">Отправить результат разработчику</string>
+    <string name="benchmark_confirm_upload_note">Отправляются только модель устройства, GPU и измеренная частота кадров. Названия игр, сохранения и данные аккаунта не отправляются никогда. Результаты нужны для подбора более удачных настроек по умолчанию для этого GPU.</string>
+    <string name="notification_channel_release">Объявления о выпусках</string>
+    <string name="notification_channel_release_desc">Уведомления о новых версиях YabaSanshiro</string>
+    <string name="share_backup_link_subject">Общее сохранение Saturn</string>
+    <string name="share_backup_link_text">Данные сохранения %1$s опубликованы\n%2$s\n%3$s</string>
+    <string name="share_backup_link_chooser">Поделиться ссылкой на сохранение</string>
+    <string name="sharing_backup_progress">Публикация резервной копии…</string>
+    <string name="share_public_consent_title">Сделать это сохранение общедоступным?</string>
+    <string name="share_public_consent_message">При публикации сохранение загружается на сервер, и найти и скачать его из списка сообщества сможет любой, а не только те, у кого есть ссылка. Продолжить?</string>
+    <string name="import_shared_backup_title">Импорт общего сохранения</string>
+    <string name="import_shared_backup_not_found">Это общее сохранение не найдено. Возможно, оно было удалено.</string>
+    <string name="import_shared_backup_sign_in">Войдите, чтобы импортировать это сохранение</string>
+    <string name="import_shared_rom_missing_title">Игры нет в вашей библиотеке</string>
+    <string name="import_shared_rom_missing_message">Это сохранение для \"%1$s\", которой нет в вашей библиотеке. Его всё равно можно импортировать и использовать после добавления игры. Продолжить?</string>
+    <string name="news_close">Закрыть</string>
+    <string name="news_read_more">Подробнее</string>
+    <string name="news_update">Обновить</string>
+    <string name="setting_on">Вкл.</string>
+    <string name="setting_off">Выкл.</string>
+    <string name="recommended_settings_offer_message">Для этого устройства рекомендуются следующие настройки. Применить их?</string>
 </resources>

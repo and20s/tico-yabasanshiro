@@ -1128,7 +1128,7 @@ static std::vector<char> readFile(const std::string& filename) {
 #include <fstream>
 #include <iostream>
 
-VkPipeline FramebufferRenderer::compileShader(const char * code, const char * name, enum ColorClacMode c, uint8_t winflag) {
+VkPipeline FramebufferRenderer::compileShader(const char * code, const char * name, enum ColorClacMode c, uint32_t winflag) {
 
   VkDevice device = vulkan->getDevice();
 

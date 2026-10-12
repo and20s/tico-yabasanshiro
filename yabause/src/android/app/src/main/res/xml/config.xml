@@ -33,5 +33,9 @@
         <key>is_enable_subscription_new</key>
         <value>false</value>
     </entry>
+    <entry>
+        <key>gpu_profiles_json</key>
+        <value>{"version":1,"profiles":[]}</value>
+    </entry>
 </defaultsMap>
     <!-- END xml_defaults -->

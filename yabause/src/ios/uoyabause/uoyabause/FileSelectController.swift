@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import SwiftUI
 import UIKit
 import Kingfisher
 #if FREE_VERSION
@@ -91,19 +92,14 @@ class GameItemCell: UICollectionViewCell {
 }
 
 
-// Focus management helper enum (shared)
-enum FocusDirection {
-    case up, down, left, right
-}
-
-// GamePad navigation protocol
-protocol GamePadNavigationDelegate: AnyObject {
-    func handleGamePadNavigation(_ direction: FocusDirection) -> Bool
-    func handleGamePadSelection()
-    func handlePageNavigation(_ direction: FocusDirection)
-}
-
-class FileSelectController : UIViewController, UICollectionViewDataSource, UICollectionViewDelegate,UICollectionViewDelegateFlowLayout, UISearchBarDelegate, UISearchResultsUpdating, GamePadNavigationDelegate {
+/// In-game disc picker.
+///
+/// Since the SwiftUI home screen (MainTabView) replaced the legacy
+/// MainScreenController, this controller is only presented modally from
+/// GameViewController's "Change Disk" flow. It is always used with
+/// `isStandalone = true` and a `completionHandler`; it is never embedded
+/// as a child view controller any more.
+class FileSelectController : UIViewController, UICollectionViewDataSource, UICollectionViewDelegate,UICollectionViewDelegateFlowLayout, UISearchBarDelegate, UISearchResultsUpdating {
 
 #if FREE_VERSION
     var bannerView: GADBannerView!
@@ -116,11 +112,7 @@ class FileSelectController : UIViewController, UICollectionViewDataSource, UICol
     var columns = 3.0
     var searchController: UISearchController!
     var collectionView: UICollectionView!
-    
-    // GamePad focus management
-    private var currentFocusedIndexPath: IndexPath?
-    private var isFocusVisible: Bool = true
-    
+
     var completionHandler: ((String?) -> Void)?
 
     var activityIndicator: UIActivityIndicatorView!
@@ -249,43 +241,47 @@ class FileSelectController : UIViewController, UICollectionViewDataSource, UICol
         self.view.addSubview(activityIndicator)
 
 #if FREE_VERSION
-        let viewWidth = view.frame.inset(by: view.safeAreaInsets).width
+        // A subscriber paid to be rid of ads. Wrapping rather than returning:
+        // this runs partway through view setup and the rest still has to.
+        if ProEntitlement().showsAds {
+            let viewWidth = view.frame.inset(by: view.safeAreaInsets).width
 
-        // Here the current interface orientation is used. Use
-        // GADLandscapeAnchoredAdaptiveBannerAdSizeWithWidth or
-        // GADPortraitAnchoredAdaptiveBannerAdSizeWithWidth if you prefer to load an ad of a
-        // particular orientation,
-        let adaptiveSize = GADCurrentOrientationAnchoredAdaptiveBannerAdSizeWithWidth(viewWidth)
-        bannerView = GADBannerView(adSize: adaptiveSize)
-        bannerView.backgroundColor = .defaultBackground
+            // Here the current interface orientation is used. Use
+            // GADLandscapeAnchoredAdaptiveBannerAdSizeWithWidth or
+            // GADPortraitAnchoredAdaptiveBannerAdSizeWithWidth if you prefer to load an ad of a
+            // particular orientation,
+            let adaptiveSize = GADCurrentOrientationAnchoredAdaptiveBannerAdSizeWithWidth(viewWidth)
+            bannerView = GADBannerView(adSize: adaptiveSize)
+            bannerView.backgroundColor = .defaultBackground
 
 
-        addBannerViewToView(bannerView)
+            addBannerViewToView(bannerView)
 
-        // Load adUnitID from secrets.plist (not committed to git)
-        // For testing, use Google's test banner ad unit ID
-        if let path = Bundle.main.path(forResource: "secrets", ofType: "plist"),
-           let dict = NSDictionary(contentsOfFile: path) as? [String: AnyObject],
-           let bannerId = dict["bannerId"] as? String {
-            bannerView.adUnitID = bannerId
-        } else {
-            // Google's test ad unit ID for development
-            // See: https://developers.google.com/admob/ios/test-ads
-            bannerView.adUnitID = "ca-app-pub-3940256099942544/2934735716"
+            // Load adUnitID from secrets.plist (not committed to git)
+            // For testing, use Google's test banner ad unit ID
+            if let path = Bundle.main.path(forResource: "secrets", ofType: "plist"),
+               let dict = NSDictionary(contentsOfFile: path) as? [String: AnyObject],
+               let bannerId = dict["bannerId"] as? String {
+                bannerView.adUnitID = bannerId
+            } else {
+                // Google's test ad unit ID for development
+                // See: https://developers.google.com/admob/ios/test-ads
+                bannerView.adUnitID = "ca-app-pub-3940256099942544/2934735716"
+            }
+
+
+            let bannerHeight = bannerView.frame.height
+            let safeAreaHeight = view.safeAreaLayoutGuide.layoutFrame.height
+            let newGameVCHeight = safeAreaHeight - bannerHeight
+
+            // Adjust the height of gameVC
+            collectionView?.frame.size.height = newGameVCHeight
+
+            bannerView.rootViewController = self
+            bannerView.delegate = self
+
+            bannerView.load(GADRequest())
         }
-
-
-        let bannerHeight = bannerView.frame.height
-        let safeAreaHeight = view.safeAreaLayoutGuide.layoutFrame.height
-        let newGameVCHeight = safeAreaHeight - bannerHeight
-
-        // Adjust the height of gameVC
-        collectionView?.frame.size.height = newGameVCHeight
-
-        bannerView.rootViewController = self
-        bannerView.delegate = self
-
-        bannerView.load(GADRequest())
 #endif
 
         // Activity Indicatorをビュー階層の一番上に持ってくる
@@ -428,45 +424,20 @@ class FileSelectController : UIViewController, UICollectionViewDataSource, UICol
         return allFiles
     }
 
-    func checkLimitation() -> Bool {
-#if FREE_VERSION // For free
-
-        var check = true
-
-        if self.file_list.count >= 3 {
-           check = false
+    /// Drops the games the free version may not play.
+    ///
+    /// The same three games the games tab unlocks, decided by the same type:
+    /// this used to keep whichever three the directory walk happened to reach
+    /// first, so the disc picker could offer a game the library showed as
+    /// locked. Nothing is presented from here - this runs on the scan's
+    /// background queue, and the gate belongs to the tap that hits the limit.
+    func playableOnly(_ files: [GameInfo]) -> [GameInfo] {
+        guard let unlocked = FreeGameSlots.unlockedPaths(items: GameListCache().load())
+        else { return files }
+        return files.filter { file in
+            guard let path = file.filePath else { return false }
+            return unlocked.contains(path)
         }
-
-        if check == false {
-            // アラートを表示して有料版に誘導する
-            DispatchQueue.main.async {
-                let alert = UIAlertController(
-                    title: NSLocalizedString("Upgrade Required", comment: "Title for the upgrade alert"),
-                    message: NSLocalizedString("You have reached the maximum number of files for the free version. Please upgrade to the paid version to add more files.", comment: "Message indicating that the user needs to upgrade to the paid version to add more files."),
-                    preferredStyle: .alert
-                )
-                alert.addAction(UIAlertAction(
-                    title: NSLocalizedString("Upgrade", comment: "Button title to upgrade to the paid version"),
-                    style: .default,
-                    handler: { _ in
-                        if let url = URL(string: "https://apps.apple.com/app/id1549144351") {
-                            UIApplication.shared.open(url)
-                        }
-                    }
-                ))
-                alert.addAction(UIAlertAction(
-                    title: NSLocalizedString("Cancel", comment: "Button title to cancel the upgrade action"),
-                    style: .cancel,
-                    handler: nil
-                ))
-                self.present(alert, animated: true, completion: nil)
-            }
-        }
-
-        return check
-#else
-        return true
-#endif
     }
 
     func updateDoc(){
@@ -529,10 +500,6 @@ class FileSelectController : UIViewController, UICollectionViewDataSource, UICol
                             }
                         }
 
-                        if self.checkLimitation() == false {
-                            break
-                        }
-
                     }catch GameInfoError.isoFileNotFound(let message) {
 
                         print(message)
@@ -565,6 +532,7 @@ class FileSelectController : UIViewController, UICollectionViewDataSource, UICol
 
                 }
             }
+            self.file_list = self.playableOnly(self.file_list)
             self.file_list.sort { $0.displayName ?? "" < $1.displayName ?? "" }
             self.filteredFiles = self.file_list
 
@@ -573,9 +541,6 @@ class FileSelectController : UIViewController, UICollectionViewDataSource, UICol
                 self?.collectionView.reloadData() // collectionViewのデータをリロード
                 self?.blurEffectView.isHidden = true
                 self?.activityIndicator.stopAnimating()
-                
-                // 親のMainScreenControllerにGameControllerハンドラー復元を通知
-                self?.notifyParentOfDocumentUpdate()
             }
 
         }
@@ -599,13 +564,13 @@ class FileSelectController : UIViewController, UICollectionViewDataSource, UICol
         selected_file_path = filteredFiles[(indexPath as NSIndexPath).row].filePath!
         productNumber = filteredFiles[(indexPath as NSIndexPath).row].productNumber!
 
+        // The only remaining caller is the in-game "Change Disk" flow, which
+        // always installs a completionHandler. Without one there is nothing
+        // to report the selection to, so the tap is simply ignored.
         if( completionHandler != nil ){
             completionHandler?(selected_file_path)
             dismiss(animated: true, completion: nil)
-            return
         }
-
-        performSegue(withIdentifier: "toGameView",sender: self)
     }
 
 
@@ -623,15 +588,6 @@ class FileSelectController : UIViewController, UICollectionViewDataSource, UICol
         }
     }
 
-
-    // Segue 準備
-    override func prepare(for segue: UIStoryboardSegue, sender: Any!) {
-        if (segue.identifier == "toGameView") {
-            let subVCmain: GameMainViewController = (segue.destination as? GameMainViewController)!
-            subVCmain.selectedFile = selected_file_path
-            subVCmain.productNumber = productNumber // 追加
-        }
-    }
 
     deinit {
         // 通知の登録解除
@@ -703,238 +659,3 @@ extension FileSelectController: GADBannerViewDelegate {
 
 }
 #endif
-
-// MARK: - GamePad Navigation Support
-
-extension FileSelectController {
-    
-    // GamePadNavigationDelegate implementation
-    func handleGamePadNavigation(_ direction: FocusDirection) -> Bool {
-        guard !filteredFiles.isEmpty else { 
-            print("GamePad Navigation: No files available")
-            return false 
-        }
-        
-        let itemsPerRow = Int(columns)
-        let totalItems = filteredFiles.count
-        
-        print("GamePad Navigation: \(direction) - itemsPerRow: \(itemsPerRow), totalItems: \(totalItems)")
-        
-        // 現在のフォーカス位置を決定
-        let currentIndex: Int
-        if let indexPath = currentFocusedIndexPath {
-            currentIndex = indexPath.item
-        } else {
-            // 初回の場合は最初の項目にフォーカス
-            print("GamePad Navigation: Initializing focus to first item")
-            currentIndex = 0
-            currentFocusedIndexPath = IndexPath(item: 0, section: 0)
-            updateCellFocusVisuals()
-            return true
-        }
-        
-        var newIndex = currentIndex
-        
-        switch direction {
-        case .up:
-            // 上に移動: 現在の行が0行目でなければ上の行の同じ列に移動
-            let currentRow = currentIndex / itemsPerRow
-            let currentColumn = currentIndex % itemsPerRow
-            print("GamePad Navigation UP: currentIndex=\(currentIndex), currentRow=\(currentRow), currentColumn=\(currentColumn)")
-            if currentRow > 0 {
-                let targetRow = currentRow - 1
-                newIndex = targetRow * itemsPerRow + currentColumn
-                newIndex = min(newIndex, totalItems - 1)
-                print("GamePad Navigation UP: Moving to newIndex=\(newIndex)")
-            } else {
-                print("GamePad Navigation UP: Already at top row, no movement")
-            }
-        case .down:
-            // 下に移動: 下の行が存在する場合、下の行の同じ列に移動
-            let currentRow = currentIndex / itemsPerRow
-            let currentColumn = currentIndex % itemsPerRow
-            let maxRow = (totalItems - 1) / itemsPerRow
-            print("GamePad Navigation DOWN: currentIndex=\(currentIndex), currentRow=\(currentRow), currentColumn=\(currentColumn), maxRow=\(maxRow)")
-            if currentRow < maxRow {
-                let targetRow = currentRow + 1
-                newIndex = targetRow * itemsPerRow + currentColumn
-                newIndex = min(newIndex, totalItems - 1)
-                print("GamePad Navigation DOWN: Moving to newIndex=\(newIndex)")
-            } else {
-                print("GamePad Navigation DOWN: Already at bottom row, no movement")
-            }
-        case .left:
-            // 左に移動: 同じ行内で左に移動、行の最初なら前の行の最後に移動
-            if currentIndex > 0 {
-                newIndex = currentIndex - 1
-            }
-        case .right:
-            // 右に移動: 同じ行内で右に移動、行の最後なら次の行の最初に移動
-            if currentIndex < totalItems - 1 {
-                newIndex = currentIndex + 1
-            }
-        }
-        
-        if newIndex != currentIndex {
-            print("GamePad Navigation: \(direction) - from \(currentIndex) to \(newIndex)")
-            currentFocusedIndexPath = IndexPath(item: newIndex, section: 0)
-            updateCellFocusVisuals()
-            
-            // フォーカスされた項目が画面内に見えるようにスクロール
-            collectionView.scrollToItem(at: currentFocusedIndexPath!, 
-                                      at: .centeredVertically, 
-                                      animated: true)
-            return true
-        } else {
-            print("GamePad Navigation: \(direction) - no movement from \(currentIndex)")
-            return false
-        }
-    }
-    
-    func handleGamePadSelection() {
-        guard let indexPath = currentFocusedIndexPath,
-              indexPath.item < filteredFiles.count else { return }
-        
-        // 選択されたゲームを起動
-        let selectedGame = filteredFiles[indexPath.item]
-        selected_file_path = selectedGame.filePath ?? ""
-        productNumber = selectedGame.productNumber ?? ""
-        
-        // MainScreenController経由でゲームビューに遷移
-        if let mainScreenController = parent as? MainScreenController {
-            mainScreenController.performSegue(withIdentifier: "toGameViewFromMain", sender: self)
-        }
-    }
-    
-    private func updateCellFocusVisuals() {
-        // 全てのセルからフォーカス表示を削除
-        for cell in collectionView.visibleCells {
-            if let gameCell = cell as? GameItemCell {
-                removeFocusHighlight(from: gameCell)
-            }
-        }
-        
-        // フォーカス表示が有効な場合のみハイライトを追加
-        if isFocusVisible,
-           let indexPath = currentFocusedIndexPath,
-           let cell = collectionView.cellForItem(at: indexPath) as? GameItemCell {
-            addFocusHighlight(to: cell)
-        }
-    }
-    
-    private func addFocusHighlight(to cell: GameItemCell) {
-        // 既存のハイライト表示を削除
-        removeFocusHighlight(from: cell)
-        
-        // セル全体に境界線とバックグラウンドでフォーカス表示
-        cell.layer.borderWidth = 3.0
-        cell.layer.borderColor = UIColor.tint.cgColor
-        cell.layer.cornerRadius = 8.0
-        cell.backgroundColor = UIColor.tint.withAlphaComponent(0.1)
-        
-        // アニメーションで強調（少し控えめに）
-        let animationDuration = UserDefaults.standard.double(forKey: "mainScreenFocusAnimationSpeed") == 0 ? 0.1 : 
-                               UserDefaults.standard.double(forKey: "mainScreenFocusAnimationSpeed") == 2 ? 0.3 : 0.2
-        UIView.animate(withDuration: animationDuration) {
-            cell.transform = CGAffineTransform(scaleX: 1.02, y: 1.02)
-        }
-    }
-    
-    private func removeFocusHighlight(from cell: GameItemCell) {
-        // セルの境界線とバックグラウンドをクリア
-        cell.layer.borderWidth = 0.0
-        cell.layer.borderColor = UIColor.clear.cgColor
-        cell.backgroundColor = .defaultBackground
-        
-        // スケールをリセット
-        let animationDuration = UserDefaults.standard.double(forKey: "mainScreenFocusAnimationSpeed") == 0 ? 0.1 : 
-                               UserDefaults.standard.double(forKey: "mainScreenFocusAnimationSpeed") == 2 ? 0.3 : 0.2
-        UIView.animate(withDuration: animationDuration) {
-            cell.transform = CGAffineTransform.identity
-        }
-    }
-    
-    func handlePageNavigation(_ direction: FocusDirection) {
-        guard !filteredFiles.isEmpty else { return }
-        
-        let itemsPerRow = Int(columns)
-        let totalItems = filteredFiles.count
-        let currentIndex = currentFocusedIndexPath?.item ?? 0
-        
-        // ページサイズを計算（見える行数 × 列数）
-        let visibleBounds = collectionView.bounds
-        let layout = collectionView.collectionViewLayout as? UICollectionViewFlowLayout
-        let itemSize = layout?.itemSize ?? CGSize(width: 100, height: 100)
-        let spacing = layout?.minimumLineSpacing ?? 10
-        
-        let visibleRows = Int(visibleBounds.height / (itemSize.height + spacing))
-        let pageSize = max(1, visibleRows * itemsPerRow)
-        
-        var newIndex: Int
-        
-        switch direction {
-        case .up:
-            // Page Up: 現在位置からページサイズ分上に移動
-            newIndex = max(0, currentIndex - pageSize)
-            
-        case .down:
-            // Page Down: 現在位置からページサイズ分下に移動  
-            newIndex = min(totalItems - 1, currentIndex + pageSize)
-            
-        default:
-            return // 左右は無視
-        }
-        
-        if newIndex != currentIndex {
-            print("Page Navigation: \(direction) - from \(currentIndex) to \(newIndex) (pageSize: \(pageSize))")
-            currentFocusedIndexPath = IndexPath(item: newIndex, section: 0)
-            updateCellFocusVisuals()
-            
-            // フォーカスされた項目が画面内に見えるようにスクロール
-            collectionView.scrollToItem(at: currentFocusedIndexPath!,
-                                      at: .centeredVertically,
-                                      animated: true)
-        }
-    }
-    
-    func setFocusVisibility(_ visible: Bool) {
-        isFocusVisible = visible
-        print("FileSelectController focus visibility set to: \(visible)")
-        
-        if visible {
-            // フォーカス表示を有効にする
-            updateCellFocusVisuals()
-        } else {
-            // フォーカス表示を無効にする - 全てのセルからハイライトを削除
-            for cell in collectionView.visibleCells {
-                if let gameCell = cell as? GameItemCell {
-                    removeFocusHighlight(from: gameCell)
-                }
-            }
-        }
-    }
-    
-    func resetFocusToFirstItem() {
-        guard !filteredFiles.isEmpty else { return }
-        
-        // 一行目の最初の項目（インデックス0）にフォーカスを設定
-        currentFocusedIndexPath = IndexPath(item: 0, section: 0)
-        print("FileSelectController focus reset to first item (index 0)")
-        
-        // フォーカス表示を更新
-        updateCellFocusVisuals()
-        
-        // フォーカスされた項目が画面内に見えるようにスクロール
-        collectionView.scrollToItem(at: currentFocusedIndexPath!,
-                                  at: .top,
-                                  animated: true)
-    }
-    
-    private func notifyParentOfDocumentUpdate() {
-        // 親のMainScreenControllerにGameControllerハンドラー復元を通知
-        if let parent = self.parent as? MainScreenController {
-            print("FileSelectController: Notifying parent to restore GameController handlers")
-            parent.restoreGameControllerAfterDocumentUpdate()
-        }
-    }
-}

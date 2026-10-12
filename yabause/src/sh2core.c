@@ -246,6 +246,8 @@ void SH2Reset(SH2_struct *context) {
   context->wdt.leftover = 0;
 
   context->inputCaptureCount = 0;
+  context->frtIcMergedEdges = 0;
+  context->frtIcIntOwed = 0;
 
   // Reset Interrupts
   memset((void *)context->interrupts, 0,
@@ -1438,23 +1440,11 @@ u16 FASTCALL OnchipReadWord(u32 addr) {
 // finishes. Legacy yabause completed divisions instantly, so code that
 // starts a division and reads the result at once ran ~39 cycles fast
 // (timing disc S38), while code that hides the latency behind ALU work
-// was already right (S39). Set YABA_SH2_DIV_MODEL=old to revert.
-static int div_model_new_v = -1;
-
-static int sh2_div_model_new(void)
-{
-  if (div_model_new_v < 0)
-  {
-    const char *e = getenv("YABA_SH2_DIV_MODEL");
-    div_model_new_v = !(e != NULL && strcmp(e, "old") == 0);
-  }
-  return div_model_new_v;
-}
-
+// was already right (S39).
 static void sh2_div_begin(u32 latency)
 {
   SH2_struct *sh = CurrentSH2;
-  if (!sh2_div_model_new() || sh == NULL)
+  if (sh == NULL)
     return;
   // sh->cycles is live here on both cores: the interpreter updates it
   // per instruction and the dynarec slow memory paths sync it from
@@ -1621,11 +1611,13 @@ void FASTCALL OnchipWriteByte(u32 addr, u8 val) {
 
     CurrentSH2->onchip.TIER = (val & 0x8E) | 0x1;
     if ((val & 0x80) && (CurrentSH2 == SSH2) && (SSH2->onchip.FTCSR & 0x80)) {
+      SSH2->frtIcIntOwed = 1;
       SH2SendInterrupt(SSH2, (SSH2->onchip.VCRC >> 8) & 0x7F,
                        (SSH2->onchip.IPRB >> 8) & 0xF);
     }
 
     if ((val & 0x80) && (CurrentSH2 == MSH2) && (MSH2->onchip.FTCSR & 0x80)) {
+      MSH2->frtIcIntOwed = 1;
       SH2SendInterrupt(MSH2, (MSH2->onchip.VCRC >> 8) & 0x7F,
                        (MSH2->onchip.IPRB >> 8) & 0xF);
     }
@@ -1633,6 +1625,24 @@ void FASTCALL OnchipWriteByte(u32 addr, u8 val) {
   case 0x011:
     CurrentSH2->onchip.FTCSR =
         (CurrentSH2->onchip.FTCSR & (val & 0xFE)) | (val & 0x1);
+    // If this clear consumed an ICF that also represented a newer, merged
+    // input-capture edge, re-latch the flag (and re-raise the interrupt when
+    // ICIE is enabled) so that edge still gets a handler run. Restores the
+    // hardware ordering where the handler's clear always precedes the next
+    // doorbell.
+    if (!(CurrentSH2->onchip.FTCSR & 0x80) && CurrentSH2->frtIcMergedEdges > 0) {
+      CurrentSH2->frtIcMergedEdges--;
+      CurrentSH2->onchip.FTCSR |= 0x80;
+      // A handler run is still owed for the edge just re-latched.
+      CurrentSH2->frtIcIntOwed = 1;
+      if (CurrentSH2->onchip.TIER & 0x80)
+        SH2SendInterrupt(CurrentSH2, (CurrentSH2->onchip.VCRC >> 8) & 0x7F,
+                         (CurrentSH2->onchip.IPRB >> 8) & 0xF);
+    } else if (!(CurrentSH2->onchip.FTCSR & 0x80)) {
+      // ICF retired with nothing banked behind it: the next ICF must come from
+      // a genuinely new edge.
+      CurrentSH2->frtIcIntOwed = 0;
+    }
     /*
              if( (CurrentSH2->onchip.FTCSR & 0x80) == 0x00 ){
 
@@ -2304,6 +2314,29 @@ void WDTExec(u32 cycles) {
 
 //////////////////////////////////////////////////////////////////////////////
 
+// SH7604 HW manual, DMAC bus modes: with TB=1 (burst) the DMAC keeps the bus
+// from the start of the transfer until the transfer count reaches 0, and with
+// AR=1 (auto-request) there is no external DREQ handshake pacing it. The CPU
+// therefore cannot run ahead of - or reprogram - such a channel while the
+// block is in flight, so it must not be left half done by the cycle-steal
+// pacing DMAProc() applies.
+static int dmac_is_autorequest_burst(u32 chcr) {
+  return (chcr & 0x210) == 0x210; // AR (bit 9) | TB (bit 4)
+}
+
+// Drain an auto-request burst channel to completion. DMATransferCycles() sets
+// TE once TCR reaches 0, which also clears the DE-armed state tested here.
+static void dmac_run_burst(Dmac *dmac) {
+  int guard = 0;
+  while ((*dmac->CHCR & 0x3) == 0x1 && *dmac->TCR != 0) {
+    DMATransferCycles(dmac, 4096);
+    // Safety net: TCR is 24 bit, so a pathological descriptor must not wedge
+    // the emulator in this loop.
+    if (++guard > 0x40000)
+      break;
+  }
+}
+
 void DMAExec(void) {
 
   if (CurrentSH2->onchip.TCR0 != 0) {
@@ -2375,6 +2408,23 @@ void DMAExec(void) {
     }
   }
 #else
+  // Burst + auto-request channels hold the bus until they are done (see
+  // dmac_is_autorequest_burst above), so finish them here instead of letting
+  // the cycle-steal pacing below leave them in flight. Golden Axe The Duel
+  // uploads its 68-longword VDP2 register shadow block this way every frame
+  // and then clears CHCR ~100 cycles later without polling TE; with
+  // cycle-steal pacing only ~50 longwords made it across and the CHCR write
+  // discarded the rest, so the tail of the block (SPCTL, CRAOFB, PRISA-D,
+  // CCRSA-D, CCCTL, CLOFEN) never reached the VDP2 and VDP1 characters were
+  // decoded with stale sprite settings.
+  if ((CurrentSH2->onchip.DMAOR & 7) == 1) {
+    if ((CurrentSH2->onchip.CHCR0 & 0x3) == 0x1 &&
+        dmac_is_autorequest_burst(CurrentSH2->onchip.CHCR0))
+      dmac_run_burst(&CurrentSH2->dma_ch0);
+    if ((CurrentSH2->onchip.CHCR1 & 0x3) == 0x1 &&
+        dmac_is_autorequest_burst(CurrentSH2->onchip.CHCR1))
+      dmac_run_burst(&CurrentSH2->dma_ch1);
+  }
   DMAProc(180);
 #endif
 }
@@ -2385,12 +2435,6 @@ void DMAExec(void) {
 // accurate (slower) DMA crosses their real-time expectations (Dragon
 // Force black-screens at boot). YABA_SH2_DMAC_UCOST=legacy forces
 // the legacy speed everywhere for diagnosis.
-static int dmac_legacy_speed(u32 sar)
-{
-  return !sh2_dmac_model_new() || sh2_dmac_ucost_legacy() ||
-         (sar & 0x0FF00000) == 0x05800000;
-}
-
 // B-bus destination transfers must not run faster than the calibrated bus
 // time even in the legacy model. The legacy MAX(read, write) unit cost makes
 // a WorkRAM-H -> VDP2 VRAM copy ~2x faster than hardware; Can Can Bunny
@@ -2399,7 +2443,7 @@ static int dmac_legacy_speed(u32 sar)
 // next VBlankIN-relative deadline the real duration meets (the too-fast
 // transfer ended ~1000 cycles after VBlankIN, so the game streamed its
 // whole intro with the display blanked). CD-block-sourced transfers keep
-// the legacy fast path (see dmac_legacy_speed above).
+// the calibrated bus time.
 static int dmac_bbus_dst_cost(u32 sar, u32 dar)
 {
   u32 d = dar & 0x0FF00000;
@@ -2428,51 +2472,40 @@ int DMAProc(int cycles) {
     if (CurrentSH2->onchip.DMAOR & 0x8) {           // round robin priority
 
       if ((CurrentSH2->onchip.CHCR0 & 0x08) == 0) {
-        if (dmac_legacy_speed(CurrentSH2->onchip.SAR0) ||
-            dmac_legacy_speed(CurrentSH2->onchip.SAR1)) cycles *= 1.5;
+        cycles *= 1.5;
       } // Dual Chanel
 
-      sh2_dmac_transfer_begin();
       DMATransferCycles(&CurrentSH2->dma_ch0, cycles);
       DMATransferCycles(&CurrentSH2->dma_ch1, cycles);
-      sh2_dmac_transfer_end();
 
     } else { // channel 0 > channel 1 priority
 
       if ((CurrentSH2->onchip.CHCR0 & 0x03) == 0x01) {
         if ((CurrentSH2->onchip.CHCR0 & 0x08) == 0) {
-          if (dmac_legacy_speed(CurrentSH2->onchip.SAR0)) cycles *= 1.5;
+          cycles *= 1.5;
         } // Dual Chanel
-        sh2_dmac_transfer_begin();
         DMATransferCycles(&CurrentSH2->dma_ch0, cycles);
-        sh2_dmac_transfer_end();
       } else if ((CurrentSH2->onchip.CHCR1 & 0x03) == 0x01) {
         if ((CurrentSH2->onchip.CHCR1 & 0x08) == 0) {
-          if (dmac_legacy_speed(CurrentSH2->onchip.SAR1)) cycles *= 1.5;
+          cycles *= 1.5;
         } // Dual Chanel
-        sh2_dmac_transfer_begin();
         DMATransferCycles(&CurrentSH2->dma_ch1, cycles);
-        sh2_dmac_transfer_end();
       }
     }
   } else { // only one channel wants DMA
     if (((CurrentSH2->onchip.CHCR0 & 0x3) == 0x01)) { // DMA for channel 0
 
       if ((CurrentSH2->onchip.CHCR0 & 0x08) == 0) {
-        if (dmac_legacy_speed(CurrentSH2->onchip.SAR0)) cycles *= 1.5;
+        cycles *= 1.5;
       } // Dual Chanel
-      sh2_dmac_transfer_begin();
       DMATransferCycles(&CurrentSH2->dma_ch0, cycles);
-      sh2_dmac_transfer_end();
       return 0;
     } else if (((CurrentSH2->onchip.CHCR1 & 0x3) ==
                 0x01)) { // DMA for channel 1
       if ((CurrentSH2->onchip.CHCR1 & 0x08) == 0) {
-        if (dmac_legacy_speed(CurrentSH2->onchip.SAR1)) cycles *= 1.5;
+        cycles *= 1.5;
       } // Dual Chanel
-      sh2_dmac_transfer_begin();
       DMATransferCycles(&CurrentSH2->dma_ch1, cycles);
-      sh2_dmac_transfer_end();
       return 0;
     }
   }
@@ -2642,26 +2675,16 @@ void DMATransferCycles(Dmac *dmac, int cycles) {
             *dmac->DAR, MappedMemoryReadByteNocache(*dmac->SAR, &cycler),
             &cycle);
         u32 ucost;
-        if (!dmac_legacy_speed(*dmac->SAR)) {
-          // full bus time per unit: region read cost + posted write cost
-          // (falls back to the legacy write clock for regions the write
-          // cost model does not cover). Matches mednafen's ~9 cyc/long
-          // for WorkRAM-H -> WorkRAM-H (timing disc S22).
-          u32 wcost = getMemWriteClock(*dmac->DAR, 1);
-          if (wcost == 0) wcost = cycle;
-          ucost = cycler + wcost;
-        } else if (dmac_bbus_dst_cost(*dmac->SAR, *dmac->DAR)) {
+        if (dmac_bbus_dst_cost(*dmac->SAR, *dmac->DAR)) {
           // legacy model, B-bus destination: charge the calibrated full bus
           // time (read + posted-write finish) so the transfer is not faster
           // than hardware (see dmac_bbus_dst_cost above)
           u32 wcost = getMemWriteClock(*dmac->DAR, 1);
           if (wcost == 0) wcost = cycle;
           ucost = cycler + wcost;
-          if (!sh2_dmac_model_new())
             dmac->penerly += ucost;
         } else {
           ucost = MAX(cycler, cycle);
-          if (!sh2_dmac_model_new())
             dmac->penerly += ucost;
         }
         dmac->copy_clock -= ucost;
@@ -2698,26 +2721,16 @@ void DMATransferCycles(Dmac *dmac, int cycles) {
             *dmac->DAR, MappedMemoryReadWordNocache(*dmac->SAR, &cycler),
             &cycle);
         u32 ucost;
-        if (!dmac_legacy_speed(*dmac->SAR)) {
-          // full bus time per unit: region read cost + posted write cost
-          // (falls back to the legacy write clock for regions the write
-          // cost model does not cover). Matches mednafen's ~9 cyc/long
-          // for WorkRAM-H -> WorkRAM-H (timing disc S22).
-          u32 wcost = getMemWriteClock(*dmac->DAR, 2);
-          if (wcost == 0) wcost = cycle;
-          ucost = cycler + wcost;
-        } else if (dmac_bbus_dst_cost(*dmac->SAR, *dmac->DAR)) {
+        if (dmac_bbus_dst_cost(*dmac->SAR, *dmac->DAR)) {
           // legacy model, B-bus destination: charge the calibrated full bus
           // time (read + posted-write finish) so the transfer is not faster
           // than hardware (see dmac_bbus_dst_cost above)
           u32 wcost = getMemWriteClock(*dmac->DAR, 2);
           if (wcost == 0) wcost = cycle;
           ucost = cycler + wcost;
-          if (!sh2_dmac_model_new())
             dmac->penerly += ucost;
         } else {
           ucost = MAX(cycler, cycle);
-          if (!sh2_dmac_model_new())
             dmac->penerly += ucost;
         }
         dmac->copy_clock -= ucost;
@@ -2753,26 +2766,16 @@ void DMATransferCycles(Dmac *dmac, int cycles) {
         u32 val = MappedMemoryReadLongNocache(*dmac->SAR, &cycler);
         MappedMemoryWriteLongNocache(*dmac->DAR, val, &cycle);
         u32 ucost;
-        if (!dmac_legacy_speed(*dmac->SAR)) {
-          // full bus time per unit: region read cost + posted write cost
-          // (falls back to the legacy write clock for regions the write
-          // cost model does not cover). Matches mednafen's ~9 cyc/long
-          // for WorkRAM-H -> WorkRAM-H (timing disc S22).
-          u32 wcost = getMemWriteClock(*dmac->DAR, 4);
-          if (wcost == 0) wcost = cycle;
-          ucost = cycler + wcost;
-        } else if (dmac_bbus_dst_cost(*dmac->SAR, *dmac->DAR)) {
+        if (dmac_bbus_dst_cost(*dmac->SAR, *dmac->DAR)) {
           // legacy model, B-bus destination: charge the calibrated full bus
           // time (read + posted-write finish) so the transfer is not faster
           // than hardware (see dmac_bbus_dst_cost above)
           u32 wcost = getMemWriteClock(*dmac->DAR, 4);
           if (wcost == 0) wcost = cycle;
           ucost = cycler + wcost;
-          if (!sh2_dmac_model_new())
             dmac->penerly += ucost;
         } else {
           ucost = MAX(cycler, cycle);
-          if (!sh2_dmac_model_new())
             dmac->penerly += ucost;
         }
         dmac->copy_clock -= ucost;
@@ -2807,26 +2810,16 @@ void DMATransferCycles(Dmac *dmac, int cycles) {
         u32 val = MappedMemoryReadLongNocache(*dmac->SAR, &cycler);
         MappedMemoryWriteLongNocache(*dmac->DAR, val, &cycle);
         u32 ucost;
-        if (!dmac_legacy_speed(*dmac->SAR)) {
-          // full bus time per unit: region read cost + posted write cost
-          // (falls back to the legacy write clock for regions the write
-          // cost model does not cover). Matches mednafen's ~9 cyc/long
-          // for WorkRAM-H -> WorkRAM-H (timing disc S22).
-          u32 wcost = getMemWriteClock(*dmac->DAR, 4);
-          if (wcost == 0) wcost = cycle;
-          ucost = cycler + wcost;
-        } else if (dmac_bbus_dst_cost(*dmac->SAR, *dmac->DAR)) {
+        if (dmac_bbus_dst_cost(*dmac->SAR, *dmac->DAR)) {
           // legacy model, B-bus destination: charge the calibrated full bus
           // time (read + posted-write finish) so the transfer is not faster
           // than hardware (see dmac_bbus_dst_cost above)
           u32 wcost = getMemWriteClock(*dmac->DAR, 4);
           if (wcost == 0) wcost = cycle;
           ucost = cycler + wcost;
-          if (!sh2_dmac_model_new())
             dmac->penerly += ucost;
         } else {
           ucost = MAX(cycler, cycle);
-          if (!sh2_dmac_model_new())
             dmac->penerly += ucost;
         }
         dmac->copy_clock -= ucost;
@@ -2981,6 +2974,23 @@ void DMATransfer(u32 *CHCR, u32 *SAR, u32 *DAR, u32 *TCR, u32 *VCRDMA) {
 //////////////////////////////////////////////////////////////////////////////
 
 void FASTCALL MSH2InputCaptureWriteWord(UNUSED u32 addr, UNUSED u16 data) {
+  // Edge arriving while ICF is still set: remember it so the (late) handler
+  // clearing ICF does not silently drop it. See frtIcMergedEdges.
+  // Only while a handler run is owed for that ICF: the bank compensates for
+  // the emulator's delayed interrupt acceptance, so it is meaningful exactly
+  // when an ICI was raised and has not been retired yet. Testing TIER.ICIE
+  // here instead is wrong -- an ICI handler typically masks ICIE as its first
+  // act, and a doorbell landing inside that window is precisely the one that
+  // must be banked. A CPU that never raised an ICI banks nothing and keeps the
+  // hardware level-flag semantics that polling flow control needs (Azel's
+  // slave job ring throttles its producer that way).
+  if ((MSH2->onchip.FTCSR & 0x80) && MSH2->frtIcIntOwed &&
+      MSH2->frtIcMergedEdges < 8)
+    MSH2->frtIcMergedEdges++;
+
+  if (MSH2->onchip.TIER & 0x80)
+    MSH2->frtIcIntOwed = 1;
+
   // Set Input Capture Flag
   MSH2->onchip.FTCSR |= 0x80;
 
@@ -3003,11 +3013,18 @@ void FASTCALL MSH2InputCaptureWriteWord(UNUSED u32 addr, UNUSED u16 data) {
     SH2Core->SetPC(MSH2, pc);
   }
 
-  if (CurrentSH2->depth < 4) {
-    CurrentSH2->depth++;
+  // Synchronous catch-up of the target CPU, but never while the target is
+  // itself in the middle of a doorbell store (target->depth != 0). Opcode
+  // handlers advance PC only after the memory access returns, so re-entering
+  // the target here would re-execute its in-flight store and, on unwind, its
+  // deferred "PC += 2" would skip one instruction at wherever the nested run
+  // stopped (Azel: the ring tail update right after the doorbell write),
+  // silently corrupting lock-free master<->slave protocols.
+  if (CurrentSH2->depth < 4 && MSH2->depth == 0 && CurrentSH2 != MSH2) {
     int syncCycle = CurrentSH2->cycles - MSH2->cycles;
     if (syncCycle > 0) {
       SH2_struct *tmpCurrentSH2 = CurrentSH2;
+      tmpCurrentSH2->depth++;
       SH2Exec(MSH2, syncCycle);
       CurrentSH2 = tmpCurrentSH2;
       CurrentSH2->depth--;
@@ -3018,6 +3035,16 @@ void FASTCALL MSH2InputCaptureWriteWord(UNUSED u32 addr, UNUSED u16 data) {
 //////////////////////////////////////////////////////////////////////////////
 
 void FASTCALL SSH2InputCaptureWriteWord(UNUSED u32 addr, UNUSED u16 data) {
+  // Edge arriving while ICF is still set: remember it so the (late) handler
+  // clearing ICF does not silently drop it. Only while a handler run is owed
+  // -- see MSH2InputCaptureWriteWord for the full rationale.
+  if ((SSH2->onchip.FTCSR & 0x80) && SSH2->frtIcIntOwed &&
+      SSH2->frtIcMergedEdges < 8)
+    SSH2->frtIcMergedEdges++;
+
+  if (SSH2->onchip.TIER & 0x80)
+    SSH2->frtIcIntOwed = 1;
+
   // Set Input Capture Flag
   SSH2->onchip.FTCSR |= 0x80;
 
@@ -3044,11 +3071,12 @@ void FASTCALL SSH2InputCaptureWriteWord(UNUSED u32 addr, UNUSED u16 data) {
   }
 
 #if 1
-  if (CurrentSH2->depth < 4) {
-    CurrentSH2->depth++;
+  // See MSH2InputCaptureWriteWord: never re-enter a CPU that is mid-store.
+  if (CurrentSH2->depth < 4 && SSH2->depth == 0 && CurrentSH2 != SSH2) {
     int syncCycle = CurrentSH2->cycles - SSH2->cycles;
     if (syncCycle > 0) {
       SH2_struct *tmpCurrentSH2 = CurrentSH2;
+      tmpCurrentSH2->depth++;
       SH2Exec(SSH2, syncCycle);
       CurrentSH2 = tmpCurrentSH2;
       CurrentSH2->depth--;
@@ -3076,9 +3104,9 @@ int SH2SaveState(SH2_struct *context, FILE *fp) {
 
   // Write header
   if (context->isslave == 0)
-    offset = StateWriteHeader(fp, "MSH2", 5);
+    offset = StateWriteHeader(fp, "MSH2", 7);
   else {
-    offset = StateWriteHeader(fp, "SSH2", 5);
+    offset = StateWriteHeader(fp, "SSH2", 7);
     ywrite(&check, (void *)&yabsys.IsSSH2Running, 1, 1, fp);
   }
 
@@ -3116,6 +3144,25 @@ int SH2SaveState(SH2_struct *context, FILE *fp) {
 
   ywrite(&check, (void *)&context->dma_ch0.copy_clock, sizeof(u32), 1, fp);
   ywrite(&check, (void *)&context->dma_ch1.copy_clock, sizeof(u32), 1, fp);
+
+  // Version 6: pending FRT input-capture edges that were merged into an
+  // already-set ICF. Dropping them across a state load loses one real edge of
+  // a master/slave doorbell handshake, which is exactly the deadlock the
+  // merged-edge counter exists to prevent.
+  ywrite(&check, (void *)&context->frtIcMergedEdges, sizeof(u32), 1, fp);
+
+  // Version 6: watchdog timer state and the SLEEP flag. Both were never
+  // serialized: WTCSR itself lives in onchip, but the decoded divisor and the
+  // enable/interval flags are only recomputed on the next WTCSR write, and a
+  // CPU that was asleep came back awake.
+  ywrite(&check, (void *)&context->wdt, sizeof(context->wdt), 1, fp);
+  ywrite(&check, (void *)&context->isSleeping, sizeof(u8), 1, fp);
+
+  // Version 7: the "a handler run is still owed for the latched ICF" flag.
+  // It cannot be derived from frtIcMergedEdges: the usual state is owed with an
+  // empty bank, and reconstructing it as zero drops the gate that lets the next
+  // doorbell edge be banked at all.
+  ywrite(&check, (void *)&context->frtIcIntOwed, sizeof(u8), 1, fp);
 
   return StateFinishHeader(fp, offset);
 }
@@ -3276,6 +3323,31 @@ int SH2LoadState(SH2_struct *context, FILE *fp, UNUSED int version, int size) {
     yread(&check, (void *)&context->dma_ch0.copy_clock, sizeof(u32), 1, fp);
     yread(&check, (void *)&context->dma_ch1.copy_clock, sizeof(u32), 1, fp);
   }
+
+  // Version 6: merged FRT input-capture edges (see SH2SaveState). Older
+  // states leave the counter at the value SH2Reset() set above (zero).
+  if (version >= 6) {
+    yread(&check, (void *)&context->frtIcMergedEdges, sizeof(u32), 1, fp);
+    // A non-empty bank implies a handler run is still owed for the latched
+    // ICF, which is all frtIcIntOwed records; rebuild it instead of growing
+    // the state format.
+    context->frtIcIntOwed = (context->frtIcMergedEdges > 0);
+    yread(&check, (void *)&context->wdt, sizeof(context->wdt), 1, fp);
+    yread(&check, (void *)&context->isSleeping, sizeof(u8), 1, fp);
+
+    // Version 7: the owed flag itself. A version 6 state only carries the
+    // merged edge count, so it keeps the approximation above - which is wrong
+    // whenever the state was saved with an ICI raised and an empty bank, and
+    // that is why the flag is written out now.
+    if (version >= 7) {
+      yread(&check, (void *)&context->frtIcIntOwed, sizeof(u8), 1, fp);
+    }
+  } else {
+    // Older states carry neither; SH2Reset() above already put wdt back to its
+    // power-on values, so only the SLEEP flag needs clearing here.
+    context->isSleeping = 0;
+  }
+
   yabsys.frame_count = 0;
   return size;
 }

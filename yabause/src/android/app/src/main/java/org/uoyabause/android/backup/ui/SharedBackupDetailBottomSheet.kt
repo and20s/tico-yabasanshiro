@@ -38,6 +38,19 @@ class SharedBackupDetailBottomSheet : BottomSheetDialogFragment() {
         fun onShareClick(item: SharedBackupItem)
 
         fun onDeleteClick(item: SharedBackupItem)
+
+        /**
+         * Report / hide overflow. The anchor is passed so the host can attach
+         * a popup menu to the button the user actually pressed.
+         */
+        fun onMoreClick(item: SharedBackupItem, anchor: View)
+
+        /**
+         * Whether report and hide apply to this save. False for the user's own
+         * saves and when signed out, so the overflow stays hidden rather than
+         * opening a menu whose every entry fails.
+         */
+        fun canReport(item: SharedBackupItem): Boolean
     }
 
     private var listener: Listener? = null
@@ -170,6 +183,12 @@ class SharedBackupDetailBottomSheet : BottomSheetDialogFragment() {
         val btnRate = view.findViewById<MaterialButton>(R.id.btn_rate_detail)
         val btnShare = view.findViewById<MaterialButton>(R.id.btn_share_detail)
         val btnDelete = view.findViewById<MaterialButton>(R.id.btn_delete_detail)
+        val btnMore = view.findViewById<MaterialButton>(R.id.btn_more_detail)
+
+        btnMore.visibility = if (listener?.canReport(item) == true) View.VISIBLE else View.GONE
+        btnMore.setOnClickListener { anchor ->
+            listener?.onMoreClick(item, anchor)
+        }
 
         btnImport.setOnClickListener {
             listener?.onImportClick(item)
@@ -212,6 +231,7 @@ class SharedBackupDetailBottomSheet : BottomSheetDialogFragment() {
             view.findViewById(R.id.btn_rate_detail),
             view.findViewById(R.id.btn_share_detail),
             view.findViewById(R.id.btn_delete_detail),
+            view.findViewById(R.id.btn_more_detail),
         )
 
         buttons.forEach { button ->

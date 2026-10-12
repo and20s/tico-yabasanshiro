@@ -346,7 +346,7 @@ VDP1|VDP1
 VDP1 Command Info|VDP1 Command Info
 VDP1 Command List|VDP1 Command List
 VDP2|VDP2
-Value|Value
+Value|القيمة
 Value :|Value :
 Value:|Value:
 Vdp1|Vdp1
@@ -372,3 +372,63 @@ Yabause is not initialized, can't manage backup ram.|Yabause is not initialized,
 http://www.emu-compatibility.com/yabause/index.php?lang=uk|http://www.emu-compatibility.com/yabause/index.php?lang=uk
 http://www.monkeystudio.org|http://www.monkeystudio.org
 toolBar|toolBar
+Yaba Sanshiro Setup|إعداد Yaba Sanshiro
+Next|التالي
+Back|رجوع
+Finish|إنهاء
+Graphics|الرسومات
+Choose the preset that matches your PC. You can change any of this later in Settings.|اختر الإعداد المسبق الذي يناسب جهازك. يمكنك تغيير ذلك لاحقًا من الإعدادات.
+Setting|الإعداد
+Controls|أزرار التحكم
+Press each button on your keyboard or gamepad when it is highlighted.|اضغط كل زر على لوحة المفاتيح أو ذراع التحكم عند تمييزه.
+Press the input for|اضغط مدخل الإدخال الخاص بـ
+All buttons are set.|تم ضبط جميع الأزرار.
+Games|الألعاب
+Tell Yaba Sanshiro where your games are.|أخبر Yaba Sanshiro بمكان ألعابك.
+Do not use an optical drive|عدم استخدام محرك أقراص ضوئية
+Choose the folder that contains your games|اختر المجلد الذي يحتوي على ألعابك
+Ready|جاهز
+Review your choices before applying them.|راجع اختياراتك قبل تطبيقها.
+High - modern high-end GPU and CPU|عالي - معالج رسومات ومعالج حديث وقوي
+Medium - mid-range GPU and CPU|متوسط - معالج رسومات ومعالج متوسط الفئة
+Low - older GPU and CPU|منخفض - معالج رسومات ومعالج أقدم
+Vulkan is not available in this build, so only the Low preset can be used.|Vulkan غير متوفر في هذا الإصدار، لذا يمكن استخدام إعداد منخفض فقط.
+Which device do you want to play with?|بأي جهاز تريد اللعب؟
+Press the input you want to use.|اضغط الإدخال الذي تريد استخدامه.
+Previous button|الزر السابق
+Skip this button|تخطي هذا الزر
+Skip input setup|تخطي إعداد الإدخال
+Folder that contains your CHD or ISO files|المجلد الذي يحتوي على ملفات CHD أو ISO
+Browse...|استعراض...
+Optical drive to play discs from|محرك الأقراص الضوئية لتشغيل الأقراص منه
+Both are optional. You can set them later in Settings.|كلاهما اختياري. يمكنك ضبطهما لاحقًا من الإعدادات.
+These settings will be applied when you press Finish.|سيتم تطبيق هذه الإعدادات عند الضغط على إنهاء.
+Vulkan Video|Vulkan Video
+OpenGL|OpenGL
+Other video core|نواة فيديو أخرى
+Polygon Generation|توليد المضلعات
+Compute Rasterizer|Compute Rasterizer
+GPU Tessellation|GPU Tessellation
+Internal Resolution|الدقة الداخلية
+RBG Resolution|دقة طبقة التمرير الدوارة
+OpenAL Sound Interface|OpenAL Sound Interface
+Other sound core|نواة صوت أخرى
+SCSP sync count per frame|عدد مزامنات SCSP في كل إطار
+Time Synchronization Mode|وضع مزامنة الوقت
+Synchronize to CPU|المزامنة مع المعالج
+Run Setup &Wizard...|تشغيل معالج الإعداد...
+Some of these settings only take effect when Yaba Sanshiro starts. Please restart it.|بعض هذه الإعدادات تصبح فعالة فقط عند بدء تشغيل Yaba Sanshiro. يرجى إعادة تشغيله.
+Buttons assigned|الأزرار المعيّنة
+Not set|غير محدد
+Keyboard|لوحة المفاتيح
+Keyboard / Mouse|لوحة المفاتيح / الفأرة
+not a known gamepad|ذراع تحكم غير معروفة
+Unknown device|جهاز غير معروف
+not connected|غير متصل
+This gamepad is recognised. It works without any setup.|تم التعرف على ذراع التحكم هذه. تعمل دون الحاجة لأي إعداد.
+This device cannot be set up automatically. Assign each button on the next page.|لا يمكن إعداد هذا الجهاز تلقائيًا. عيّن كل زر في الصفحة التالية.
+Use the default assignment|استخدام التعيين الافتراضي
+Input device|جهاز الإدخال
+Native (native resolution of Window)|الأصلية (دقة النافذة الأصلية)
+Fit to Emulation Resolution|مطابقة دقة المحاكاة
+Use compute shader for RBG generation|استخدام مظلل الحوسبة لتوليد RBG

@@ -73,6 +73,11 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 
 int NanovgVulkanSetDevices(VkDevice device, VkPhysicalDevice gpu, VkRenderPass renderPass, VkCommandBuffer cmdBuffer, int preTransformFlag);
 
+// VDP2 color calculation window helper (defined next to genPolygon, where the
+// rest of the cc-window logic lives). Declared here because compositeVdp2New,
+// which sits earlier in this file, needs it too.
+static bool vdp2CcWindowOffEverywhere(u16 ccWinByte);
+
 VIDVulkan *VIDVulkan::_instance = nullptr;
 
 extern "C" {
@@ -505,7 +510,29 @@ void VIDVulkan::Vdp1LocalCoordinate(u8 *ram, Vdp1 *regs) { vdp1->LocalCoordinate
 
 int VIDVulkan::Vdp2Reset(void) { return 0; }
 
+// YABA_AC_DIFF=<file>: see the probe in Vdp2DrawStart. Written once at exit so
+// a batch run can attribute per title.
+static unsigned long long acDiffFrames = 0;
+static unsigned long long acDiffTotal = 0;
+
+static void acDiffWrite(void) {
+  const char * p = getenv("YABA_AC_DIFF");
+  if (p == NULL)
+    return;
+  FILE * fp = fopen(p, "a");
+  if (fp == NULL)
+    return;
+  fprintf(fp, "%llu %llu\n", acDiffFrames, acDiffTotal);
+  fclose(fp);
+}
+
 void VIDVulkan::Vdp2DrawStart(void) {
+  static bool acDiffHooked = false;
+  if (!acDiffHooked) {
+    acDiffHooked = true;
+    if (getenv("YABA_AC_DIFF") != NULL)
+      atexit(acDiffWrite);
+  }
 
   if(rebuildSwapChain){
     LOGI("rebuild frame buffer");
@@ -536,6 +563,37 @@ void VIDVulkan::Vdp2DrawStart(void) {
   memcpy(&_baseVdp2Regs, fixVdp2Regs, sizeof(Vdp2));
   fixVdp2Regs = &_baseVdp2Regs;
   ::fixVdp2Regs = &_baseVdp2Regs;
+  // Decode this frame's VRAM access pattern from the same snapshot, so a
+  // layer's "may I fetch character data from this bank" answer always matches
+  // the map registers it resolves addresses with. YABA_VDP2_AC_LIVE=1 restores
+  // the old behaviour (read the live global) for comparison.
+  {
+    static int ac_live = -1;
+    if (ac_live < 0)
+      ac_live = (getenv("YABA_VDP2_AC_LIVE") != NULL);
+    if (ac_live)
+      memcpy(acVram, Vdp2External.AC_VRAM, sizeof(acVram));
+    else
+      Vdp2GetAccessPattern(fixVdp2Regs, acVram);
+
+    // YABA_AC_DIFF=<file>: count the frames where the two answers differ.
+    // The snapshot and the live global only disagree while a game rewrites
+    // the cycle pattern registers between line 0 and line 1, so a title that
+    // reports zero differing frames renders identically either way -- that is
+    // a proof of no impact, not a sample. Only the rest need an A/B run.
+    static int ac_diff_on = -1;
+    if (ac_diff_on < 0)
+      ac_diff_on = (getenv("YABA_AC_DIFF") != NULL);
+    if (ac_diff_on) {
+      u8 live[4][8];
+      memcpy(live, Vdp2External.AC_VRAM, sizeof(live));
+      u8 snap[4][8];
+      Vdp2GetAccessPattern(fixVdp2Regs, snap);
+      acDiffTotal++;
+      if (memcmp(live, snap, sizeof(live)) != 0)
+        acDiffFrames++;
+    }
+  }
   Vdp2SetResolution(fixVdp2Regs->TVMD);
   if (rebuildFrameBuffer) {
     LOGI("rebuild frame buffer");
@@ -556,31 +614,20 @@ void VIDVulkan::Vdp2DrawStart(void) {
     }
     // FB has been recreated; in compute mode rebuild Vdp1ComputeRasterizer with the new size.
     if (polygonMode == COMPUTE_RASTERIZER) {
-      // VDP1 persistent state (localCoord / systemClip / userClip) is
-      // designed to survive across frames via resetState(), but deleting
-      // the rasterizer here would also drop that state, and the first
-      // frame after resize (with no LocalCoord cmd) would shift every
-      // vertex back to the screen top-left origin. Snapshot before delete
-      // and restore after new() to match the graphics path behavior
-      // (where localX/localY are persistent member vars).
-      glm::ivec2 keepLocalCoord(0, 0);
-      glm::ivec2 keepSystemClip(2047, 2047);
-      glm::ivec4 keepUserClip(0, 0, 2047, 2047);
+      // The rasterizer's persistent VDP1 state (local coordinate / clip
+      // windows) is not carried over from the old instance: drawStart hands
+      // it over from Vdp1Regs before every frame's commands. Copying it from
+      // the old instance only worked for a resize - after a switch from a
+      // graphics mode there is no old instance, the state started over at
+      // (0,0), and a game that sets the local coordinate once (Daytona USA)
+      // drew everything shifted to the top-left for the rest of the session.
       if (vdp1Compute) {
-        const auto& st = vdp1Compute->getState();
-        keepLocalCoord = st.localCoord;
-        keepSystemClip = st.systemClip;
-        keepUserClip   = st.userClip;
         delete vdp1Compute;
         vdp1Compute = nullptr;
       }
       int fbW = vdp1->getFramebufferWidth();
       int fbH = vdp1->getFramebufferHeight();
       vdp1Compute = new Vdp1ComputeRasterizer(this, fbW, fbH);
-      vdp1Compute->setLocalCoord(keepLocalCoord.x, keepLocalCoord.y);
-      vdp1Compute->setSystemClip(keepSystemClip.x, keepSystemClip.y);
-      vdp1Compute->setUserClip(keepUserClip.x, keepUserClip.y,
-                               keepUserClip.z, keepUserClip.w);
     } else if (vdp1Compute) {
       // Mode just toggled OFF compute. The vkQueueWaitIdle above
       // guarantees the GPU is idle, so this is the safe point to free
@@ -636,6 +683,31 @@ void VIDVulkan::Vdp2DrawStart(void) {
   vm->reset();
 }
 
+void VIDVulkan::onSurfaceLost() {
+  if (_renderer == nullptr) return;
+  Window *window = _renderer->getWindow();
+  if (window == nullptr) return;
+  window->onSurfaceLost();
+}
+
+void VIDVulkan::dropUnpresentableFrame() {
+  // Nothing was recorded, so nothing is submitted - except that the RBG compute
+  // pass of this frame may already have signaled its completion semaphore, and
+  // the composite submit that would have waited on it is not coming. Consume it
+  // with an empty submit, or the next RBG submit signals a semaphore that is
+  // still signaled. The VDP2 read-done semaphore needs nothing: it is only
+  // marked pending by a composite submit, and none happened.
+  VkSemaphore rbgSem = rbgGenerator->getCompleteSemaphore();
+  if (rbgSem == VK_NULL_HANDLE) return;
+  VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+  VkSubmitInfo submit_info{};
+  submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+  submit_info.waitSemaphoreCount = 1;
+  submit_info.pWaitSemaphores = &rbgSem;
+  submit_info.pWaitDstStageMask = &waitStage;
+  ErrorCheck(vkQueueSubmit(_renderer->GetVulkanQueue(), 1, &submit_info, VK_NULL_HANDLE));
+}
+
 void VIDVulkan::renderExternal(const std::function<void(
   VkDevice device,
   VkPhysicalDevice gpu,
@@ -648,6 +720,10 @@ void VIDVulkan::renderExternal(const std::function<void(
 
   int ci = getCurrentCommandIndex();
   int fi = _renderer->getWindow()->BeginRender();
+  if (fi < 0) {
+    dropUnpresentableFrame();
+    return;
+  }
 
   const auto fenceWaitStart = std::chrono::high_resolution_clock::now();
   ErrorCheck(vkWaitForFences(device, 1, &commandFence[ci], VK_TRUE, UINT64_MAX));
@@ -1037,7 +1113,15 @@ void VIDVulkan::compositeVdp2New(VkCommandBuffer commandBuffer, Vdp2 *regs,
     int bw1 = bwin1 << 1;
     int lw1 = logwin1 << 1;
     int winmask = (bwin0 | bw1);
-    if (winmask != 0) {
+    if (vdp2CcWindowOffEverywhere(wd)) {
+      // Logic bit set with no window enabled: hardware reports "outside" for
+      // every pixel, i.e. color calc is off across the whole screen. Signal
+      // that to the shader with the deny-all mode (2); the mask must be
+      // non-zero for the shader to run the test at all.
+      ccWinMask = 1;
+      ccWinFlag = 0;
+      ccWinMode = 2;
+    } else if (winmask != 0) {
       int winflag = 0;
       if (lmode == 0) {            // and
         if (bwin0) winflag = logwin0;
@@ -1066,7 +1150,12 @@ void VIDVulkan::compositeVdp2New(VkCommandBuffer commandBuffer, Vdp2 *regs,
   if (regs->MZCTL & 0x4)  mosaicMask |= (1 << vdp2cc::kNBG2);
   if (regs->MZCTL & 0x8)  mosaicMask |= (1 << vdp2cc::kNBG3);
   if (regs->MZCTL & 0x10) mosaicMask |= (1 << vdp2cc::kRBG0);
+  // A rotation background is mosaiced horizontally only (MZSZV does not apply
+  // to it - hard/vdp2/hon/p04_b0.md), so RBG0 is excluded from the vertical
+  // mask. ReadMosaicData carries the same rule for the non-compositor paths.
+  int mosaicVMask = mosaicMask & ~(1 << vdp2cc::kRBG0);
   if (mosaicX <= 1 && mosaicY <= 1) mosaicMask = 0;  // no actual mosaic
+  if (mosaicMask == 0) mosaicVMask = 0;
 
   vdp2Compositor->composite(commandBuffer, vdp2GBuffer, targetRenderPass,
                             viewport, scissor, backRGB,
@@ -1080,7 +1169,7 @@ void VIDVulkan::compositeVdp2New(VkCommandBuffer commandBuffer, Vdp2 *regs,
                             layerColorOffsetRGB, backColorOffsetRGB,
                             _vdp2DebugViewSlice,
                             ccWinMask, ccWinFlag, ccWinMode,
-                            mosaicX, mosaicY, mosaicMask,
+                            mosaicX, mosaicY, mosaicMask, mosaicVMask,
                             kRotCos[rotSteps], kRotSin[rotSteps],
                             backPerLine);
 }
@@ -1126,10 +1215,16 @@ VdpPipeline *VIDVulkan::getGBufferLayerPipelineAs(VdpPipeline *src,
   // avoids one layer's UBO stomping another's before the GPU consumes it. The
   // requested prgid (not src->prgid) is part of the key so a layer's normal and
   // per-line companions stay distinct.
-  const uint8_t winflg = src->getWinFlg();
-  const uint32_t key = (static_cast<uint32_t>(prgid) << 16) |
-                       (static_cast<uint32_t>(winflg) << 8) |
-                       (static_cast<uint32_t>(src->id) & 0xFF);
+  // winflg is the full 32-bit window key (display byte plus the cc-window bits
+  // 8..17). Narrowing it to uint8_t here would drop the cc bits, so two
+  // pipelines that differ only in their cc window -- notably a cc-clipped layer
+  // and its complement companion -- would collapse onto the same cache entry
+  // and get each other's stencil state. The key is 64-bit for the same reason:
+  // a 32-bit key cannot hold prgid, a 32-bit winflg and the layer id at once.
+  const uint32_t winflg = src->getWinFlg();
+  const uint64_t key = (static_cast<uint64_t>(prgid) << 40) |
+                       (static_cast<uint64_t>(winflg) << 8) |
+                       (static_cast<uint64_t>(src->id) & 0xFF);
   auto it = _gbufferLayerPipelines.find(key);
   if (it != _gbufferLayerPipelines.end()) {
     return it->second;
@@ -1629,6 +1724,13 @@ void VIDVulkan::Vdp2DrawEnd(void) {
   int ci = getCurrentCommandIndex();
   int fi = _renderer->getWindow()->BeginRender();
   // LOGD("====== commandBuffer is %d/%d/%d ========", ci,fi,frameCount);
+  if (fi < 0) {
+    // No surface to present to (e.g. the app went to the background). Drop
+    // the frame; emulation must keep advancing so it can still be paused or
+    // shut down.
+    dropUnpresentableFrame();
+    return;
+  }
 
   const auto fenceWaitStart = std::chrono::high_resolution_clock::now();
   ErrorCheck(vkWaitForFences(device, 1, &commandFence[ci], VK_TRUE, UINT64_MAX));
@@ -2090,6 +2192,20 @@ void VIDVulkan::Vdp2DrawEnd(void) {
           // Goto Mosaic render pass
           if (layers[i][j]->mosaic[0] != 1 || layers[i][j]->mosaic[1] != 1) {
 
+            // The window is clipped with the stencil buffer, and only the main
+            // target holds the window bits: the offscreen pass has its own
+            // depth/stencil attachment that nothing ever writes them into. So
+            // draw the layer there with a window-free pipeline and let the blit
+            // below apply the window on the main target, where the stencil does
+            // exist. Leaving the layer's window stencil test on made it compare
+            // against an attachment that had never been written - desktop
+            // drivers happened to let it pass, Adreno read zeros and rejected
+            // every fragment, so the offscreen stayed empty and RBG0 vanished
+            // from bench disc 03 LV09/LV10. The OpenGL path was given the same
+            // treatment (apply the window on the transfer side).
+            VdpPipeline *offscreenPipe =
+                pipleLineFactory->getPipeline(layers[i][j]->prgid, this, this->tm, this->vm, 0);
+
             UniformBufferObject ubomini = ubo;
             ubomini.offsetx = 0;
             ubomini.offsety = 0;
@@ -2097,14 +2213,40 @@ void VIDVulkan::Vdp2DrawEnd(void) {
             ubomini.windowHeight = offscreenPass.height;
             layers[i][j]->setUBO(&ubomini, sizeof(ubomini));
             layers[i][j]->updateDescriptorSets();
-            renderToOffecreenTarget(commandBuffer, layers[i][j], offcount);
+            renderToOffecreenTarget(commandBuffer, layers[i][j], offcount, offscreenPipe);
+            onFramePipelines.push_back(offscreenPipe);
 
-            ubo.u_tw = vdp2width;
-            ubo.u_th = vdp2height;
+            // The mosaic blit texelFetches the offscreen target, so u_tw / u_th
+            // must be that target's size - which is the Saturn size times the
+            // compute scale, with the axes swapped when the surface is
+            // pre-rotated by 90/270 (generateOffscreenPath allocates it that
+            // way). Passing the raw Saturn size indexed past the end of a
+            // swapped target and every fetch landed outside, so the shader
+            // discarded the whole layer: on Adreno (pre-rotation 90) bench disc
+            // 03 LV09/LV10 lost RBG0 entirely. The per-line blit next door has
+            // always passed the offscreen size here.
+            //
+            // The block size follows the same axes. Mosaic is measured in
+            // Saturn dots, so it scales with the compute multiplier, and the
+            // horizontal block applies to the offscreen y axis once the axes
+            // are swapped - which is why the stripes came out vertical.
+            const int fbScale = getComputeFbScale();
+            int mosaicU = layers[i][j]->mosaic[0] * fbScale;
+            int mosaicV = layers[i][j]->mosaic[1] * fbScale;
+            if (ubo.u_dir == 1 || ubo.u_dir == 2) {  // 90 / 270
+              const int t = mosaicU;
+              mosaicU = mosaicV;
+              mosaicV = t;
+            }
+            ubo.u_tw = offscreenPass.width;
+            ubo.u_th = offscreenPass.height;
             ubo.vheight = (i / 10.0f);
-            ubo.u_mosaic_x = layers[i][j]->mosaic[0];
-            ubo.u_mosaic_y = layers[i][j]->mosaic[1];
-            renderEffectToMainTarget(commandBuffer, ubo, 1, viewportData,offcount);
+            ubo.u_mosaic_x = mosaicU;
+            ubo.u_mosaic_y = mosaicV;
+            VdpPipeline *mosaicPipe = pipleLineFactory->getPipeline(PG_VDP2_MOSAIC, this, this->tm, this->vm,
+                                                                    layers[i][j]->getWinFlg());
+            renderEffectToMainTarget(commandBuffer, ubo, 1, viewportData, offcount, mosaicPipe);
+            onFramePipelines.push_back(mosaicPipe);
             offcount++;
           }
 
@@ -3019,6 +3161,80 @@ void VIDVulkan::SetSaturnResolution(int width, int height) {
   }
 }
 
+// --- VDP2 color calculation window (Sega VDP2 manual ch.12, WCTLD>>8) -------
+//
+// Degenerate cc-window control byte: the logic bit is set but no window is
+// enabled. vidsoft's TestBothWindow (vidsoft.c:518-524) returns "outside" for
+// every pixel in that case, i.e. color calculation is off across the WHOLE
+// screen -- not "no window configured, so calc everywhere".
+static bool vdp2CcWindowOffEverywhere(u16 ccWinByte) {
+  return (ccWinByte & 0x2A) == 0 && (ccWinByte & 0x80) != 0;
+}
+
+// Decide whether a layer takes the cc-window clip, and with which companion.
+// Shared by genPolygon and genPolygonRbg0, which previously carried
+// byte-identical copies of this logic and had already drifted apart
+// (PG_VDP2_RBG_CRAM_LINE was missing from one of the two switches) -- exactly
+// the drift the genPolygon/genPolygonRbg0 field-copy rule warns about.
+//
+// Returns true when the caller should BOTH OR the cc key into the main
+// pipeline's winflag AND create the opaque complement companion; *pairPrg then
+// receives the companion's pipeline id. The two always go together: clipping
+// the blended draw without drawing the complement would leave those pixels
+// undrawn, so the layer would vanish there instead of rendering opaque.
+static bool vdp2PlanCcWindow(const vdp2draw_struct *input, YglPipelineId prg,
+                             u16 ccWinByte, bool newComposite,
+                             YglPipelineId *pairPrg) {
+  // The new composite path implements the cc window per pixel in the
+  // compositor instead of with the window stencil.
+  if (newComposite) return false;
+  if ((input->blendmode & 0x03) == VDP2_CC_NONE) return false;
+  // No window enabled -> nothing to clip here. (The degenerate logic-bit-only
+  // case is handled by the caller clearing the layer's color calc up front.)
+  if ((ccWinByte & 0x2A) == 0) return false;
+  // Mosaic and per-line layers render through an offscreen pass that has no
+  // window stencil attachment, so they keep the pre-fix behavior.
+  if (input->mosaicxmask != 1 || input->mosaicymask != 1) return false;
+  if (input->linescreen == 2 || input->lineTexture != 0) return false;
+  // The companion draws the complement with a single stencil compare, which can
+  // only express "outside the cc area" when the layer has no display window of
+  // its own -- "inside the display window AND outside the cc area" would need
+  // two compares. Applying the clip without a companion would punch a hole in
+  // the layer (the complement region drawn by nobody), so skip the cc window
+  // entirely for those layers instead.
+  if (input->bEnWin0 != 0 || input->bEnWin1 != 0 || input->bEnSpriteWin != 0) {
+    return false;
+  }
+  switch (prg) {
+  case PG_NORMAL:
+  case PG_NORMAL_DSTALPHA:
+  case PG_VDP2_ADDBLEND:
+  case PG_LINECOLOR_INSERT:
+  case PG_LINECOLOR_INSERT_DESTALPHA:
+    *pairPrg = PG_VDP2_NOBLEND;
+    return true;
+  case PG_VDP2_NORMAL_CRAM:
+  case PG_VDP2_NORMAL_CRAM_DSTALPHA:
+  case PG_VDP2_ADDCOLOR_CRAM:
+  case PG_LINECOLOR_INSERT_CRAM:
+  case PG_LINECOLOR_INSERT_DESTALPHA_CRAM:
+  case PG_VDP2_RBG_CRAM_LINE:
+    *pairPrg = PG_VDP2_NOBLEND_CRAM;
+    return true;
+  default:
+    // Blur / special-priority / per-line variants keep the pre-fix behavior.
+    return false;
+  }
+}
+
+// Apply the degenerate "cc off everywhere" rule to a layer before its pipeline
+// is chosen, so the plain opaque pipeline is selected instead of a blending
+// one. Call at the top of genPolygon / genPolygonRbg0.
+static void vdp2ApplyCcWindowOffEverywhere(vdp2draw_struct *input, u16 ccWinByte) {
+  if (!vdp2CcWindowOffEverywhere(ccWinByte)) return;
+  input->blendmode &= ~0x03;
+}
+
 // VdpPipeline ** pipleLine    [out] generated pipeline object
 // vdp2draw_struct * input     [in]  draw parameters
 // CharTexture * output         [out] generated texture info; NULL = use cache index
@@ -3037,6 +3253,12 @@ int VIDVulkan::genPolygon(VdpPipeline **pipleLine, vdp2draw_struct *input, CharT
   // float * vtxa;
 
   const int CCRTMD = ((fixVdp2Regs->CCCTL >> 9) & 0x01); // hard/vdp2/hon/p12_14.htm#CCRTMD_
+
+  // Color calc window degenerate case (ch.12): a cc-window control byte with
+  // the logic bit set but no window enabled means "no color calc anywhere" on
+  // hardware, not "no window, so calc everywhere". Clear the layer's color-calc
+  // mode before the pipeline is chosen so the opaque variant is selected.
+  vdp2ApplyCcWindowOffEverywhere(input, (fixVdp2Regs->WCTLD >> 8) & 0xFF);
 
   // issue #22: bitmap special priority (SFPRMD mode 1). Tiles get their
   // per-character priorityOffset in drawPattern(); bitmaps have no tiles, so the
@@ -3124,7 +3346,7 @@ int VIDVulkan::genPolygon(VdpPipeline **pipleLine, vdp2draw_struct *input, CharT
     }
   }
 
-  auto winflg = VdpPipeline::genWinFlag(
+  uint32_t winflg = VdpPipeline::genWinFlag(
     input->LogicWin,
     input->bEnWin0,
     input->bEnWin1,
@@ -3134,18 +3356,43 @@ int VIDVulkan::genPolygon(VdpPipeline **pipleLine, vdp2draw_struct *input, CharT
     input->WindowAreaSprite
   );
 
-  if(input->bEnSpriteWin != 0) {
-    printf("hello");
+  // Color-calc window (Sega VDP2 manual ch.12, WCTLD>>8): when this layer has
+  // color calculation enabled and a cc window is active, clip the blended draw
+  // to the cc-window valid area with the window stencil and let an opaque
+  // companion pipeline (ccPair) draw the complement region, because on hardware
+  // a pixel outside the cc valid area is still displayed, just without color
+  // calculation (EMIT Vol.1 dims only the subtitle band this way). See
+  // vdp2PlanCcWindow for the exclusions.
+  const u16 ccWinByte = (fixVdp2Regs->WCTLD >> 8) & 0xFF;
+  YglPipelineId ccPairPrg = PG_NORMAL;
+  const bool ccWantPair = vdp2PlanCcWindow(input, prg, ccWinByte,
+                                           _vdp2NewComposite, &ccPairPrg);
+  if (ccWantPair) {
+    winflg |= VdpPipeline::genCcWinFlag(ccWinByte, false);
   }
 
   if (*pipleLine == NULL) {
     *pipleLine = pipleLineFactory->getPipeline(prg, this, this->tm, this->vm, winflg);
   } else if ((*pipleLine)->prgid != prg || (*pipleLine)->getWinFlg() != winflg) {
+    // garbage() also releases and unlinks the pipeline's ccPair companion.
     pipleLineFactory->garbage(*pipleLine);
     *pipleLine = pipleLineFactory->getPipeline(prg, this, this->tm, this->vm, winflg);
   }
 
   program = *pipleLine;
+
+  if (ccWantPair) {
+    const uint32_t pairFlag = VdpPipeline::genCcWinFlag(ccWinByte, true);
+    if (program->ccPair == NULL) {
+      program->ccPair = pipleLineFactory->getPipeline(ccPairPrg, this, this->tm, this->vm, pairFlag);
+    } else if (program->ccPair->prgid != ccPairPrg || program->ccPair->getWinFlg() != pairFlag) {
+      pipleLineFactory->garbage(program->ccPair);
+      program->ccPair = pipleLineFactory->getPipeline(ccPairPrg, this, this->tm, this->vm, pairFlag);
+    }
+  } else if (program->ccPair != NULL) {
+    pipleLineFactory->garbage(program->ccPair);
+    program->ccPair = NULL;
+  }
 
   program->priority = input->priority;
 
@@ -3174,6 +3421,32 @@ int VIDVulkan::genPolygon(VdpPipeline **pipleLine, vdp2draw_struct *input, CharT
   // this the pipeline keeps a stale id from the factory pool and
   // isolation matches the wrong (or no) layer.
   program->id = input->id;
+
+  if (program->ccPair != NULL) {
+    // The companion draws the same geometry unblended in the cc-window
+    // complement region; keep every draw-loop-consumed field in sync except
+    // blendmode (none) and the offscreen-pass routes (mosaic / lineTexture),
+    // which the gate above already excludes.
+    VdpPipeline *pair = program->ccPair;
+    pair->priority = input->priority;
+    pair->bwin0 = 0;
+    pair->logwin0 = 0;
+    pair->bwin1 = 0;
+    pair->logwin1 = 0;
+    pair->bwinsp = 0;
+    pair->logwinsp = 0;
+    pair->blendmode = VDP2_CC_NONE;
+    pair->winmode = 0;
+    pair->mosaic[0] = 1;
+    pair->mosaic[1] = 1;
+    pair->specialPriority = input->specialprimode;
+    pair->interuput_texture = VK_NULL_HANDLE;
+    pair->lineTexture = VK_NULL_HANDLE;
+    pair->specialcolormode = input->specialcolormode;
+    pair->colornumber = input->colornumber;
+    pair->specialcolorfunction = input->specialcolorfunction;
+    pair->id = input->id;
+  }
 
   Vertex tmp[4];
 
@@ -3297,6 +3570,28 @@ int VIDVulkan::genPolygon(VdpPipeline **pipleLine, vdp2draw_struct *input, CharT
   program->vertices.push_back(tmp[2]);
   program->vertices.push_back(tmp[3]);
 
+  if (program->ccPair != NULL) {
+    VdpPipeline *pair = program->ccPair;
+    pair->color_offset_val[0] = program->color_offset_val[0];
+    pair->color_offset_val[1] = program->color_offset_val[1];
+    pair->color_offset_val[2] = program->color_offset_val[2];
+    pair->color_offset_val[3] = program->color_offset_val[3];
+
+    int lastPairVertex = pair->vertices.size();
+
+    pair->indices.push_back(lastPairVertex + 0);
+    pair->indices.push_back(lastPairVertex + 1);
+    pair->indices.push_back(lastPairVertex + 2);
+    pair->indices.push_back(lastPairVertex + 2);
+    pair->indices.push_back(lastPairVertex + 3);
+    pair->indices.push_back(lastPairVertex + 0);
+
+    pair->vertices.push_back(tmp[0]);
+    pair->vertices.push_back(tmp[1]);
+    pair->vertices.push_back(tmp[2]);
+    pair->vertices.push_back(tmp[3]);
+  }
+
   return 0;
 }
 
@@ -3357,6 +3652,12 @@ int VIDVulkan::genPolygonRbg0(VdpPipeline **pipleLine, vdp2draw_struct *input, C
   // float * vtxa;
 
   const int CCRTMD = ((fixVdp2Regs->CCCTL >> 9) & 0x01); // hard/vdp2/hon/p12_14.htm#CCRTMD_
+
+  // Color calc window degenerate case (ch.12): a cc-window control byte with
+  // the logic bit set but no window enabled means "no color calc anywhere" on
+  // hardware, not "no window, so calc everywhere". Clear the layer's color-calc
+  // mode before the pipeline is chosen so the opaque variant is selected.
+  vdp2ApplyCcWindowOffEverywhere(input, (fixVdp2Regs->WCTLD >> 8) & 0xFF);
 
   // issue #22: bitmap special priority (SFPRMD mode 1). Tiles get their
   // per-character priorityOffset in drawPattern(); bitmaps have no tiles, so the
@@ -3454,7 +3755,7 @@ int VIDVulkan::genPolygonRbg0(VdpPipeline **pipleLine, vdp2draw_struct *input, C
     }
   }
 
-  auto winflg = VdpPipeline::genWinFlag(
+  uint32_t winflg = VdpPipeline::genWinFlag(
     input->LogicWin,
     input->bEnWin0,
     input->bEnWin1,
@@ -3464,14 +3765,39 @@ int VIDVulkan::genPolygonRbg0(VdpPipeline **pipleLine, vdp2draw_struct *input, C
     input->WindowAreaSprite
   );
 
+  // Color-calc window (WCTLD>>8): same scheme as genPolygon, sharing the same
+  // vdp2PlanCcWindow helper so the two can no longer drift apart.
+  const u16 ccWinByte = (fixVdp2Regs->WCTLD >> 8) & 0xFF;
+  YglPipelineId ccPairPrg = PG_NORMAL;
+  const bool ccWantPair = vdp2PlanCcWindow(input, prg, ccWinByte,
+                                           _vdp2NewComposite, &ccPairPrg);
+  if (ccWantPair) {
+    winflg |= VdpPipeline::genCcWinFlag(ccWinByte, false);
+  }
+
   if (*pipleLine == NULL) {
     *pipleLine = pipleLineFactory->getPipeline(prg, this, this->tm, this->vm, winflg);
   } else if ((*pipleLine)->prgid != prg || (*pipleLine)->getWinFlg() != winflg) {
+    // garbage() also releases and unlinks the pipeline's ccPair companion.
     pipleLineFactory->garbage(*pipleLine);
     *pipleLine = pipleLineFactory->getPipeline(prg, this, this->tm, this->vm, winflg);
   }
 
   program = *pipleLine;
+
+  if (ccWantPair) {
+    const uint32_t pairFlag = VdpPipeline::genCcWinFlag(ccWinByte, true);
+    if (program->ccPair == NULL) {
+      program->ccPair = pipleLineFactory->getPipeline(ccPairPrg, this, this->tm, this->vm, pairFlag);
+    } else if (program->ccPair->prgid != ccPairPrg || program->ccPair->getWinFlg() != pairFlag) {
+      pipleLineFactory->garbage(program->ccPair);
+      program->ccPair = pipleLineFactory->getPipeline(ccPairPrg, this, this->tm, this->vm, pairFlag);
+    }
+  } else if (program->ccPair != NULL) {
+    pipleLineFactory->garbage(program->ccPair);
+    program->ccPair = NULL;
+  }
+
   program->priority = input->priority;
 
   program->colornumber = input->colornumber;
@@ -3572,6 +3898,48 @@ int VIDVulkan::genPolygonRbg0(VdpPipeline **pipleLine, vdp2draw_struct *input, C
   program->vertices.push_back(tmp[2]);
   program->vertices.push_back(tmp[3]);
 
+  if (program->ccPair != NULL) {
+    // Companion pass for the cc window: same geometry and layer state, drawn
+    // unblended in the cc complement region (see genPolygon for the scheme).
+    VdpPipeline *pair = program->ccPair;
+    pair->priority = input->priority;
+    pair->colornumber = input->colornumber;
+    pair->bwin0 = 0;
+    pair->logwin0 = 0;
+    pair->bwin1 = 0;
+    pair->logwin1 = 0;
+    pair->bwinsp = 0;
+    pair->logwinsp = 0;
+    pair->winmode = 0;
+    pair->lineTexture = VK_NULL_HANDLE;
+    pair->blendmode = VDP2_CC_NONE;
+    pair->specialcolormode = input->specialcolormode;
+    pair->specialcolorfunction = input->specialcolorfunction;
+    pair->specialPriority = input->specialprimode;
+    pair->id = input->id;
+    pair->mosaic[0] = 1;
+    pair->mosaic[1] = 1;
+    pair->interuput_texture = program->interuput_texture;
+    pair->color_offset_val[0] = program->color_offset_val[0];
+    pair->color_offset_val[1] = program->color_offset_val[1];
+    pair->color_offset_val[2] = program->color_offset_val[2];
+    pair->color_offset_val[3] = program->color_offset_val[3];
+
+    int lastPairVertex = pair->vertices.size();
+
+    pair->indices.push_back(lastPairVertex + 0);
+    pair->indices.push_back(lastPairVertex + 1);
+    pair->indices.push_back(lastPairVertex + 2);
+    pair->indices.push_back(lastPairVertex + 2);
+    pair->indices.push_back(lastPairVertex + 3);
+    pair->indices.push_back(lastPairVertex + 0);
+
+    pair->vertices.push_back(tmp[0]);
+    pair->vertices.push_back(tmp[1]);
+    pair->vertices.push_back(tmp[2]);
+    pair->vertices.push_back(tmp[3]);
+  }
+
   return 0;
 }
 
@@ -3598,17 +3966,21 @@ void VIDVulkan::drawNBG0() {
   if (pipleLineNBG0) {
     pipleLineNBG0->vertices.clear();
     pipleLineNBG0->indices.clear();
+    if (pipleLineNBG0->ccPair) {
+      pipleLineNBG0->ccPair->vertices.clear();
+      pipleLineNBG0->ccPair->indices.clear();
+    }
   }
 
   for (int i = 0; i < 4; i++) {
     info.char_bank[i] = 0;
     info.pname_bank[i] = 0;
     for (int j = 0; j < 8; j++) {
-      if (Vdp2External.AC_VRAM[i][j] == 0x04) {
+      if (acVram[i][j] == 0x04) {
         info.char_bank[i] = 1;
         char_access |= 1 << j;
       }
-      if (Vdp2External.AC_VRAM[i][j] == 0x00) {
+      if (acVram[i][j] == 0x00) {
         info.pname_bank[i] = 1;
         ptn_access |= 1 << j;
       }
@@ -3630,7 +4002,7 @@ void VIDVulkan::drawNBG0() {
 
       ReadBitmapSize(&info, fixVdp2Regs->CHCTLA >> 2, 0x3);
 
-      info.charaddr = (fixVdp2Regs->MPOFR & 0x70) * 0x2000;
+      info.charaddr = ((fixVdp2Regs->MPOFR & 0x70) * 0x2000) & 0x7FFFF;
       info.paladdr = (fixVdp2Regs->BMPNA & 0x7) << 4;
       info.flipfunction = 0;
       info.specialfunction = 0;
@@ -3651,7 +4023,7 @@ void VIDVulkan::drawNBG0() {
     // paraB.PlaneAddr = (void FASTCALL(*)(void *, int,
     // Vdp2*))&Vdp2ParameterBPlaneAddr;
     paraB.coefenab = fixVdp2Regs->KTCTL & 0x100;
-    paraB.charaddr = (fixVdp2Regs->MPOFR & 0x70) * 0x2000;
+    paraB.charaddr = ((fixVdp2Regs->MPOFR & 0x70) * 0x2000) & 0x7FFFF;
     ReadPlaneSizeR(&paraB, fixVdp2Regs->PLSZ >> 12);
     for (int i = 0; i < 16; i++) {
       Vdp2ParameterBPlaneAddr(&info, i, fixVdp2Regs);
@@ -3958,6 +4330,9 @@ void VIDVulkan::drawNBG0() {
 
   if (pipleLineNBG0 != nullptr && pipleLineNBG0->vertices.size() != 0) {
     layers[info.priority].push_back(pipleLineNBG0);
+    if (pipleLineNBG0->ccPair != nullptr && pipleLineNBG0->ccPair->vertices.size() != 0) {
+      layers[info.priority].push_back(pipleLineNBG0->ccPair);
+    }
   }
 }
 
@@ -3977,6 +4352,10 @@ void VIDVulkan::drawNBG1() {
   if (pipleLineNBG1) {
     pipleLineNBG1->vertices.clear();
     pipleLineNBG1->indices.clear();
+    if (pipleLineNBG1->ccPair) {
+      pipleLineNBG1->ccPair->vertices.clear();
+      pipleLineNBG1->ccPair->indices.clear();
+    }
   }
 
   info.enable = fixVdp2Regs->BGON & 0x2;
@@ -3990,11 +4369,11 @@ void VIDVulkan::drawNBG1() {
     info.char_bank[i] = 0;
     info.pname_bank[i] = 0;
     for (int j = 0; j < 8; j++) {
-      if (Vdp2External.AC_VRAM[i][j] == 0x05) {
+      if (acVram[i][j] == 0x05) {
         info.char_bank[i] = 1;
         char_access |= (1 << j);
       }
-      if (Vdp2External.AC_VRAM[i][j] == 0x01) {
+      if (acVram[i][j] == 0x01) {
         info.pname_bank[i] = 1;
         ptn_access |= (1 << j);
       }
@@ -4253,6 +4632,9 @@ void VIDVulkan::drawNBG1() {
 
   if (pipleLineNBG1 != nullptr && pipleLineNBG1->vertices.size() != 0) {
     layers[info.priority].push_back(pipleLineNBG1);
+    if (pipleLineNBG1->ccPair != nullptr && pipleLineNBG1->ccPair->vertices.size() != 0) {
+      layers[info.priority].push_back(pipleLineNBG1->ccPair);
+    }
   }
 }
 
@@ -4379,6 +4761,10 @@ void VIDVulkan::drawNBG2() {
   if (pipleLineNBG2) {
     pipleLineNBG2->vertices.clear();
     pipleLineNBG2->indices.clear();
+    if (pipleLineNBG2->ccPair) {
+      pipleLineNBG2->ccPair->vertices.clear();
+      pipleLineNBG2->ccPair->indices.clear();
+    }
   }
 
   info.enable = fixVdp2Regs->BGON & 0x4;
@@ -4478,11 +4864,11 @@ void VIDVulkan::drawNBG2() {
       info.char_bank[i] = 0;
       info.pname_bank[i] = 0;
       for (int j = 0; j < 8; j++) {
-        if (Vdp2External.AC_VRAM[i][j] == 0x06) {
+        if (acVram[i][j] == 0x06) {
           info.char_bank[i] = 1;
           char_access |= (1 << j);
         }
-        if (Vdp2External.AC_VRAM[i][j] == 0x02) {
+        if (acVram[i][j] == 0x02) {
           info.pname_bank[i] = 1;
           ptn_access |= (1 << j);
         }
@@ -4523,6 +4909,9 @@ void VIDVulkan::drawNBG2() {
 
   if (pipleLineNBG2 != nullptr && pipleLineNBG2->vertices.size() != 0) {
     layers[info.priority].push_back(pipleLineNBG2);
+    if (pipleLineNBG2->ccPair != nullptr && pipleLineNBG2->ccPair->vertices.size() != 0) {
+      layers[info.priority].push_back(pipleLineNBG2->ccPair);
+    }
   }
 }
 
@@ -4542,6 +4931,10 @@ void VIDVulkan::drawNBG3() {
   if (pipleLineNBG3) {
     pipleLineNBG3->vertices.clear();
     pipleLineNBG3->indices.clear();
+    if (pipleLineNBG3->ccPair) {
+      pipleLineNBG3->ccPair->vertices.clear();
+      pipleLineNBG3->ccPair->indices.clear();
+    }
   }
 
   info.enable = fixVdp2Regs->BGON & 0x8;
@@ -4636,11 +5029,11 @@ void VIDVulkan::drawNBG3() {
       info.char_bank[i] = 0;
       info.pname_bank[i] = 0;
       for (int j = 0; j < 8; j++) {
-        if (Vdp2External.AC_VRAM[i][j] == 0x07) {
+        if (acVram[i][j] == 0x07) {
           info.char_bank[i] = 1;
           char_access |= (1 << j);
         }
-        if (Vdp2External.AC_VRAM[i][j] == 0x03) {
+        if (acVram[i][j] == 0x03) {
           info.pname_bank[i] = 1;
           ptn_access |= (1 << j);
         }
@@ -4681,6 +5074,9 @@ void VIDVulkan::drawNBG3() {
   if (pipleLineNBG3 != nullptr && pipleLineNBG3->vertices.size() != 0) {
 
     layers[info.priority].push_back(pipleLineNBG3);
+    if (pipleLineNBG3->ccPair != nullptr && pipleLineNBG3->ccPair->vertices.size() != 0) {
+      layers[info.priority].push_back(pipleLineNBG3->ccPair);
+    }
   }
 }
 
@@ -4701,6 +5097,10 @@ void VIDVulkan::drawRBG0() {
   if (pipleLineRBG0) {
     pipleLineRBG0->vertices.clear();
     pipleLineRBG0->indices.clear();
+    if (pipleLineRBG0->ccPair) {
+      pipleLineRBG0->ccPair->vertices.clear();
+      pipleLineRBG0->ccPair->indices.clear();
+    }
   }
 
   if (!info->enable)
@@ -4753,8 +5153,8 @@ void VIDVulkan::drawRBG0() {
   // paraA.PlaneAddr = (void FASTCALL(*)(void *, int,
   // Vdp2*))&Vdp2ParameterAPlaneAddr; paraB.PlaneAddr = (void FASTCALL(*)(void
   // *, int, Vdp2*))&Vdp2ParameterBPlaneAddr;
-  paraA.charaddr = (fixVdp2Regs->MPOFR & 0x7) * 0x20000;
-  paraB.charaddr = (fixVdp2Regs->MPOFR & 0x70) * 0x2000;
+  paraA.charaddr = ((fixVdp2Regs->MPOFR & 0x7) * 0x20000) & 0x7FFFF;
+  paraB.charaddr = ((fixVdp2Regs->MPOFR & 0x70) * 0x2000) & 0x7FFFF;
   ReadPlaneSizeR(&paraA, fixVdp2Regs->PLSZ >> 8);
   ReadPlaneSizeR(&paraB, fixVdp2Regs->PLSZ >> 12);
 
@@ -4870,12 +5270,17 @@ void VIDVulkan::drawRBG0() {
     // Bitmap Mode
     ReadBitmapSize(info, fixVdp2Regs->CHCTLB >> 10, 0x1);
 
+    // The map offset field is 3 bits, so it can name a bitmap base of up to
+    // 0xE0000 while VDP2 VRAM is only 0x80000 bytes.  Hardware wraps the fetch
+    // address inside VRAM, and SGL's slBitMapRbg0 relies on that: it hands out
+    // offset 4 (0x80000) for a bitmap that actually sits at 0.  Without the
+    // wrap every fetch lands outside VRAM and the layer disappears.
     if (info->rotatenum == 0)
       // Parameter A
-      info->charaddr = (fixVdp2Regs->MPOFR & 0x7) * 0x20000;
+      info->charaddr = ((fixVdp2Regs->MPOFR & 0x7) * 0x20000) & 0x7FFFF;
     else
       // Parameter B
-      info->charaddr = (fixVdp2Regs->MPOFR & 0x70) * 0x2000;
+      info->charaddr = ((fixVdp2Regs->MPOFR & 0x70) * 0x2000) & 0x7FFFF;
 
     info->paladdr = (fixVdp2Regs->BMPNB & 0x7) << 4;
     info->flipfunction = 0;
@@ -4994,6 +5399,9 @@ void VIDVulkan::drawRBG0() {
 
   if (pipleLineRBG0 != nullptr && pipleLineRBG0->vertices.size() != 0) {
     layers[info->priority].push_back(pipleLineRBG0);
+    if (pipleLineRBG0->ccPair != nullptr && pipleLineRBG0->ccPair->vertices.size() != 0) {
+      layers[info->priority].push_back(pipleLineRBG0->ccPair);
+    }
   }
 }
 
@@ -5034,6 +5442,12 @@ void VIDVulkan::drawRotation(RBGDrawInfo *rbg, VdpPipeline **pipleLine) {
   case RBG_RES_2x:
     rbg->rotate_mval_h = 2.0f;
     rbg->rotate_mval_v = 2.0f;
+    rbg->hres = rbg->hres * rbg->rotate_mval_h;
+    rbg->vres = rbg->vres * rbg->rotate_mval_v;
+    break;
+  case RBG_RES_4x:
+    rbg->rotate_mval_h = 4.0f;
+    rbg->rotate_mval_v = 4.0f;
     rbg->hres = rbg->hres * rbg->rotate_mval_h;
     rbg->vres = rbg->vres * rbg->rotate_mval_v;
     break;
@@ -5499,6 +5913,7 @@ void VIDVulkan::drawRotation_in(RBGDrawInfo *rbg) {
   paraA.over_pattern_name = fixVdp2Regs->OVPNRA;
   paraB.over_pattern_name = fixVdp2Regs->OVPNRB;
 
+
   if (rbg_use_compute_shader) {
     rbgGenerator->update(rbg, paraA, paraB);
 
@@ -5540,7 +5955,7 @@ void VIDVulkan::drawRotation_in(RBGDrawInfo *rbg) {
 
     if (rgb_type == 0) {
 #if 0 // PERLINE
-      paraA.charaddr = (regs->MPOFR & 0x7) * 0x20000;
+      paraA.charaddr = ((regs->MPOFR & 0x7) * 0x20000) & 0x7FFFF;
       ReadPlaneSizeR(&paraA, regs->PLSZ >> 8);
       for (i = 0; i < 16; i++) {
         paraA.PlaneAddr(info, i, regs);
@@ -5568,7 +5983,7 @@ void VIDVulkan::drawRotation_in(RBGDrawInfo *rbg) {
       ReadPlaneSize(info, regs->PLSZ >> 12);
       ReadPatternData(info, regs->PNCN0, regs->CHCTLA & 0x1);
 
-      paraB.charaddr = (regs->MPOFR & 0x70) * 0x2000;
+      paraB.charaddr = ((regs->MPOFR & 0x70) * 0x2000) & 0x7FFFF;
       ReadPlaneSizeR(&paraB, regs->PLSZ >> 12);
       for (i = 0; i < 16; i++) {
         paraB.PlaneAddr(info, i, regs);
@@ -7046,6 +7461,35 @@ void VIDVulkan::drawPattern(vdp2draw_struct *info, CharTexture *texture, int x, 
   u64 cacheaddr = ((u32)(info->alpha >> 3) << 27) | (info->paladdr << 20) | info->charaddr | info->transparencyenable |
                   ((info->patternpixelwh >> 4) << 1) | (((u64)(info->coloroffset >> 8) & 0x07) << 32);
 
+  // issue #22 special priority (SFPRMD mode 1/2): setSpecialPriority bakes the
+  // resulting per-character priority into the decoded texture's B channel, and
+  // that value depends on the *pattern name* bits (specialfunction) and on the
+  // layer priority -- neither of which is part of the character pattern itself.
+  // A cache hit skips drawCell entirely, so without these bits in the key every
+  // map cell sharing a character pattern inherits the priority baked for the
+  // first cell that decoded it. In Sonic 3D's Green Grove that made whole floor
+  // tiles inherit specialfunction = 1 (priority 2 -> 3) and swallow Sonic.
+  if (info->specialprimode != 0) {
+    cacheaddr |= ((u64)((info->priority & 0xE) >> 1) << 35) | ((u64)(info->specialfunction & 1) << 38);
+  }
+
+  // Special color calculation (SFCCMD): getAlpha() bakes "is color calculation
+  // enabled for this dot" into the decoded texture's alpha, and for modes 1 and
+  // 2 that answer comes from info->specialcolorfunction -- a pattern *name*
+  // bit, i.e. per map cell, not per character pattern. The key above only
+  // describes the character pattern, and a cache hit skips drawCell entirely,
+  // so every cell sharing a pattern would inherit the alpha baked for whichever
+  // cell decoded it first. Mode 2 additionally compares the dot against the
+  // layer's special function code; mode 3 reads the CRAM color MSB only and so
+  // needs nothing here. Layers that do not use SFCCMD keep the same key as
+  // before, so the cache only splits where the bake actually differs.
+  if (info->specialcolormode != 0) {
+    cacheaddr |= ((u64)(info->specialcolormode & 0x3) << 39) | ((u64)(info->specialcolorfunction & 1) << 41);
+    if (info->specialcolormode == 2) {
+      cacheaddr |= ((u64)(info->specialcode & 0xFF) << 42);
+    }
+  }
+
   TextureCache c;
   vdp2draw_struct tile = {};
   int winmode = 0;
@@ -7064,6 +7508,19 @@ void VIDVulkan::drawPattern(vdp2draw_struct *info, CharTexture *texture, int x, 
   // and went translucent in the new composite. The texture alpha bake itself uses
   // info->specialcolormode directly, so the legacy path was unaffected.
   tile.specialcolormode = info->specialcolormode;
+  // issue #22: the per-tile `tile` struct must also carry the special PRIORITY
+  // mode (SFPRMD), for the same reason specialcolormode above does. genPolygon
+  // copies it into program->specialPriority, and the GBuffer companion only
+  // reads the per-character priority back from the decoded texture's B channel
+  // (baked by setSpecialPriority during drawCell, which uses the layer `info`
+  // and was therefore always correct) when that flag is non-zero. Left at 0 the
+  // new compositor reported the flat layer priority for every dot, so a mode-1
+  // layer could never rise above a sprite sharing its priority number -- Sonic
+  // 3D's Green Grove ground (NBG0/NBG1, priority 2, SFPRMD = 0x0005) lost to the
+  // priority-2 river sprite and the water was drawn over the terrain. The legacy
+  // path is unaffected: it sorts mode 1 via tile.priorityOffset (vertex z) below
+  // and its shaders only branch on specialPriority == 2.
+  tile.specialprimode = info->specialprimode;
   tile.specialcode = info->specialcode;
   tile.specialcolorfunction = info->specialcolorfunction;
   tile.mosaicxmask = info->mosaicxmask;
@@ -7750,7 +8207,10 @@ void VIDVulkan::generateOffscreenPath(int width, int height) {
   attchmentDescriptions[1].samples = VK_SAMPLE_COUNT_1_BIT;
   attchmentDescriptions[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
   attchmentDescriptions[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-  attchmentDescriptions[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+  // Cleared, not DONT_CARE: nothing writes window bits into this attachment,
+  // and leaving its contents undefined is what made the layer's stencil test
+  // behave differently from one driver to the next.
+  attchmentDescriptions[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
   attchmentDescriptions[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
   attchmentDescriptions[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
   attchmentDescriptions[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
@@ -7933,7 +8393,8 @@ void VIDVulkan::deleteOfscreenPath() {
   }
 }
 
-void VIDVulkan::renderToOffecreenTarget(VkCommandBuffer commandBuffer, VdpPipeline *render, int ofIndex) {
+void VIDVulkan::renderToOffecreenTarget(VkCommandBuffer commandBuffer, VdpPipeline *render, int ofIndex,
+                                        VdpPipeline *pipelineOverride) {
 
   std::array<VkClearValue, 2> clear_values{};
   clear_values[1].depthStencil.depth = 0.0f;
@@ -7973,10 +8434,13 @@ void VIDVulkan::renderToOffecreenTarget(VkCommandBuffer commandBuffer, VdpPipeli
   scissor.offset.y = 0;
   c.setScissor(0, 1, &scissor);
 
-  vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, render->getPipelineLayout(), 0, 1,
+  // The override carries the same bindings (same program id), so the layer's
+  // descriptor set stays valid against its layout.
+  VdpPipeline *state = (pipelineOverride != nullptr) ? pipelineOverride : render;
+  vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, state->getPipelineLayout(), 0, 1,
                           render->getDescriptorSet(), 0, nullptr);
 
-  vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, render->getGraphicsPipeline());
+  vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, state->getGraphicsPipeline());
 
   VkBuffer vertexBuffers[] = {vm->getVertexBuffer(render->vectexBlock)};
   VkDeviceSize offsets[] = {render->vertexOffset};
@@ -8116,12 +8580,46 @@ void VIDVulkan::renderWithLineEffectToMainTarget(VdpPipeline *p, VkCommandBuffer
   vkCmdDrawIndexed(commandBuffer, 6, 1, 0, 0, 0);
 }
 
-void VIDVulkan::renderEffectToMainTarget(VkCommandBuffer commandBuffer, const UniformBufferObject &ubo, int mode, const glm::vec4 & viewportData, int ofIndex) {
+void VIDVulkan::renderEffectToMainTarget(VkCommandBuffer commandBuffer, const UniformBufferObject &ubo, int mode, const glm::vec4 & viewportData, int ofIndex,
+                                         VdpPipeline *mosaicOverride) {
 
+  // The offscreen pass wrote this image as a color attachment and we are about
+  // to sample it. A tiler resolves the attachment lazily, so without this
+  // barrier the sampler can read a tile that was never written - on Adreno the
+  // mosaic layer came out empty (bench disc 03 LV09/LV10: RBG0 vanished).
+  // Desktop drivers happened to order it for us. renderWithLineEffectToMainTarget
+  // has always carried the same barrier.
+  VkImageMemoryBarrier barrier = {};
+  barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.image = offscreenPass.image;
+  barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  barrier.subresourceRange.baseMipLevel = 0;
+  barrier.subresourceRange.levelCount = 1;
+  barrier.subresourceRange.baseArrayLayer = 0;
+  barrier.subresourceRange.layerCount = 1;
+  barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+  barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+  // A pre-rotated surface reports its size in the pre-rotation orientation, so
+  // the render area has to be swapped the same way drawVdp2 swaps it. Windows
+  // never rotates, which is why using the surface size raw looked correct there.
+  int pretransformFlag = _renderer->getWindow()->GetPreTransFlag();
   VkRect2D render_area{};
   render_area.offset.x = 0;
   render_area.offset.y = 0;
-  render_area.extent = _renderer->getWindow()->GetVulkanSurfaceSize();
+  if (pretransformFlag & VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR ||
+      pretransformFlag & VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR) {
+    render_area.extent.width = _renderer->getWindow()->GetVulkanSurfaceSize().height;
+    render_area.extent.height = _renderer->getWindow()->GetVulkanSurfaceSize().width;
+  } else {
+    render_area.extent = _renderer->getWindow()->GetVulkanSurfaceSize();
+  }
 
   VkRenderPassBeginInfo render_pass_begin_info{};
   render_pass_begin_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -8151,18 +8649,25 @@ void VIDVulkan::renderEffectToMainTarget(VkCommandBuffer commandBuffer, const Un
     scissor.offset.y = 0;
     c.setScissor(0, 1, &scissor);
   } else {
-    viewport.width = renderWidth;
-    viewport.height = renderHeight;
-    viewport.x = originx;
-    viewport.y = originy;
+    // viewportData is the rectangle drawVdp2 gave the main pass: it already
+    // carries the pre-rotation swap and the letterbox origin. Recomputing it
+    // from originx / renderWidth (as this used to) is only correct when the
+    // surface is not rotated - and because this render pass stays open for the
+    // layers drawn after the mosaic one, the wrong rectangle displaced all of
+    // them too, not just this blit. renderWithLineEffectToMainTarget uses
+    // viewportData here for the same reason.
+    viewport.width = viewportData.z;
+    viewport.height = viewportData.w;
+    viewport.x = viewportData.x;
+    viewport.y = viewportData.y;
     viewport.minDepth = 0.0f;
     viewport.maxDepth = 1.0f;
     c.setViewport(0, 1, &viewport);
 
-    scissor.extent.width = renderWidth;
-    scissor.extent.height = renderHeight;
-    scissor.offset.x = originx;
-    scissor.offset.y = originy;
+    scissor.extent.width = viewportData.z;
+    scissor.extent.height = viewportData.w;
+    scissor.offset.x = viewportData.x;
+    scissor.offset.y = viewportData.y;
     c.setScissor(0, 1, &scissor);
   }
 
@@ -8177,17 +8682,20 @@ void VIDVulkan::renderEffectToMainTarget(VkCommandBuffer commandBuffer, const Un
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, offscreenRenderer.blit->getGraphicsPipeline());
   } else if (mode == 1) {
 
-    offscreenRenderer.mosaic->setUBO(&ubo, sizeof(ubo));
-    offscreenRenderer.mosaic->setSampler(VdpPipeline::bindIdTexture, offscreenPass.view, offscreenPass.sampler);
-    offscreenRenderer.mosaic->setSampler(VdpPipeline::bindIdWindow, windowRenderer->getImageView(),
-                                         windowRenderer->getSampler());
-    offscreenRenderer.mosaic->updateDescriptorSets();
+    // The override is the same mosaic program built for the layer's window
+    // flags, so its stencil test applies the window here on the main target.
+    VdpPipeline *mosaic = (mosaicOverride != nullptr) ? mosaicOverride : offscreenRenderer.mosaic;
+    mosaic->setUBO(&ubo, sizeof(ubo));
+    mosaic->setSampler(VdpPipeline::bindIdTexture, offscreenPass.view, offscreenPass.sampler);
+    mosaic->setSampler(VdpPipeline::bindIdWindow, windowRenderer->getImageView(),
+                       windowRenderer->getSampler());
+    mosaic->updateDescriptorSets();
 
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                            offscreenRenderer.mosaic->getPipelineLayout(), 0, 1,
-                            offscreenRenderer.mosaic->getDescriptorSet(), 0, nullptr);
+                            mosaic->getPipelineLayout(), 0, 1,
+                            mosaic->getDescriptorSet(), 0, nullptr);
 
-    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, offscreenRenderer.mosaic->getGraphicsPipeline());
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, mosaic->getGraphicsPipeline());
   }
 
   VkBuffer vertexBuffers[] = {offscreenRenderer.vertexBuffer};
@@ -8509,6 +9017,15 @@ void VIDVulkan::blitSubRenderTarget(VkCommandBuffer commandBuffer, const glm::ve
 
 void VIDVulkan::getScreenshot(void ** outbuf, int & width, int & height)
 {
+  // YABA_SHOT_PROF=1: per-stage timing, see UIYabause::takeScreenshot.
+  const bool shotProf = (getenv("YABA_SHOT_PROF") != NULL);
+  auto shotNow = []() {
+    return std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+  };
+  const double ts_enter = shotNow();
+  double ts_alloc = ts_enter, ts_blit = ts_enter, ts_map = ts_enter;
+
   screenshotSaved = false;
   bool supportsBlit = true;
 
@@ -8602,6 +9119,8 @@ void VIDVulkan::getScreenshot(void ** outbuf, int & width, int & height)
   //}
   //else {
   //}
+
+  ts_alloc = shotNow();
 
   // Do the actual blit from the swapchain image to our host visible destination image
   VkCommandBuffer copyCmd = beginSingleTimeCommands();
@@ -8708,6 +9227,7 @@ void VIDVulkan::getScreenshot(void ** outbuf, int & width, int & height)
 
   //vulkanDevice->flushCommandBuffer(copyCmd, queue);
   endSingleTimeCommands(copyCmd);
+  ts_blit = shotNow();
 
   // Get layout of the image (including row pitch)
   VkImageSubresource subResource{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 0 };
@@ -8719,9 +9239,35 @@ void VIDVulkan::getScreenshot(void ** outbuf, int & width, int & height)
   vkMapMemory(getDevice(), dstImageScreenMemory, 0, VK_WHOLE_SIZE, 0, (void**)&data);
   data += subResourceLayout.offset;
 
+  // This memory backs a HOST_VISIBLE LINEAR image, which drivers hand out as
+  // write-combined: fine to write, very slow to read. The transforms below
+  // read it one byte at a time and every such read goes uncached across the
+  // bus, which cost ~505ms of a ~535ms capture at 1280x960 (~400ns/pixel) and
+  // froze the emulator for half a second on every screenshot. Pull the image
+  // over once with a sequential memcpy -- which the CPU issues as wide,
+  // write-combine-friendly loads -- then run the transforms against ordinary
+  // cached memory. Falls back to reading the mapping directly if the staging
+  // allocation fails.
+  //
+  // Bound the copy by what the driver actually reports for the subresource,
+  // never by rows*rowPitch: the last row may be shorter than the pitch, and
+  // reading past the end of the mapping is an access violation that only
+  // fires when the allocation happens to end on a page boundary.
+  size_t copyBytes = (size_t)subResourceLayout.size;
+  const size_t availBytes = (size_t)memAllocInfo.allocationSize
+                          - (size_t)subResourceLayout.offset;
+  if (copyBytes == 0 || copyBytes > availBytes)
+    copyBytes = availBytes;
+  unsigned char * staging = (unsigned char *)malloc(copyBytes);
+  if (staging != nullptr) {
+    memcpy(staging, data, copyBytes);
+    data = staging;
+  }
 
   width = renderWidth;
   height = renderHeight;
+
+  ts_map = shotNow();
 
   // Allocate new buffer for this screenshot (caller will free it)
   unsigned char* dstbuf = (unsigned char*)malloc(width*height * 4);
@@ -8793,7 +9339,17 @@ void VIDVulkan::getScreenshot(void ** outbuf, int & width, int & height)
 
 
   
+  free(staging);
+  data = nullptr;
+
   *outbuf = (void*)dstbuf;
+  if (shotProf) {
+    printf("[SHOT/vk] createimage+alloc=%.1f blit+queuewait=%.1f map=%.1f "
+           "pixelcopy=%.1f total=%.1f ms\n",
+           ts_alloc - ts_enter, ts_blit - ts_alloc, ts_map - ts_blit,
+           shotNow() - ts_map, shotNow() - ts_enter);
+    fflush(stdout);
+  }
 #if 0
 
   std::ofstream file(filename, std::ios::out | std::ios::binary);

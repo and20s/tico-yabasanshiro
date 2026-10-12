@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Auto Backup content rules (API 23-30; API 31+ uses data_extraction_rules.xml).
+
+    benchmark_prefs holds install_id, the random per-installation id that
+    BenchmarkReportUploader.installId() relies on being gone on reinstall - see
+    that function's doc comment. benchmark_report_pending.json is a queued
+    measurement that must come from this device's own benchmark run, not from
+    a backup. Both are excluded so Auto Backup cannot resurrect either across
+    an uninstall/reinstall or carry them onto a second device.
+-->
+<full-backup-content>
+    <exclude domain="sharedpref" path="benchmark_prefs.xml" />
+    <exclude domain="file" path="benchmark_report_pending.json" />
+</full-backup-content>

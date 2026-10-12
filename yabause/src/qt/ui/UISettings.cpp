@@ -75,20 +75,10 @@ const Items mCartridgeTypes = Items()
 	<< Item( "9", "16 Mbit ROM", true, false )
 	<< Item( "10", "Japanese Modem", false, false, true );
 
-const Items mVideoFormats = Items()
-	<< Item( "0", "NTSC" )
-	<< Item( "1", "PAL" );
-
-const Items mVideoFilterMode = Items()
-	<< Item("0", "None")
-	<< Item("1", "FXAA")
-	<< Item("2", "Scanline filter")
-  << Item("3", "Bilinear");
-
 const Items mPolygonGenerationMode = Items()
 	<< Item("0", "Triangles using perspective correction")
-	<< Item("1", "CPU Tesselation")
-	<< Item("2", "GPU Tesselation")
+	<< Item("1", "CPU Tessellation")
+	<< Item("2", "GPU Tessellation")
 	<< Item("3", "Compute Rasterizer (Experimental)");
 
 const Items mResolutionMode = Items()
@@ -102,6 +92,7 @@ const Items mResolutionMode = Items()
 const Items mRbgResolutionMode = Items()
 << Item("0", "Original")
 << Item("1", "2x")
+<< Item("5", "4x")
 << Item("2", "720P")
 << Item("3", "1080P")
 << Item("4", "Fit to Emulation Resolution");
@@ -178,22 +169,6 @@ UISettings::UISettings( QList <supportedRes_struct> *supportedResolutions, QList
 	cbPolygonGeneration->blockSignals(false);
 
 }
-
-void UISettings::on_btnLow_clicked() {
-	cbPolygonGeneration->setCurrentIndex(cbPolygonGeneration->findData(mPolygonGenerationMode.at(0).id.toInt()));
-	cbResolution->setCurrentIndex(mResolutionMode.at(3).id.toInt());
-	cbRBGREsolution->setCurrentIndex(cbRBGREsolution->findData(mRbgResolutionMode.at(0).id.toInt()));
-	cbUseComputeShader->setChecked(false);
-}
-
-void UISettings::on_btnHigh_clicked() {
-
-	cbPolygonGeneration->setCurrentIndex(cbPolygonGeneration->findData(mPolygonGenerationMode.at(2).id.toInt()));
-	cbResolution->setCurrentIndex(mResolutionMode.at(0).id.toInt());
-	cbRBGREsolution->setCurrentIndex(cbRBGREsolution->findData(mRbgResolutionMode.at(4).id.toInt()));
-	cbUseComputeShader->setChecked(true);
-}
-
 
 void UISettings::requestFile( const QString& c, QLineEdit* e, const QString& filters )
 {
@@ -308,10 +283,15 @@ void UISettings::tbBrowse_clicked()
 void UISettings::on_cbInput_currentIndexChanged( int id )
 {
 	PerInterface_struct* core = QtYabause::getPERCore( cbInput->itemData( id ).toInt() );
-        core->Init();
-	
+
+	// getPERCore() returns null for an id that is not in the list, so this has
+	// to be checked before Init() is called through it, not after.
+	if ( !core )
+		core = QtYabause::getPERCore( QtYabause::defaultPERCore().id );
 	Q_ASSERT( core );
-	
+
+	core->Init();
+
 	pmPort1->setCore( core );
 	pmPort2->setCore( core );
 }
@@ -474,18 +454,9 @@ void UISettings::loadCores()
 	delete lOSDCore;
 #endif
 	
-	// Video Formats
-	foreach ( const Item& it, mVideoFormats )
-		cbVideoFormat->addItem( QtYabause::translate( it.Name ), it.id );
-
   // EmulationSpeed
   foreach(const Item& it, mEmulationSpeed)
     cbEmulationSpeed->addItem(QtYabause::translate(it.Name), it.id);
-
-
-	// Video FilterMode
-	foreach(const Item& it, mVideoFilterMode)
-		cbFilterMode->addItem(QtYabause::translate(it.Name), it.id);
 
 	// Polygon Generation
 	foreach(const Item& it, mPolygonGenerationMode)
@@ -507,9 +478,12 @@ void UISettings::loadCores()
 	foreach ( const Item& it, mCartridgeTypes )
 		cbCartridge->addItem( QtYabause::translate( it.Name ), it.id );
 	
-	// Input Drivers
+	// Input Drivers. There is a single real core left, so the combo has nothing
+	// to offer: hide it rather than show a one-entry list. It is still filled in
+	// because the rest of the dialog reads the selected core from it.
 	for ( int i = 0; PERCoreList[i] != NULL; i++ )
 		cbInput->addItem( QtYabause::translate( PERCoreList[i]->Name ), PERCoreList[i]->id );
+	cbInput->setVisible( false );
 	
 	// Regions
 	foreach ( const Item& it, mRegions )
@@ -657,21 +631,24 @@ void UISettings::loadSettings()
 	cbFullscreenResolution->setCurrentIndex(cbFullscreenResolution->findText(text));
 //	cbBilinear->setChecked( s->value( "Video/Bilinear", false ).toBool() );
 	cbFullscreen->setChecked( s->value( "Video/Fullscreen", false ).toBool() );
-	cbVideoFormat->setCurrentIndex( cbVideoFormat->findData( s->value( "Video/VideoFormat", mVideoFormats.at( 0 ).id ).toInt() ) );
-	cbFilterMode->setCurrentIndex(cbFilterMode->findData(s->value("Video/filter_type", mVideoFilterMode.at(0).id).toInt()));
 	cbPolygonGeneration->setCurrentIndex(cbPolygonGeneration->findData(s->value("Video/polygon_generation_mode", mPolygonGenerationMode.at(2).id).toInt()));
   cbResolution->setCurrentIndex(cbResolution->findData(s->value("Video/resolution_mode", mResolutionMode.at(0).id).toInt()));
-  cbRBGREsolution->setCurrentIndex(cbResolution->findData(s->value("Video/rbg_resolution_mode", mRbgResolutionMode.at(4).id).toInt()));
+  cbRBGREsolution->setCurrentIndex(cbRBGREsolution->findData(s->value("Video/rbg_resolution_mode", mRbgResolutionMode.at(5).id).toInt()));
 //   cbEnableIntegerPixelScaling->setChecked(s->value("Video/EnableIntegerPixelScaling", false).toBool());
 //   sbIntegerPixelScalingMultiplier->setValue(s->value("Video/IntegerPixelScalingMultiplier", 2).toInt());
    cbRotateScreen->setChecked(s->value("Video/RotateScreen").toBool());
    cbUseComputeShader->setChecked(s->value("Video/UseComputeShader",1).toBool());
-   cbVdp2NewComposite->setChecked(s->value("Video/vdp2_new_composite", false).toBool());
 
    cbSh2Cache->setChecked(s->value("General/UseSh2Cache", true).toBool());
 
 	// sound
-	cbSoundCore->setCurrentIndex( cbSoundCore->findData( s->value( "Sound/SoundCore", QtYabause::defaultSNDCore().id ).toInt() ) );
+	// An ini written before the DirectSound backend was removed still names a
+	// core that is no longer in the list; findData() then returns -1 and saving
+	// the dialog would write that back as the selected core.
+	int soundCoreIndex = cbSoundCore->findData( s->value( "Sound/SoundCore", QtYabause::defaultSNDCore().id ).toInt() );
+	if ( soundCoreIndex < 0 )
+		soundCoreIndex = cbSoundCore->findData( QtYabause::defaultSNDCore().id );
+	cbSoundCore->setCurrentIndex( soundCoreIndex );
 //   cbNewScsp->setChecked(s->value("Sound/NewScsp", true).toBool());
    spinBox_scs_sync_count->setValue(s->value("Sound/ScspSync", 16).toInt());
    cbTimeMode->setCurrentIndex(s->value("Sound/ScspMainMode", 0).toInt());
@@ -689,7 +666,12 @@ void UISettings::loadSettings()
   
 
 	// input
-	cbInput->setCurrentIndex( cbInput->findData( s->value( "Input/PerCore", QtYabause::defaultPERCore().id ).toInt() ) );
+	// An ini written before the DirectInput core was removed still names it;
+	// findData() then returns -1 and saving the dialog would write that back.
+	int perCoreIndex = cbInput->findData( s->value( "Input/PerCore", QtYabause::defaultPERCore().id ).toInt() );
+	if ( perCoreIndex < 0 )
+		perCoreIndex = cbInput->findData( QtYabause::defaultPERCore().id );
+	cbInput->setCurrentIndex( perCoreIndex );
 	sGunMouseSensitivity->setValue(s->value( "Input/GunMouseSensitivity", 100).toInt() );
 	
 	// advanced
@@ -764,13 +746,10 @@ void UISettings::saveSettings()
 
 	s->setValue( "Video/Fullscreen", cbFullscreen->isChecked() );
 //	s->setValue( "Video/Bilinear", cbBilinear->isChecked() );
-	s->setValue( "Video/VideoFormat", cbVideoFormat->itemData( cbVideoFormat->currentIndex() ).toInt() );
-	s->setValue( "Video/filter_type", cbFilterMode->itemData(cbFilterMode->currentIndex()).toInt());
 	s->setValue( "Video/polygon_generation_mode", cbPolygonGeneration->itemData(cbPolygonGeneration->currentIndex()).toInt());
   s->setValue("Video/resolution_mode", cbResolution->itemData(cbResolution->currentIndex()).toInt());
-  s->setValue("Video/rbg_resolution_mode", cbResolution->itemData(cbRBGREsolution->currentIndex()).toInt());
+  s->setValue("Video/rbg_resolution_mode", cbRBGREsolution->itemData(cbRBGREsolution->currentIndex()).toInt());
   s->setValue("Video/UseComputeShader", cbUseComputeShader->isChecked());
-  s->setValue("Video/vdp2_new_composite", cbVdp2NewComposite->isChecked());
 //   s->setValue("Video/EnableIntegerPixelScaling", cbEnableIntegerPixelScaling->isChecked());
 //   s->setValue("Video/IntegerPixelScalingMultiplier", sbIntegerPixelScalingMultiplier->value());
 

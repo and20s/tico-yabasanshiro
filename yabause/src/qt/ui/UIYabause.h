@@ -265,6 +265,7 @@ protected slots:
 	void on_aHelpReport_triggered();
 	void on_aHelpCompatibilityList_triggered();
 	void on_aHelpAbout_triggered();
+	void on_aHelpSetupWizard_triggered();
   void on_actionAndroid_triggered();
 	void on_actioniOS_triggered();
   void on_actionCheck_for_updates_triggered();

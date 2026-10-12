@@ -2041,12 +2041,23 @@ int DynarecSh2::InterruptRutine(u8 Vector, u8 level)
     u32 prepc = m_pDynaSh2->SysReg[3];
 
     interruput_cnt_++;
+    // Interrupt response time, SH7604 Hardware Manual table 5.8: 10 + m1 + m2
+    // + m3 states for an IRL interrupt (5 to compare the priority against the
+    // SR mask, then 5 + m1 + m2 + m3 for the exception sequence). m1/m2/m3 are
+    // the SR save, the PC save and the vector read below. The SCU is external
+    // to the SH-2 and reaches it over IRL3-IRL0 (section 5.1.3), so the IRL
+    // column applies. These three accesses used to pass NULL and drop their
+    // cost, leaving interrupt acceptance free. memcycle_ is folded into the
+    // cycle counter by ExecuteCount()'s loop, which is what calls us.
+    u32 excycle = 0;
+    u32 exstates = 10;
     m_pDynaSh2->GenReg[15] -= 4;
-    MappedMemoryWriteLong(m_pDynaSh2->GenReg[15], m_pDynaSh2->CtrlReg[0], NULL);
+    MappedMemoryWriteLong(m_pDynaSh2->GenReg[15], m_pDynaSh2->CtrlReg[0],&excycle);
+    exstates += excycle;
     m_pDynaSh2->GenReg[15] -= 4;
-    MappedMemoryWriteLong(m_pDynaSh2->GenReg[15], m_pDynaSh2->SysReg[3], NULL);
-    if (level == 0x10)
-    { // NMI
+    MappedMemoryWriteLong(m_pDynaSh2->GenReg[15], m_pDynaSh2->SysReg[3],&excycle);
+    exstates += excycle;
+    if (level == 0x10) { //NMI
       m_pDynaSh2->CtrlReg[0] |= 0x000000F0;
     }
     else
@@ -2054,8 +2065,9 @@ int DynarecSh2::InterruptRutine(u8 Vector, u8 level)
       m_pDynaSh2->CtrlReg[0] &= ~0x000000F0;
       m_pDynaSh2->CtrlReg[0] |= ((u32)(level << 4) & 0x000000F0);
     }
-    m_pDynaSh2->SysReg[3] = MappedMemoryReadLong(
-        m_pDynaSh2->CtrlReg[2] + (((u32)Vector) << 2), NULL);
+    m_pDynaSh2->SysReg[3] = MappedMemoryReadLong(m_pDynaSh2->CtrlReg[2] + (((u32)Vector) << 2),&excycle);
+    exstates += excycle;
+    memcycle_ += exstates;
 
     // LOG("**** [%s] Exception vecnum=%s(%x), PC=%08X to %08X, level=%08X\n",
     // (is_slave_ == false) ? "M" : "S", ScuGetVectorString(Vector),

@@ -43,6 +43,10 @@ UIGunSetting::UIGunSetting( PerInterface_struct* core, uint port, uint pad, uint
 	mScanMasks[ PERGUN_TRIGGER ] = PERSF_KEY | PERSF_BUTTON | PERSF_HAT;
 	mScanMasks[ PERGUN_AXIS ] = PERSF_MOUSEMOVE;
 
+	// Same physical device selector as the other controller dialogs: a Saturn
+	// port is driven by exactly one physical device.
+	installDeviceSelector();
+
 	loadPadSettings();
 	
 	foreach ( QToolButton* tb, findChildren<QToolButton*>() )

@@ -1,4 +1,5 @@
 #include "QGameInfo.h"
+#include "QtYabause.h"
 #include <QFile>
 #include <QFileInfo>
 #include <QTextStream>
@@ -9,6 +10,21 @@
 #include <stdexcept>
 #include <memory>
 #include "chd.h"
+
+QString QGameInfo::coverImageUrl(const QString& productNumber) {
+  if (productNumber.isEmpty()) return QString();
+
+  // The CloudFront token never changes within a run; read it once.
+  static QString cloudfront = []() {
+    QSettings settings(QtYabause::cloudSettingsIniPath(), QSettings::IniFormat);
+    return settings.value("CloudService/cloudfront").toString();
+  }();
+
+  if (cloudfront.isEmpty()) return QString();
+  return QString("https://d3edktb2n8l35b.cloudfront.net/BOXART/%1.PNG?%2")
+      .arg(productNumber)
+      .arg(cloudfront);
+}
 
 QString QGameInfo::convertShiftJISToUnicode(const QByteArray& input) {
   UErrorCode status = U_ZERO_ERROR;
@@ -196,16 +212,7 @@ QGameInfo* QGameInfo::fromBuffer(const QString& filePath, const QByteArray& head
 
     info->makerId = readField(0x10, 0x10);
     info->productNumber = readField(0x20, 0x0A);
-
-    if (!info->productNumber.isEmpty()) {
-      QSettings settings("settings.ini", QSettings::IniFormat);
-      QString cloudfront = settings.value("CloudService/cloudfront").toString();
-      if (!cloudfront.isEmpty()) {
-        info->imageUrl = QString("https://d3edktb2n8l35b.cloudfront.net/BOXART/%1.PNG?%2")
-          .arg(info->productNumber)
-          .arg(cloudfront);
-      }
-    }
+    info->imageUrl = coverImageUrl(info->productNumber);
 
     info->version = readField(0x2A, 0x10);
     info->releaseDate = readField(0x30, 0x08);

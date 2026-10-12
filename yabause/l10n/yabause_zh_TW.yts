@@ -346,7 +346,7 @@ VDP1|VDP1
 VDP1 Command Info|VDP1 Command Info
 VDP1 Command List|VDP1 Command List
 VDP2|VDP2
-Value|Value
+Value|數值
 Value :|Value :
 Value:|Value:
 Vdp1|Vdp1
@@ -372,3 +372,63 @@ Yabause is not initialized, can't manage backup ram.|Yabause is not initialized,
 http://www.emu-compatibility.com/yabause/index.php?lang=uk|http://www.emu-compatibility.com/yabause/index.php?lang=uk
 http://www.monkeystudio.org|http://www.monkeystudio.org
 toolBar|toolBar
+Yaba Sanshiro Setup|Yaba Sanshiro 安裝精靈
+Next|下一步
+Back|上一步
+Finish|完成
+Graphics|圖形
+Choose the preset that matches your PC. You can change any of this later in Settings.|選擇符合您電腦的預設值。您可以稍後在設定中變更此項目。
+Setting|設定項目
+Controls|操作控制
+Press each button on your keyboard or gamepad when it is highlighted.|當按鈕反白顯示時，請按下鍵盤或手把上對應的按鈕。
+Press the input for|請按下對應的輸入，用於
+All buttons are set.|所有按鈕皆已設定完成。
+Games|遊戲
+Tell Yaba Sanshiro where your games are.|告訴 Yaba Sanshiro 您的遊戲所在位置。
+Do not use an optical drive|不使用光碟機
+Choose the folder that contains your games|選擇包含您遊戲的資料夾
+Ready|準備完成
+Review your choices before applying them.|套用前請先檢查您的選擇。
+High - modern high-end GPU and CPU|高 - 現代高階 GPU 與 CPU
+Medium - mid-range GPU and CPU|中 - 中階 GPU 與 CPU
+Low - older GPU and CPU|低 - 較舊的 GPU 與 CPU
+Vulkan is not available in this build, so only the Low preset can be used.|此版本不支援 Vulkan，因此僅能選擇「低」預設值。
+Which device do you want to play with?|您想使用哪個裝置進行遊戲？
+Press the input you want to use.|請按下您想要使用的輸入。
+Previous button|上一個按鈕
+Skip this button|跳過此按鈕
+Skip input setup|跳過輸入設定
+Folder that contains your CHD or ISO files|包含您的 CHD 或 ISO 檔案的資料夾
+Browse...|瀏覽...
+Optical drive to play discs from|用於播放光碟的光碟機
+Both are optional. You can set them later in Settings.|兩者皆為選填。您可以稍後在設定中進行設定。
+These settings will be applied when you press Finish.|按下「完成」後將套用這些設定。
+Vulkan Video|Vulkan Video
+OpenGL|OpenGL
+Other video core|其他視訊核心
+Polygon Generation|多邊形生成方式
+Compute Rasterizer|Compute Rasterizer
+GPU Tessellation|GPU Tessellation
+Internal Resolution|內部解析度
+RBG Resolution|RBG 解析度
+OpenAL Sound Interface|OpenAL Sound Interface
+Other sound core|其他音效核心
+SCSP sync count per frame|每畫面的 SCSP 同步次數
+Time Synchronization Mode|時間同步模式
+Synchronize to CPU|與 CPU 同步
+Run Setup &Wizard...|執行設定精靈(&W)...
+Some of these settings only take effect when Yaba Sanshiro starts. Please restart it.|部分設定只有在 Yaba Sanshiro 啟動時才會生效，請重新啟動。
+Buttons assigned|已指派按鍵
+Not set|未設定
+Keyboard|鍵盤
+Keyboard / Mouse|鍵盤 / 滑鼠
+not a known gamepad|未知的手把
+Unknown device|未知裝置
+not connected|未連接
+This gamepad is recognised. It works without any setup.|已辨識此手把，無需任何設定即可使用。
+This device cannot be set up automatically. Assign each button on the next page.|此裝置無法自動設定。請在下一頁為每個按鍵指派對應輸入。
+Use the default assignment|使用預設指派
+Input device|輸入裝置
+Native (native resolution of Window)|原生（視窗原生解析度）
+Fit to Emulation Resolution|符合模擬解析度
+Use compute shader for RBG generation|使用計算著色器生成 RBG

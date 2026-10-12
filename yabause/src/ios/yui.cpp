@@ -317,7 +317,7 @@ int start_emulation( int originx, int originy, int width, int height ){
     yinit.use_sh2_cache = 1;
     yinit.polygon_generation_mode = PERSPECTIVE_CORRECTION;
 
-    // バックアップ書き込み時のコールバックを設定
+    // Register the backup-write callback
     BiosSetOnBackupWrite(onBackupWrite);
 
     res = YabauseInit(&yinit);
@@ -508,9 +508,9 @@ extern "C" {
   void YabauseThread_coldBoot() {
   }
 
-  // バックアップ書き込み時のコールバック
+  // Backup-write callback
   void onBackupWrite(const char *fname, int deviceId, char *before, char *after, int size) {
-    // Objective-Cのメソッドを呼び出す
+    // Forward to the Objective-C side
     extern void YSOnBackupWrite(const char *fname, int deviceId, const void *before, const void *after, int size);
     YSOnBackupWrite(fname, deviceId, before, after, size);
   }

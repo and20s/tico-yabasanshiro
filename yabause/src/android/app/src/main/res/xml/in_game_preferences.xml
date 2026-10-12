@@ -46,6 +46,14 @@
         app:defaultValue="0" />
 
     <ListPreference
+        app:key="pref_vdp2_composite"
+        app:title="@string/vdp2_composite_type"
+        app:dialogTitle="@string/choose_vdp2_composite_type"
+        app:entries="@array/entries_vdp2_composite"
+        app:entryValues="@array/entryvalues_vdp2_composite"
+        app:defaultValue="1" />
+
+    <ListPreference
         app:key="pref_resolution"
         app:title="@string/video_resolution"
         app:dialogTitle="@string/choose_video_resolution"

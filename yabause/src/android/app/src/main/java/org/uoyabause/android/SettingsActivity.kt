@@ -1,9 +1,11 @@
 package org.uoyabause.android
 
+import android.app.Activity
 import android.app.ActivityManager
 import android.app.AlertDialog
 import android.app.Dialog
 import android.content.Context
+import android.content.DialogInterface
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.SharedPreferences.OnSharedPreferenceChangeListener
@@ -16,6 +18,7 @@ import android.os.storage.StorageVolume
 import android.text.InputType
 import android.util.Log
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat.getSystemService
@@ -32,6 +35,7 @@ import androidx.preference.PreferenceScreen
 import androidx.preference.SeekBarPreference
 import androidx.preference.SwitchPreferenceCompat
 import com.firebase.ui.auth.AuthUI
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.storage.FirebaseStorage
@@ -86,6 +90,82 @@ class SettingsActivity : AppCompatActivity() {
 
         // RetroAchievements manager
         private lateinit var retroAchievementsAuthManager: RetroAchievementsAuthManager
+
+        // Launches BenchmarkActivity from the "apply recommended settings" entry
+        // when this device's GPU has never been measured. On return, settings
+        // are re-derived from whatever GpuProfileStore now holds rather than
+        // from the activity result extras directly - RESULT_CANCELED saved
+        // nothing, so this just leaves the current settings as they are.
+        private val benchmarkLauncher =
+            registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+                // A cancelled benchmark saved nothing, so re-deriving would just
+                // rewrite the safe-side values already in place - and recreate()
+                // would flash the screen for no change the user asked for.
+                if (result.resultCode == Activity.RESULT_OK) {
+                    val context = requireContext()
+                    val caps = DeviceCapabilities.forContext(context)
+                    val profile = GpuProfileStore.find(context, caps.gpuKey)
+                    val recommended = RecommendedSettings.forDevice(caps, profile)
+                    val prefs = PreferenceManager.getDefaultSharedPreferences(context)
+                    RecommendedSettingsApplier.apply(prefs, recommended)
+                    requireActivity().recreate()
+                }
+            }
+
+        /**
+         * Confirms, then launches the benchmark for [gpuKey]. A run always
+         * overwrites the stored profile for that GPU, so the caller supplies the
+         * message that matches whether one exists yet.
+         */
+        private fun showBenchmarkDialog(
+            context: Context,
+            gpuKey: String,
+            titleId: Int,
+            messageId: Int,
+        ) {
+            BenchmarkConfirmDialog.show(
+                activity = requireActivity(),
+                titleId = titleId,
+                messageId = messageId,
+                negativeId = android.R.string.cancel,
+            ) {
+                val gpuName = DeviceInfo.gpuRenderer().ifBlank { gpuKey }
+                benchmarkLauncher.launch(BenchmarkActivity.intent(context, gpuKey, gpuName))
+            }
+        }
+
+        /**
+         * Adds the "run benchmark" button to a recommended-settings dialog. The
+         * measurement stays reachable once this GPU already has a profile: a
+         * driver update or a new emulator build changes what the device
+         * sustains, and re-measuring is the only way to refresh it. Nothing is
+         * added where a result would have nowhere to go - PC never consults a
+         * profile, and a GPU with no key cannot be saved.
+         */
+        private fun addBenchmarkButton(
+            builder: MaterialAlertDialogBuilder,
+            context: Context,
+            caps: DeviceCapabilities,
+            gpuKey: String?,
+        ) {
+            if (caps.isPc || gpuKey == null) return
+            builder.setNeutralButton(R.string.benchmark_confirm_run) { _, _ ->
+                val gpuName = DeviceInfo.gpuRenderer().ifBlank { gpuKey }
+                // The confirm dialog is shown every time, not only on a first
+                // run. It carries the checkbox that decides whether the result is
+                // shared, and that checkbox is the only place the answer can be
+                // seen or changed - skipping the dialog for someone who answered
+                // once would lock their answer in for good.
+                BenchmarkConfirmDialog.show(
+                    activity = requireActivity(),
+                    titleId = R.string.benchmark_confirm_title,
+                    messageId = R.string.benchmark_confirm_message,
+                    negativeId = android.R.string.cancel,
+                ) {
+                    benchmarkLauncher.launch(BenchmarkActivity.intent(context, gpuKey, gpuName))
+                }
+            }
+        }
 
         /**
          * Safely set ListPreference summary from entry, handling ClassCastException
@@ -483,22 +563,28 @@ class SettingsActivity : AppCompatActivity() {
 
             if (supportsEs3) {
                 videoLabels.add(res.getString(R.string.opengl_video_interface))
-                videoValues.add("1")
+                videoValues.add(VideoCore.OPENGL)
             } else {
                 val newFragment = WarningDialogFragment()
                 newFragment.show(parentFragmentManager, "OGL")
             }
 
-            videoLabels.add(res.getString(R.string.software_video_interface))
-            videoValues.add("2")
-
-            if (requireActivity().getPackageManager().hasSystemFeature(PackageManager.FEATURE_VULKAN_HARDWARE_LEVEL)) {
+            // The software renderer is no longer supported and is not offered.
+            val vulkanSupported =
+                requireActivity().packageManager.hasSystemFeature(PackageManager.FEATURE_VULKAN_HARDWARE_LEVEL)
+            if (vulkanSupported) {
                 videoLabels.add(res.getString(R.string.vulkan_video_interface))
-                videoValues.add("4")
+                videoValues.add(VideoCore.VULKAN)
             }
 
             videoCart!!.entries = videoLabels.toTypedArray()
             videoCart.entryValues = videoValues.toTypedArray()
+            // A device that still has the software renderer stored must not show
+            // an entry that no longer exists.
+            val resolvedCore = VideoCore.resolve(videoCart.value, vulkanSupported)
+            if (resolvedCore != VideoCore.UNSET && resolvedCore != videoCart.value) {
+                videoCart.value = resolvedCore
+            }
             videoCart.safeSummary()
 
             // Filter
@@ -564,22 +650,14 @@ class SettingsActivity : AppCompatActivity() {
             }
 
             polygonSetting.setOnPreferenceChangeListener { _, newValue ->
-                if (newValue == "3" && !YabauseApplication.isPro()) {
-                    YabauseApplication.checkDonated(
-                        requireActivity(),
-                        getString(R.string.pro_gate_compute_rasterizer_message),
+                if (newValue == "3") {
+                    // VDP1 Compute Rasterizer is experimental: show the report-bugs notice once.
+                    ExperimentalFeatureNotice.maybeShow(
+                        requireContext(),
+                        ExperimentalFeatureNotice.KEY_VDP1_COMPUTE_RASTERIZER,
                     )
-                    false
-                } else {
-                    if (newValue == "3") {
-                        // VDP1 Compute Rasterizer is experimental: show the report-bugs notice once.
-                        ExperimentalFeatureNotice.maybeShow(
-                            requireContext(),
-                            ExperimentalFeatureNotice.KEY_VDP1_COMPUTE_RASTERIZER,
-                        )
-                    }
-                    true
                 }
+                true
             }
 
             val computeShaderSetting =
@@ -592,6 +670,87 @@ class SettingsActivity : AppCompatActivity() {
             } else {
                 computeShaderSetting?.isEnabled = false
                 computeShaderSetting?.isChecked = false
+            }
+
+            // VDP2 compositing: the legacy path is cheaper on old GPUs, but only
+            // the Vulkan renderer reads the setting at all.
+            val compositeSetting =
+                preferenceManager.findPreference(Vdp2Composite.KEY) as ListPreference?
+            compositeSetting?.safeSummary()
+            compositeSetting?.isEnabled =
+                Vdp2Composite.isSelectable(videoCart.value?.toIntOrNull() ?: -1)
+
+            findPreference<Preference>("pref_apply_recommended")?.setOnPreferenceClickListener {
+                val context = requireContext()
+                val caps = DeviceCapabilities.forContext(context)
+                val profile = GpuProfileStore.find(context, caps.gpuKey)
+                val recommended = RecommendedSettings.forDevice(caps, profile)
+                val prefs = PreferenceManager.getDefaultSharedPreferences(context)
+                val gpuKey = caps.gpuKey
+
+                // No measured or curated profile exists for this GPU. Offer the
+                // benchmark instead of a diff against the generic safe-side
+                // defaults - PC never reaches here (forDevice always reports
+                // needsBenchmark=false for it), and a GPU with no key has
+                // nowhere to save a measurement, so both fall through to the
+                // ordinary diff dialog below.
+                if (recommended.needsBenchmark && !caps.isPc && gpuKey != null) {
+                    showBenchmarkDialog(
+                        context,
+                        gpuKey,
+                        R.string.apply_recommended_settings,
+                        R.string.benchmark_settings_entry_message,
+                    )
+                    return@setOnPreferenceClickListener true
+                }
+
+                val changes = RecommendedSettingsApplier.diff(prefs, recommended)
+
+                if (changes.isEmpty()) {
+                    val builder =
+                        MaterialAlertDialogBuilder(context)
+                            .setMessage(R.string.recommended_settings_no_change)
+                            .setPositiveButton(android.R.string.ok, null)
+                    addBenchmarkButton(builder, context, caps, gpuKey)
+                    val dialog = builder.create()
+                    dialog.setOnShowListener {
+                        val button = dialog.getButton(DialogInterface.BUTTON_POSITIVE)
+                        button?.post {
+                            button.isFocusable = true
+                            button.isFocusableInTouchMode = true
+                            button.requestFocus()
+                        }
+                    }
+                    dialog.show()
+                } else {
+                    val message =
+                        getString(R.string.recommended_settings_scope_note) +
+                            "\n\n" +
+                            changes.joinToString("\n") {
+                                RecommendedSettingsLabels.describe(context, it)
+                            }
+                    val builder =
+                        MaterialAlertDialogBuilder(context)
+                            .setTitle(R.string.apply_recommended_settings)
+                            .setMessage(message)
+                            .setPositiveButton(R.string.recommended_settings_apply) { _, _ ->
+                                RecommendedSettingsApplier.apply(prefs, recommended)
+                                requireActivity().recreate()
+                            }.setNegativeButton(android.R.string.cancel, null)
+                    addBenchmarkButton(builder, context, caps, gpuKey)
+                    val dialog = builder.create()
+                    // Applying settings is a data change, so default D-pad focus goes to Cancel.
+                    dialog.setOnShowListener {
+                        val button = dialog.getButton(DialogInterface.BUTTON_NEGATIVE)
+                        button?.post {
+                            button.isFocusable = true
+                            button.isFocusableInTouchMode = true
+                            button.requestFocus()
+                        }
+                    }
+                    dialog.show()
+                }
+                true
             }
 
             val onscreenPad =
@@ -761,7 +920,8 @@ class SettingsActivity : AppCompatActivity() {
                 key == "pref_rbg_resolution" ||
                 key == "pref_cpu_sync_per_line" ||
                 key == "pref_aspect_rate" ||
-                key == "pref_frameLimit"
+                key == "pref_frameLimit" ||
+                key == Vdp2Composite.KEY
             ) {
                 val pref = findPreference(key) as ListPreference?
                 pref!!.safeSummary()
@@ -816,6 +976,11 @@ class SettingsActivity : AppCompatActivity() {
                         computeShaderSetting?.isEnabled = false
                         computeShaderSetting?.isChecked = false
                     }
+
+                    val compositeSetting =
+                        preferenceManager.findPreference(Vdp2Composite.KEY) as ListPreference?
+                    compositeSetting?.isEnabled =
+                        Vdp2Composite.isSelectable(pref.value?.toIntOrNull() ?: -1)
                 }
             } else if (key == "pref_player1_inputdevice") {
                 val pref = findPreference(key) as ListPreference?

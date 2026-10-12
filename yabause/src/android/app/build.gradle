@@ -36,6 +36,12 @@ android {
         unitTests.returnDefaultValues = true
     }
     namespace "org.devmiyax.yabasanshiro"
+    androidResources {
+        // Benchmark discs must reach the device byte-for-byte: a compressed asset
+        // still opens fine via AssetManager.open(), but there is no reason to pay
+        // the (de)compression cost for a 192 KB iso, so keep it stored as-is.
+        noCompress += ["iso"]
+    }
     signingConfigs {
         debug {
             storeFile file("../debug-yabara.keystore")
@@ -113,8 +119,8 @@ android {
         minSdkVersion 24
         targetSdkVersion 36
         multiDexEnabled true
-        versionCode 345
-        versionName '1.20.28'
+        versionCode 363
+        versionName '1.20.46'
         multiDexEnabled true
         vectorDrawables.useSupportLibrary = true
         signingConfig signingConfigs.pro
@@ -374,6 +380,10 @@ dependencies {
     implementation("androidx.room:room-runtime:$room_version")
     annotationProcessor("androidx.room:room-compiler:$room_version")
     kapt "androidx.room:room-compiler:$room_version"
+    // MigrationTestHelper lives here. Without it the class still resolved
+    // through a transitive dependency, at a version whose API does not match
+    // the 2.6.1 runtime, so MigrationTest could not compile.
+    androidTestImplementation "androidx.room:room-testing:$room_version"
 
     implementation 'jp.wasabeef:glide-transformations:4.3.0'
 

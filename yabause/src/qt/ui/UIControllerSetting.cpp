@@ -20,9 +20,18 @@
 #include "UIPadSetting.h"
 #include "UIPortManager.h"
 #include "../Settings.h"
+#include "../InputPortConfig.h"
+#include "InputDeviceCombo.h"
 
 #include <QKeyEvent>
 #include <QTimer>
+#include <QStringList>
+#ifdef HAVE_LIBSDL
+#include "../../persdljoy.h"
+#endif
+
+#include <QComboBox>
+#include <QLabel>
 #include <QStylePainter>
 #include <QStyleOptionToolButton>
 
@@ -41,6 +50,9 @@ UIControllerSetting::UIControllerSetting( PerInterface_struct* core, uint port, 
 	mTimer = new QTimer( this );
 	mTimer->setInterval( 25 );
 	curTb = NULL;
+	mDeviceCombo = NULL;
+	mDeviceTimer = NULL;
+	mDeviceGeneration = 0;
 	mPadKey = 0;
 	mlInfos = NULL;
 	scanFlags = PERSF_ALL;
@@ -49,6 +61,10 @@ UIControllerSetting::UIControllerSetting( PerInterface_struct* core, uint port, 
 
 UIControllerSetting::~UIControllerSetting()
 {
+#ifdef HAVE_LIBSDL
+	// Leave the core scanning every device again for the next dialog.
+	PERSDLJoySetScanDeviceIndex( PERSDL_SCAN_ANY_DEVICE );
+#endif
 }
 
 void UIControllerSetting::setInfos(QLabel *lInfos)
@@ -87,13 +103,37 @@ void UIControllerSetting::setScanFlags(u32 scanMask)
 	setMouseTracking(scanFlags & PERSF_MOUSEMOVE ? true : false);
 }
 
+// Deliberately NOT delegated to InputDeviceCombo::selectedDeviceId(), despite
+// the matching name: with no combo yet this reports the keyboard, so a dialog
+// built before installDeviceSelector() ran still binds host input, while the
+// shared helper reports an empty string. Delegating would be a silent change
+// of behaviour here, not a cleanup.
+QString UIControllerSetting::selectedDeviceId() const
+{
+	if ( !mDeviceCombo )
+		return InputPortConfig::KeyboardDeviceId;
+	return mDeviceCombo->itemData( mDeviceCombo->currentIndex() ).toString();
+}
+
+bool UIControllerSetting::bindsHostInput() const
+{
+	if ( !mDeviceCombo )
+		return true;
+	return InputPortConfig::bindsHostInput( selectedDeviceId() );
+}
+
+//////////////////////////////////////////////////////////////////////////////
+
 void UIControllerSetting::keyPressEvent( QKeyEvent* e )
 {
 	if ( mTimer->isActive() )
 	{
 		if ( e->key() != Qt::Key_Escape )
 		{
-			setPadKey( e->key() );
+			if ( bindsHostInput() )
+				setPadKey( e->key() );
+			else
+				e->ignore();
 		}
 		else
 		{
@@ -118,7 +158,7 @@ void UIControllerSetting::mouseMoveEvent( QMouseEvent * e )
 {
 	if ( mTimer->isActive() )
 	{
-		if (scanFlags & PERSF_MOUSEMOVE)
+		if ( bindsHostInput() && (scanFlags & PERSF_MOUSEMOVE) )
 			setPadKey((1 << 30));
 	}
 	else
@@ -129,7 +169,7 @@ void UIControllerSetting::mousePressEvent( QMouseEvent * e )
 {
 	if ( mTimer->isActive() )
 	{
-		if (scanFlags & PERSF_BUTTON)
+		if ( bindsHostInput() && (scanFlags & PERSF_BUTTON) )
 			setPadKey( (1 << 31) | e->button() );
 	}
 	else
@@ -240,4 +280,140 @@ void UIControllerSetting::timer_timeout()
 	{
 		setPadKey( key );
 	}
+}
+
+//////////////////////////////////////////////////////////////////////////////
+
+void UIControllerSetting::populateDeviceCombo()
+{
+	Settings* settings = QtYabause::settings();
+	const QString current = InputPortConfig::configuredDevice( settings, mPort, mPad );
+	const QString storedName = settings->value(
+		InputPortConfig::deviceNameKey( mPort, mPad ) ).toString();
+
+	InputPortConfig::SdlDeviceSource source;
+	const QList<InputPortConfig::Choice> choices =
+		InputPortConfig::choicesForPort( source, mPerType, current, storedName );
+
+	InputDeviceCombo::fill( mDeviceCombo, mPerType, choices, current );
+}
+
+//////////////////////////////////////////////////////////////////////////////
+
+void UIControllerSetting::deviceTimer_timeout()
+{
+#ifdef HAVE_LIBSDL
+	const int generation = PERSDLJoyRefreshDevices();
+	if ( generation == mDeviceGeneration )
+		return;
+
+	mDeviceGeneration = generation;
+	populateDeviceCombo();
+	applyScanDevice();
+#endif
+}
+
+//////////////////////////////////////////////////////////////////////////////
+
+void UIControllerSetting::installDeviceSelector()
+{
+	QLabel* caption = new QLabel( QtYabause::translate( "Input device" ), this );
+	mDeviceCombo = new QComboBox( this );
+#ifdef HAVE_LIBSDL
+	mDeviceGeneration = PERSDLJoyRefreshDevices();
+#endif
+	populateDeviceCombo();
+	// These dialogs place a picture of the controller and its buttons at absolute
+	// coordinates, so there is no layout to insert into: make room at the top by
+	// moving everything down instead.
+	const int rowHeight = qMax( caption->sizeHint().height(), mDeviceCombo->sizeHint().height() );
+	const int shift = rowHeight + 8;
+	foreach ( QWidget* w, findChildren<QWidget*>() )
+	{
+		if ( w == caption || w == mDeviceCombo || w->parentWidget() != this )
+			continue;
+		w->move( w->x(), w->y() + shift );
+	}
+	resize( width(), height() + shift );
+
+	const int captionWidth = caption->sizeHint().width();
+	caption->setGeometry( 6, 4, captionWidth, rowHeight );
+	mDeviceCombo->setGeometry( captionWidth + 12, 4, qMax( 200, width() - captionWidth - 24 ), rowHeight );
+
+	applyScanDevice();
+	connect( mDeviceCombo, SIGNAL( currentIndexChanged( int ) ),
+	         this, SLOT( deviceCombo_currentIndexChanged( int ) ) );
+
+	// Watch for pads being plugged in or unplugged while the dialog is open.
+	mDeviceTimer = new QTimer( this );
+	mDeviceTimer->setInterval( 1000 );
+	connect( mDeviceTimer, SIGNAL( timeout() ), this, SLOT( deviceTimer_timeout() ) );
+	mDeviceTimer->start();
+}
+
+//////////////////////////////////////////////////////////////////////////////
+
+void UIControllerSetting::applyScanDevice()
+{
+#ifdef HAVE_LIBSDL
+	if ( !mDeviceCombo )
+		return;
+
+	const QString id = selectedDeviceId();
+	if ( !InputPortConfig::isPhysicalDevice( id ) )
+	{
+		PERSDLJoySetScanDeviceIndex( PERSDL_SCAN_NO_DEVICE );
+		return;
+	}
+	// An unplugged device resolves to -1, which would mean "any device"; keep it
+	// disabled instead so nothing gets bound to the wrong pad.
+	const int index = PERSDLJoyGetDeviceIndexForId( id.toLatin1().constData() );
+	PERSDLJoySetScanDeviceIndex( index < 0 ? PERSDL_SCAN_NO_DEVICE : index );
+#endif
+}
+
+//////////////////////////////////////////////////////////////////////////////
+
+void UIControllerSetting::refreshPadIcons()
+{
+	Settings* settings = QtYabause::settings();
+
+	foreach ( const u8& name, mNames.keys() )
+	{
+		QToolButton* tb = mButtons.key( name );
+		if ( !tb )
+			continue;
+		const bool assigned = settings->contains( QString( UIPortManager::mSettingsKey )
+			.arg( mPort ).arg( mPad ).arg( mPerType ).arg( name ) );
+		tb->setIcon( assigned ? QIcon( ":/actions/icons/actions/button_ok.png" ) : QIcon() );
+		tb->setChecked( false );
+	}
+}
+
+//////////////////////////////////////////////////////////////////////////////
+
+void UIControllerSetting::deviceCombo_currentIndexChanged( int index )
+{
+	Q_UNUSED( index );
+	if ( !mDeviceCombo )
+		return;
+
+	const int current = mDeviceCombo->currentIndex();
+	InputPortConfig::SdlDeviceSource source;
+
+	// The stored name is what identifies the device once it is unplugged, so it
+	// has to be the plain device name, not the decorated label.
+	const bool changed = InputPortConfig::selectDevice(
+		QtYabause::settings(), source, mPort, mPad, mPerType,
+		mDeviceCombo->itemData( current ).toString(),
+		mDeviceCombo->itemData( current, InputDeviceCombo::DeviceNameRole ).toString() );
+
+	if ( changed )
+	{
+		refreshPadIcons();
+		if ( mlInfos )
+			mlInfos->clear();
+	}
+
+	applyScanDevice();
 }

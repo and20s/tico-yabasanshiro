@@ -457,6 +457,12 @@ static rc_hash_cdreader_t g_cdreader_functions = {
     cd_first_track_sector
 };
 
+// Expose the standalone cdreader registration so the platform bridge can
+// generate game hashes (rc_hash_generate_from_file) without loading a game.
+extern "C" void YabauseRA_InitHashCdReader(void) {
+    rc_hash_init_custom_cdreader(&g_cdreader_functions);
+}
+
 // Global instance
 static std::unique_ptr<Integration> g_instance = nullptr;
 

@@ -61,6 +61,7 @@ class ReportReproduceManagerComprehensiveTest {
                 "pref_polygon_generation",
                 "pref_resolution",
                 "pref_use_compute_shader",
+                "pref_vdp2_composite",
                 "pref_aspect_rate",
                 "pref_rbg_resolution",
                 "pref_sound_engine",
@@ -87,7 +88,7 @@ class ReportReproduceManagerComprehensiveTest {
 
         // Then
         assertNotNull(preferences)
-        assertEquals("Should collect 20 preferences", 20, preferences.size)
+        assertEquals("Should collect 21 preferences", 21, preferences.size)
 
         expectedKeys.forEach { key ->
             assertTrue("Should contain key: $key", preferences.containsKey(key))
