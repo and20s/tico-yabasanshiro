@@ -615,12 +615,20 @@ namespace YabaSanshiro_Options
         constexpr const char *Key = "cartridge_type";
         constexpr const char *Label = "Cartridge Type";
         constexpr const char *Default = "None";
+        // values are the core's CART_* ids (cs0.h). The backup RAM carts keep
+        // their contents in the saves folder; Action Replay and the ROM cart
+        // need a dump in the system folder (see TicoMain's PrepareCartridge).
         enum class Enum
         {
-            None = 0,        // CART_NONE
-            RAM_1MB = 6,     // CART_DRAM8MBIT
-            RAM_4MB = 7,     // CART_DRAM32MBIT
-            ActionReplay = 1 // CART_PAR
+            None = 0,
+            RAM_1MB = 6,
+            RAM_4MB = 7,
+            BackupRAM_4Mbit = 2,
+            BackupRAM_8Mbit = 3,
+            BackupRAM_16Mbit = 4,
+            BackupRAM_32Mbit = 5,
+            ActionReplay = 1,
+            ROM_16Mbit = 9,
         };
 
         inline const char *GetValue(Enum e)
@@ -633,8 +641,18 @@ namespace YabaSanshiro_Options
                 return "1MB RAM";
             case Enum::RAM_4MB:
                 return "4MB RAM";
+            case Enum::BackupRAM_4Mbit:
+                return "4Mbit Backup RAM";
+            case Enum::BackupRAM_8Mbit:
+                return "8Mbit Backup RAM";
+            case Enum::BackupRAM_16Mbit:
+                return "16Mbit Backup RAM";
+            case Enum::BackupRAM_32Mbit:
+                return "32Mbit Backup RAM";
             case Enum::ActionReplay:
                 return "Action Replay";
+            case Enum::ROM_16Mbit:
+                return "16Mbit ROM";
             }
             return Default;
         }
@@ -648,8 +666,18 @@ namespace YabaSanshiro_Options
                 return "1MB RAM Cartridge";
             case Enum::RAM_4MB:
                 return "4MB RAM Cartridge";
+            case Enum::BackupRAM_4Mbit:
+                return "4 Mbit Backup RAM Cartridge";
+            case Enum::BackupRAM_8Mbit:
+                return "8 Mbit Backup RAM Cartridge";
+            case Enum::BackupRAM_16Mbit:
+                return "16 Mbit Backup RAM Cartridge";
+            case Enum::BackupRAM_32Mbit:
+                return "32 Mbit Backup RAM Cartridge";
             case Enum::ActionReplay:
-                return "Action Replay (4MB + Region Free)";
+                return "Action Replay";
+            case Enum::ROM_16Mbit:
+                return "16 Mbit ROM Cartridge";
             }
             return "None";
         }
@@ -661,8 +689,18 @@ namespace YabaSanshiro_Options
                 return Enum::RAM_1MB;
             if (strcmp(v, "4MB RAM") == 0)
                 return Enum::RAM_4MB;
+            if (strcmp(v, "4Mbit Backup RAM") == 0)
+                return Enum::BackupRAM_4Mbit;
+            if (strcmp(v, "8Mbit Backup RAM") == 0)
+                return Enum::BackupRAM_8Mbit;
+            if (strcmp(v, "16Mbit Backup RAM") == 0)
+                return Enum::BackupRAM_16Mbit;
+            if (strcmp(v, "32Mbit Backup RAM") == 0)
+                return Enum::BackupRAM_32Mbit;
             if (strcmp(v, "Action Replay") == 0)
                 return Enum::ActionReplay;
+            if (strcmp(v, "16Mbit ROM") == 0)
+                return Enum::ROM_16Mbit;
             return Enum::None;
         }
         inline int ToInt(Enum e) { return static_cast<int>(e); }

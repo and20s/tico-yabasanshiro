@@ -63,6 +63,7 @@ extern "C"
 {
 #include "cdbase.h"
 #include "config.h"
+#include "cs0.h"
 #include "cs2.h"
 #include "debug.h"
 #include "m68kcore.h"
@@ -157,7 +158,8 @@ static char biospath[256] = "";
 static char cdpath[1024] = "";
 static char buppath[1024] = "";
 static char mpegpath[256] = "";
-static char cartpath[256] = "";
+static char cartpath[1024] = "";
+static int g_cartType = 0; // CART_* (cs0.h)
 
 // Screen: the OpenGL renderer draws 1920x1080 docked and the bottom-left
 // 1280x720 handheld (the window is cropped); Vulkan's swapchain stays at the
@@ -877,11 +879,83 @@ static void PresentPaused()
 // Emulator
 //==============================================================================
 
+static bool IsFile(const std::string &path)
+{
+    struct stat status;
+    return stat(path.c_str(), &status) == 0 && S_ISREG(status.st_mode) && status.st_size > 0;
+}
+
+/// The cartridge in the expansion slot, and the file it needs:
+///   backup RAM  its contents, in the saves folder, shared by every game as a
+///               real cartridge is (created on first use, written on exit)
+///   Action Replay  the firmware dump, system/saturn/ar.bin
+///   16 Mbit ROM    the game's cartridge dump, system/saturn/<game>.rom (or
+///                  rom_cart.bin)
+/// Without its dump a cartridge is left out, so the game still boots.
+static void PrepareCartridge()
+{
+    g_cartType = g_config.GetCartridgeType();
+    cartpath[0] = '\0';
+    const std::string system = tico_system_dir();
+    switch (g_cartType)
+    {
+    case CART_BACKUPRAM4MBIT:
+    case CART_BACKUPRAM8MBIT:
+    case CART_BACKUPRAM16MBIT:
+    case CART_BACKUPRAM32MBIT:
+    {
+        static const int kMbit[] = {4, 8, 16, 32};
+        std::snprintf(cartpath, sizeof(cartpath), "%sbackup_cart_%dmbit.bin", tico_saves_dir(),
+                      kMbit[g_cartType - CART_BACKUPRAM4MBIT]);
+        break;
+    }
+    case CART_PAR:
+    case CART_ROM16MBIT:
+    {
+        std::vector<std::string> candidates;
+        if (g_cartType == CART_PAR)
+            candidates = {system + "ar.bin", system + "action_replay.bin"};
+        else
+            candidates = {system + tico_game_stem() + ".rom", system + "rom_cart.bin"};
+        for (const std::string &candidate : candidates)
+        {
+            if (IsFile(candidate))
+            {
+                std::snprintf(cartpath, sizeof(cartpath), "%s", candidate.c_str());
+                break;
+            }
+        }
+        if (!cartpath[0])
+        {
+            LOG_WARN("EMU", "no dump for cartridge %d at %s", g_cartType, candidates[0].c_str());
+            OverlayUI::ShowToast(
+                (g_cartType == CART_PAR ? std::string("Action Replay") : std::string("ROM cartridge")) +
+                ": " + candidates[0].substr(candidates[0].find_last_of('/') + 1) +
+                " not found, starting without it");
+            g_cartType = CART_NONE;
+        }
+        break;
+    }
+    case CART_NETLINK:
+        // nothing on Switch to connect it to
+        g_cartType = CART_NONE;
+        break;
+    default:
+        break;
+    }
+    LOG_INFO("EMU", "cartridge %d (%s)", g_cartType, cartpath[0] ? cartpath : "no file");
+}
+
 static void PreparePaths()
 {
     std::snprintf(cdpath, sizeof(cdpath), "%s", tico_disc_path());
-    if (const char *bios = tico_bios_path())
-        std::snprintf(biospath, sizeof(biospath), "%s", bios);
+    // the real BIOS when there is one, unless the game is set to the emulated one
+    biospath[0] = '\0';
+    if (TicoConfig::GetConfigValue("bios", "real") != "emulated")
+    {
+        if (const char *bios = tico_bios_path())
+            std::snprintf(biospath, sizeof(biospath), "%s", bios);
+    }
 
     // Backup RAM per game, shared by its discs: "(Disc N)" is left out
     std::string name = tico_game_stem();
@@ -915,7 +989,7 @@ static int InitEmulator()
     yinit.vidcoretype = g_vulkan ? VIDCORE_VULKAN : VIDCORE_OGL;
     yinit.sndcoretype = SNDCORE_SDL;
     yinit.cdcoretype = CDCORE_ISO;
-    yinit.carttype = g_config.GetCartridgeType();
+    yinit.carttype = g_cartType;
     yinit.regionid = 0;
     yinit.biospath = biospath[0] ? biospath : NULL;
     yinit.cdpath = cdpath;
@@ -927,7 +1001,10 @@ static int InitEmulator()
     yinit.framelimit = g_config.GetFrameLimit();
     yinit.usethreads = 1;
     yinit.use_cpu_affinity = 1;
-    yinit.skip_load = g_config.GetSkipLoad();
+    yinit.skip_load = 0; // a test hook: with the emulated BIOS no game would load
+    // straight into the game; the emulated BIOS always does
+    yinit.use_quick_load =
+        biospath[0] && TicoConfig::GetConfigValue("skip_bios_intro", "disabled") == "enabled";
     yinit.video_filter_type = g_config.GetVideoFilter();
     yinit.polygon_generation_mode = g_config.GetPolygonMode();
     yinit.use_new_scsp = 1;
@@ -1052,6 +1129,7 @@ int main(int argc, char **argv)
     }
 
     PreparePaths();
+    PrepareCartridge();
     if (InitEmulator() == -1)
     {
         ImGuiOverlay::Shutdown();

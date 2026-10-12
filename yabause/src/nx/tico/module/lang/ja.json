@@ -26,7 +26,6 @@
   "settings_yabasanshiro_section_cpu": "CPU",
   "settings_yabasanshiro_sh2_cache": "SH2キャッシュ",
   "settings_yabasanshiro_section_disc": "ディスク",
-  "settings_yabasanshiro_skip_bios_load": "BIOS読込スキップ",
   "settings_yabasanshiro_section_cartridge": "カートリッジ",
   "settings_yabasanshiro_cartridge_type": "カートリッジタイプ",
   "settings_yabasanshiro_tab_input": "入力",
@@ -36,5 +35,8 @@
   "settings_yabasanshiro_renderer": "レンダラー",
   "settings_yabasanshiro_vdp2_composite": "VDP2合成",
   "settings_yabasanshiro_section_sound": "サウンド",
-  "settings_yabasanshiro_scsp_sync": "1フレームあたりのサウンド同期"
+  "settings_yabasanshiro_scsp_sync": "1フレームあたりのサウンド同期",
+  "settings_yabasanshiro_section_bios": "BIOS",
+  "settings_yabasanshiro_bios": "BIOS",
+  "settings_yabasanshiro_skip_bios_intro": "BIOSのイントロをスキップ"
 }

@@ -26,7 +26,6 @@
   "settings_yabasanshiro_section_cpu": "CPU",
   "settings_yabasanshiro_sh2_cache": "Кэш SH2",
   "settings_yabasanshiro_section_disc": "Диск",
-  "settings_yabasanshiro_skip_bios_load": "Пропустить загрузку BIOS",
   "settings_yabasanshiro_section_cartridge": "Картридж",
   "settings_yabasanshiro_cartridge_type": "Тип картриджа",
   "settings_yabasanshiro_tab_input": "Ввод",
@@ -36,5 +35,8 @@
   "settings_yabasanshiro_renderer": "Рендерер",
   "settings_yabasanshiro_vdp2_composite": "Композиция VDP2",
   "settings_yabasanshiro_section_sound": "Звук",
-  "settings_yabasanshiro_scsp_sync": "Синхронизаций звука за кадр"
+  "settings_yabasanshiro_scsp_sync": "Синхронизаций звука за кадр",
+  "settings_yabasanshiro_section_bios": "BIOS",
+  "settings_yabasanshiro_bios": "BIOS",
+  "settings_yabasanshiro_skip_bios_intro": "Пропустить заставку BIOS"
 }

@@ -26,7 +26,6 @@
   "settings_yabasanshiro_section_cpu": "CPU",
   "settings_yabasanshiro_sh2_cache": "Cache SH2",
   "settings_yabasanshiro_section_disc": "Disco",
-  "settings_yabasanshiro_skip_bios_load": "Pular Carga da BIOS",
   "settings_yabasanshiro_section_cartridge": "Cartucho",
   "settings_yabasanshiro_cartridge_type": "Tipo de Cartucho",
   "settings_yabasanshiro_tab_input": "Controles",
@@ -36,5 +35,8 @@
   "settings_yabasanshiro_renderer": "Renderizador",
   "settings_yabasanshiro_vdp2_composite": "Composição VDP2",
   "settings_yabasanshiro_section_sound": "Som",
-  "settings_yabasanshiro_scsp_sync": "Sincronizações de som por frame"
+  "settings_yabasanshiro_scsp_sync": "Sincronizações de som por frame",
+  "settings_yabasanshiro_section_bios": "BIOS",
+  "settings_yabasanshiro_bios": "BIOS",
+  "settings_yabasanshiro_skip_bios_intro": "Saltar introdução da BIOS"
 }

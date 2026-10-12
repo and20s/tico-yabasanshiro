@@ -463,7 +463,7 @@ int YabauseInit(yabauseinit_struct *init)
       T2WriteLong(BiosRom, 0x00000220, 0x277AAFFE); // patch for SAKURA TAISEN
    }
 
-   yabsys.usequickload = 0;
+   yabsys.usequickload = init->use_quick_load;
 
 #if defined(SH2_DYNAREC)
    if (SH2Core->id == 2)

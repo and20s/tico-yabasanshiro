@@ -75,6 +75,7 @@ extern "C"
                 int numthreads;
                 int osdcoretype;
                 int skip_load; // skip loading in YabauseInit so tests can be run without a bios
+                int use_quick_load; // with a real BIOS: start the game directly, without the BIOS intro
                 int video_filter_type;
                 int polygon_generation_mode;
                 int play_ssf;

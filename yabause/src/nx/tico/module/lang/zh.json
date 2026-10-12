@@ -26,7 +26,6 @@
   "settings_yabasanshiro_section_cpu": "CPU",
   "settings_yabasanshiro_sh2_cache": "SH2 缓存",
   "settings_yabasanshiro_section_disc": "光盘",
-  "settings_yabasanshiro_skip_bios_load": "跳过 BIOS 加载",
   "settings_yabasanshiro_section_cartridge": "卡带",
   "settings_yabasanshiro_cartridge_type": "卡带类型",
   "settings_yabasanshiro_tab_input": "输入",
@@ -36,5 +35,8 @@
   "settings_yabasanshiro_renderer": "渲染器",
   "settings_yabasanshiro_vdp2_composite": "VDP2 合成",
   "settings_yabasanshiro_section_sound": "声音",
-  "settings_yabasanshiro_scsp_sync": "每帧声音同步次数"
+  "settings_yabasanshiro_scsp_sync": "每帧声音同步次数",
+  "settings_yabasanshiro_section_bios": "BIOS",
+  "settings_yabasanshiro_bios": "BIOS",
+  "settings_yabasanshiro_skip_bios_intro": "跳过 BIOS 开场"
 }

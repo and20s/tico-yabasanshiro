@@ -370,13 +370,34 @@
           ]
         },
         {
-          "title": "settings_yabasanshiro_section_disc",
+          "title": "settings_yabasanshiro_section_bios",
           "options": [
             {
-              "key": "skip_load",
-              "label": "settings_yabasanshiro_skip_bios_load",
+              "key": "bios",
+              "label": "settings_yabasanshiro_bios",
+              "type": "enum",
+              "default": "real",
+              "choices": [
+                {
+                  "label": "Real BIOS (if found)",
+                  "value": "real"
+                },
+                {
+                  "label": "Emulated",
+                  "value": "emulated"
+                }
+              ],
+              "restart": true
+            },
+            {
+              "key": "skip_bios_intro",
+              "label": "settings_yabasanshiro_skip_bios_intro",
               "type": "bool",
               "default": "disabled",
+              "depends_on": {
+                "key": "bios",
+                "value": "real"
+              },
               "restart": true
             }
           ]
@@ -401,6 +422,30 @@
                 {
                   "label": "4MB RAM Cartridge",
                   "value": "4MB RAM"
+                },
+                {
+                  "label": "4 Mbit Backup RAM Cartridge",
+                  "value": "4Mbit Backup RAM"
+                },
+                {
+                  "label": "8 Mbit Backup RAM Cartridge",
+                  "value": "8Mbit Backup RAM"
+                },
+                {
+                  "label": "16 Mbit Backup RAM Cartridge",
+                  "value": "16Mbit Backup RAM"
+                },
+                {
+                  "label": "32 Mbit Backup RAM Cartridge",
+                  "value": "32Mbit Backup RAM"
+                },
+                {
+                  "label": "Action Replay",
+                  "value": "Action Replay"
+                },
+                {
+                  "label": "16 Mbit ROM Cartridge",
+                  "value": "16Mbit ROM"
                 }
               ],
               "restart": true
