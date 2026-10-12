@@ -21,7 +21,6 @@
   "settings_yabasanshiro_frame_limit": "帧数限制",
   "settings_yabasanshiro_frame_skip": "跳帧",
   "settings_yabasanshiro_section_debug": "调试",
-  "settings_yabasanshiro_show_fps": "显示帧率",
   "settings_yabasanshiro_tab_emulation": "模拟",
   "settings_yabasanshiro_section_cpu": "CPU",
   "settings_yabasanshiro_sh2_cache": "SH2 缓存",
@@ -38,5 +37,7 @@
   "settings_yabasanshiro_scsp_sync": "每帧声音同步次数",
   "settings_yabasanshiro_section_bios": "BIOS",
   "settings_yabasanshiro_bios": "BIOS",
-  "settings_yabasanshiro_skip_bios_intro": "跳过 BIOS 开场"
+  "settings_yabasanshiro_skip_bios_intro": "跳过 BIOS 开场",
+  "settings_yabasanshiro_fps_counter": "帧率计数器",
+  "settings_yabasanshiro_rendered_resolution": "渲染分辨率"
 }

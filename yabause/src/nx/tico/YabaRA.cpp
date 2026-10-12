@@ -432,6 +432,19 @@ bool Hardcore() {
     return s_client && rc_client_get_hardcore_enabled(s_client);
 }
 
+bool CanPause(int& seconds_remaining) {
+    seconds_remaining = 0;
+    if (!Hardcore())
+        return true;
+    uint32_t frames_remaining = 0;
+    if (rc_client_can_pause(s_client, &frames_remaining))
+        return true;
+    seconds_remaining = static_cast<int>((frames_remaining + 59) / 60);
+    if (seconds_remaining < 1)
+        seconds_remaining = 1;
+    return false;
+}
+
 SwitchFrontend::RAAlerts::Source AlertSource() {
     SwitchFrontend::RAAlerts::Source source;
     source.notifications = &s_shown;

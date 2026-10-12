@@ -21,7 +21,6 @@
   "settings_yabasanshiro_frame_limit": "Ограничение кадров",
   "settings_yabasanshiro_frame_skip": "Пропуск кадров",
   "settings_yabasanshiro_section_debug": "Отладка",
-  "settings_yabasanshiro_show_fps": "Показывать FPS",
   "settings_yabasanshiro_tab_emulation": "Эмуляция",
   "settings_yabasanshiro_section_cpu": "CPU",
   "settings_yabasanshiro_sh2_cache": "Кэш SH2",
@@ -38,5 +37,7 @@
   "settings_yabasanshiro_scsp_sync": "Синхронизаций звука за кадр",
   "settings_yabasanshiro_section_bios": "BIOS",
   "settings_yabasanshiro_bios": "BIOS",
-  "settings_yabasanshiro_skip_bios_intro": "Пропустить заставку BIOS"
+  "settings_yabasanshiro_skip_bios_intro": "Пропустить заставку BIOS",
+  "settings_yabasanshiro_fps_counter": "Счётчик FPS",
+  "settings_yabasanshiro_rendered_resolution": "Разрешение рендеринга"
 }

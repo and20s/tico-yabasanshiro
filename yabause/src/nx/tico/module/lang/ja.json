@@ -21,7 +21,6 @@
   "settings_yabasanshiro_frame_limit": "フレーム制限",
   "settings_yabasanshiro_frame_skip": "フレームスキップ",
   "settings_yabasanshiro_section_debug": "デバッグ",
-  "settings_yabasanshiro_show_fps": "FPS表示",
   "settings_yabasanshiro_tab_emulation": "エミュレーション",
   "settings_yabasanshiro_section_cpu": "CPU",
   "settings_yabasanshiro_sh2_cache": "SH2キャッシュ",
@@ -38,5 +37,7 @@
   "settings_yabasanshiro_scsp_sync": "1フレームあたりのサウンド同期",
   "settings_yabasanshiro_section_bios": "BIOS",
   "settings_yabasanshiro_bios": "BIOS",
-  "settings_yabasanshiro_skip_bios_intro": "BIOSのイントロをスキップ"
+  "settings_yabasanshiro_skip_bios_intro": "BIOSのイントロをスキップ",
+  "settings_yabasanshiro_fps_counter": "FPSカウンター",
+  "settings_yabasanshiro_rendered_resolution": "描画解像度"
 }

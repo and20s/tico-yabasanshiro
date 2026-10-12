@@ -184,12 +184,20 @@ int YabFlushMemMap(void *mappedPtr)
    if (mappedPtr == NULL || mappedPtr != nx_memmap_ptr || nx_memmap_filename == NULL)
       return -1;
 
-   FILE *fp = fopen(nx_memmap_filename, "wb");
+   // a temporary file first: a power-off mid-write keeps the previous save
+   char temp[1024];
+   snprintf(temp, sizeof(temp), "%s.tmp", nx_memmap_filename);
+   FILE *fp = fopen(temp, "wb");
    if (fp == NULL)
       return -1;
    size_t written = fwrite(mappedPtr, 1, nx_memmap_size, fp);
-   fclose(fp);
-   return written == nx_memmap_size ? 0 : -1;
+   if (fclose(fp) != 0 || written != nx_memmap_size)
+   {
+      remove(temp);
+      return -1;
+   }
+   remove(nx_memmap_filename);
+   return rename(temp, nx_memmap_filename) == 0 ? 0 : -1;
 }
 
 #elif defined(__GNUC__) && !defined(_WINDOWS)

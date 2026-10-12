@@ -48,6 +48,10 @@ void OfferResume();
 /// paused (the frontend holds the renderer).
 void AutoSave();
 
+/// A message the player answers before the game goes on (it is paused
+/// meanwhile): Continue, or Exit Game.
+void Notice(const std::string& message);
+
 bool TakeExitRequest();
 bool TakeRestartRequest();
 

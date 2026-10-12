@@ -26,6 +26,10 @@ bool Active();
 /// cheats or slow motion.
 bool Hardcore();
 
+/// Hardcore only lets the game pause so often (pausing would help slow it
+/// down): false while it can't yet, with how long until it can.
+bool CanPause(int& seconds_remaining);
+
 /// What the overlay draws the toasts from (on the drawing thread).
 SwitchFrontend::RAAlerts::Source AlertSource();
 

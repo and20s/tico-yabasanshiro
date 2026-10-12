@@ -160,6 +160,8 @@ static char buppath[1024] = "";
 static char mpegpath[256] = "";
 static char cartpath[1024] = "";
 static int g_cartType = 0; // CART_* (cs0.h)
+// asked of the player once the game has started (a missing cartridge dump)
+static std::string g_startNotice;
 
 // Screen: the OpenGL renderer draws 1920x1080 docked and the bottom-left
 // 1280x720 handheld (the window is cropped); Vulkan's swapchain stays at the
@@ -928,10 +930,9 @@ static void PrepareCartridge()
         if (!cartpath[0])
         {
             LOG_WARN("EMU", "no dump for cartridge %d at %s", g_cartType, candidates[0].c_str());
-            OverlayUI::ShowToast(
+            g_startNotice =
                 (g_cartType == CART_PAR ? std::string("Action Replay") : std::string("ROM cartridge")) +
-                ": " + candidates[0].substr(candidates[0].find_last_of('/') + 1) +
-                " not found, starting without it");
+                ": no dump at " + candidates[0] + ". The game starts without the cartridge.";
             g_cartType = CART_NONE;
         }
         break;
@@ -1171,10 +1172,17 @@ int main(int argc, char **argv)
     };
     YabaMenu::Init(host, false);
     YabaMenu::LoadCheats();
+    if (!g_startNotice.empty())
+        YabaMenu::Notice(g_startNotice);
+    if (!biospath[0] && TicoConfig::GetConfigValue("bios", "real") != "emulated")
+        OverlayUI::ShowToast(std::string("No Saturn BIOS in ") + tico_system_dir() +
+                                 ": the emulated BIOS runs (a few games need the real one)",
+                             OverlayUI::ToastCorner::TopRight);
     YabaRA::Init(cdpath);
 
     LOG_INFO("HOME", "Entering main loop");
     int framesRun = 0;
+    u64 saveDirtyAt = 0;
     g_fpsWindowStart = NowMs();
 
     while (appletMainLoop())
@@ -1209,6 +1217,21 @@ int main(int argc, char **argv)
             HandleInput(p, &g_pads[p]);
         YabauseExec();
         YabaRA::DoFrame();
+        tico::PlaytimeFrame(); // this frame's time to the player's playtime
+
+        // The backup RAM (and a backup RAM cartridge) go to their files a second
+        // after the game last wrote them, so a crash or a power-off loses nothing
+        // the game saved; a save made of many writes goes out once.
+        if (BupRamWritten)
+        {
+            BupRamWritten = 0;
+            saveDirtyAt = NowMs();
+        }
+        if (saveDirtyAt && NowMs() - saveDirtyAt >= 1000)
+        {
+            YabFlushBackups();
+            saveDirtyAt = 0;
+        }
 
         // the auto save offer, once the game shows
         if (++framesRun == 90)
@@ -1224,6 +1247,8 @@ int main(int argc, char **argv)
             g_fpsWindowStart = now;
         }
     }
+
+    tico::PlaytimeFlush(); // the game's last seconds
 
     // Exit Game, Restart or HOME: the game goes to the auto slot first
     const bool restart = YabaMenu::TakeRestartRequest();

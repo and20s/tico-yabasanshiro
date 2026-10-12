@@ -267,6 +267,54 @@ std::vector<Disc> FindDiscs(const std::string& disc_path) {
 }
 
 // ---------------------------------------------------------------------------
+// Players: what is plugged into the Saturn's two ports
+
+std::vector<std::string> ControllerNames() {
+    auto name = [](u32 style) -> std::string {
+        const char* key = "emulator_pad_other";
+        const char* fallback = "Controller";
+        if (style & HidNpadStyleTag_NpadFullKey) {
+            key = "emulator_pad_pro";
+            fallback = "Pro Controller";
+        } else if (style & HidNpadStyleTag_NpadHandheld) {
+            key = "emulator_pad_handheld";
+            fallback = "Handheld";
+        } else if (style & HidNpadStyleTag_NpadJoyDual) {
+            key = "emulator_pad_joycon_pair";
+            fallback = "Joy-Con pair";
+        } else if (style & HidNpadStyleTag_NpadJoyLeft) {
+            key = "emulator_pad_joycon_left";
+            fallback = "Left Joy-Con";
+        } else if (style & HidNpadStyleTag_NpadJoyRight) {
+            key = "emulator_pad_joycon_right";
+            fallback = "Right Joy-Con";
+        } else if (style & HidNpadStyleTag_NpadGc) {
+            key = "emulator_pad_gamecube";
+            fallback = "GameCube controller";
+        }
+        return Tr(key, fallback);
+    };
+    std::vector<std::string> names;
+    // port 1 is the first controller or the handheld console, port 2 the second
+    u32 first = hidGetNpadStyleSet(HidNpadIdType_No1);
+    if (!first)
+        first = hidGetNpadStyleSet(HidNpadIdType_Handheld);
+    const u32 second = hidGetNpadStyleSet(HidNpadIdType_No2);
+    names.push_back(first ? name(first) : std::string());
+    names.push_back(second ? name(second) : std::string());
+    return names;
+}
+
+bool ShowControllerOrder() {
+    HidLaControllerSupportArg arg;
+    hidLaCreateControllerSupportArg(&arg);
+    arg.hdr.player_count_min = 0;
+    arg.hdr.player_count_max = 2; // the Saturn's two ports
+    HidLaControllerSupportResultInfo info{};
+    return R_SUCCEEDED(hidLaShowControllerSupport(&info, &arg));
+}
+
+// ---------------------------------------------------------------------------
 
 struct NavRepeat {
     u64 button = 0;
@@ -300,6 +348,7 @@ struct State {
     bool exit_requested = false;
     bool restart_requested = false;
     bool resume_offered = false;
+    bool notice_open = false;
     NavRepeat repeat;
     std::array<unsigned long long, kSlotCount> pictures{};
     std::vector<Cheat> cheats;
@@ -577,6 +626,21 @@ void RunAction(OverlayUI::Action action) {
         SwapDisc(OverlayUI::ConsumeDiscIndex());
         Close();
         return;
+    case Action::ControllerOrder:
+        // the players may be in another order now: the frontend notices
+        if (!ShowControllerOrder())
+            OverlayUI::ShowToast(Tr("emulator_controllers_failed",
+                                    "Could not open the controller screen"),
+                                 OverlayUI::ToastCorner::TopRight);
+        return;
+    case Action::NoticeChoice: {
+        const int choice = OverlayUI::ConsumeNoticeChoice();
+        s.notice_open = false;
+        if (choice == 1)
+            s.exit_requested = true; // Exit Game
+        Close();
+        return;
+    }
     default:
         break;
     }
@@ -623,6 +687,13 @@ void Init(const Host& host, bool library_mode) {
     OverlayUI::SetSlotOccupiedCallback([](int slot) { return IsFile(StatePath(slot)); });
     OverlayUI::SetSlotPreviewCallback(Preview);
     OverlayUI::SetCheatCallbacks(CheatEntries, ToggleCheat);
+    OverlayUI::PlayerCallbacks players;
+    players.ports = [] { return ControllerNames(); };
+    players.note = [] {
+        return Tr("yabasanshiro_players_note",
+                  "The Saturn has two controller ports: the first two controllers.");
+    };
+    OverlayUI::SetPlayerCallbacks(std::move(players));
     s.discs = FindDiscs(s.current_disc);
     if (s.discs.size() > 1)
         OverlayUI::SetDiscCallback(DiscEntries);
@@ -639,11 +710,19 @@ void Shutdown() {
     OverlayUI::SetSlotPreviewCallback({});
     OverlayUI::SetCheatCallbacks({}, {});
     OverlayUI::SetDiscCallback({});
+    OverlayUI::SetPlayerCallbacks({});
 }
 
 void Open() {
     if (s.open)
         return;
+    // opening the menu pauses the game, which hardcore only allows so often
+    int wait = 0;
+    if (!s.library && !s.notice_open && !YabaRA::CanPause(wait)) {
+        OverlayUI::ShowToast(TrFormat("emulator_hardcore_pause_wait",
+                                      "You can pause again in %d s", wait));
+        return;
+    }
     s.open = true;
     s.repeat = {};
     OverlayUI::SetHardcoreMode(YabaRA::Hardcore());
@@ -669,7 +748,8 @@ void Update(u64 held, u64 pressed) {
         return;
     }
     // the combo that opened the menu also closes it
-    if (!s.library && (held & kToggleCombo) == kToggleCombo && (pressed & kToggleCombo)) {
+    if (!s.library && !s.notice_open && (held & kToggleCombo) == kToggleCombo &&
+        (pressed & kToggleCombo)) {
         Close();
         return;
     }
@@ -700,6 +780,13 @@ void OfferResume() {
 void AutoSave() {
     if (!s.library && tico_game_stem()[0])
         SaveState(kAutoSlot);
+}
+
+void Notice(const std::string& message) {
+    s.notice_open = true;
+    Open();
+    OverlayUI::ShowNotice(message, {Tr("yabasanshiro_continue", "Continue"),
+                                    Tr("emulator_exit_game", "Exit Game")});
 }
 
 bool TakeExitRequest() {

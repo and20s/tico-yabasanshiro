@@ -21,7 +21,6 @@
   "settings_yabasanshiro_frame_limit": "Frame Limit",
   "settings_yabasanshiro_frame_skip": "Frame Skip",
   "settings_yabasanshiro_section_debug": "Debug",
-  "settings_yabasanshiro_show_fps": "Show FPS",
   "settings_yabasanshiro_tab_emulation": "Emulation",
   "settings_yabasanshiro_section_cpu": "CPU",
   "settings_yabasanshiro_sh2_cache": "SH2 Cache",
@@ -38,5 +37,7 @@
   "settings_yabasanshiro_scsp_sync": "Sound syncs per frame",
   "settings_yabasanshiro_section_bios": "BIOS",
   "settings_yabasanshiro_bios": "BIOS",
-  "settings_yabasanshiro_skip_bios_intro": "Skip BIOS intro"
+  "settings_yabasanshiro_skip_bios_intro": "Skip BIOS intro",
+  "settings_yabasanshiro_fps_counter": "FPS counter",
+  "settings_yabasanshiro_rendered_resolution": "Rendered resolution"
 }

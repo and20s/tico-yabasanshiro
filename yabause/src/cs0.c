@@ -849,6 +849,7 @@ static u32 FASTCALL BUP4MBITCs1ReadLong(u32 addr)
 static void FASTCALL BUP4MBITCs1WriteByte(u32 addr, u8 val)
 {
    T1WriteByte(CartridgeArea->bupram, addr & 0xFFFFF, val);
+   BupRamWritten = 1; // the frontend writes the cartridge out
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -856,6 +857,7 @@ static void FASTCALL BUP4MBITCs1WriteByte(u32 addr, u8 val)
 static void FASTCALL BUP4MBITCs1WriteWord(u32 addr, u16 val)
 {
    T1WriteWord(CartridgeArea->bupram, addr & 0xFFFFF, val);
+   BupRamWritten = 1; // the frontend writes the cartridge out
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -863,6 +865,7 @@ static void FASTCALL BUP4MBITCs1WriteWord(u32 addr, u16 val)
 static void FASTCALL BUP4MBITCs1WriteLong(u32 addr, u32 val)
 {
    T1WriteLong(CartridgeArea->bupram, addr & 0xFFFFF, val);
+   BupRamWritten = 1; // the frontend writes the cartridge out
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -893,6 +896,7 @@ static u32 FASTCALL BUP8MBITCs1ReadLong(u32 addr)
 static void FASTCALL BUP8MBITCs1WriteByte(u32 addr, u8 val)
 {
    T1WriteByte(CartridgeArea->bupram, addr & 0x1FFFFF, val);
+   BupRamWritten = 1; // the frontend writes the cartridge out
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -900,6 +904,7 @@ static void FASTCALL BUP8MBITCs1WriteByte(u32 addr, u8 val)
 static void FASTCALL BUP8MBITCs1WriteWord(u32 addr, u16 val)
 {
    T1WriteWord(CartridgeArea->bupram, addr & 0x1FFFFF, val);
+   BupRamWritten = 1; // the frontend writes the cartridge out
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -907,6 +912,7 @@ static void FASTCALL BUP8MBITCs1WriteWord(u32 addr, u16 val)
 static void FASTCALL BUP8MBITCs1WriteLong(u32 addr, u32 val)
 {
    T1WriteLong(CartridgeArea->bupram, addr & 0x1FFFFF, val);
+   BupRamWritten = 1; // the frontend writes the cartridge out
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -937,6 +943,7 @@ static u32 FASTCALL BUP16MBITCs1ReadLong(u32 addr)
 static void FASTCALL BUP16MBITCs1WriteByte(u32 addr, u8 val)
 {
    T1WriteByte(CartridgeArea->bupram, addr & 0x3FFFFF, val);
+   BupRamWritten = 1; // the frontend writes the cartridge out
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -944,6 +951,7 @@ static void FASTCALL BUP16MBITCs1WriteByte(u32 addr, u8 val)
 static void FASTCALL BUP16MBITCs1WriteWord(u32 addr, u16 val)
 {
    T1WriteWord(CartridgeArea->bupram, addr & 0x3FFFFF, val);
+   BupRamWritten = 1; // the frontend writes the cartridge out
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -951,6 +959,7 @@ static void FASTCALL BUP16MBITCs1WriteWord(u32 addr, u16 val)
 static void FASTCALL BUP16MBITCs1WriteLong(u32 addr, u32 val)
 {
    T1WriteLong(CartridgeArea->bupram, addr & 0x3FFFFF, val);
+   BupRamWritten = 1; // the frontend writes the cartridge out
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -981,6 +990,7 @@ static u32 FASTCALL BUP32MBITCs1ReadLong(u32 addr)
 static void FASTCALL BUP32MBITCs1WriteByte(u32 addr, u8 val)
 {
    T1WriteByte(CartridgeArea->bupram, addr & 0x7FFFFF, val);
+   BupRamWritten = 1; // the frontend writes the cartridge out
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -988,6 +998,7 @@ static void FASTCALL BUP32MBITCs1WriteByte(u32 addr, u8 val)
 static void FASTCALL BUP32MBITCs1WriteWord(u32 addr, u16 val)
 {
    T1WriteWord(CartridgeArea->bupram, addr & 0x7FFFFF, val);
+   BupRamWritten = 1; // the frontend writes the cartridge out
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -995,6 +1006,7 @@ static void FASTCALL BUP32MBITCs1WriteWord(u32 addr, u16 val)
 static void FASTCALL BUP32MBITCs1WriteLong(u32 addr, u32 val)
 {
    T1WriteLong(CartridgeArea->bupram, addr & 0x7FFFFF, val);
+   BupRamWritten = 1; // the frontend writes the cartridge out
 }
 
 //////////////////////////////////////////////////////////////////////////////
