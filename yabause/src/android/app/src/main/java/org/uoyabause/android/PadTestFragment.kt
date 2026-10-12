@@ -24,7 +24,6 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.CheckBox
-import android.widget.CompoundButton
 import android.widget.SeekBar
 import android.widget.SeekBar.OnSeekBarChangeListener
 import android.widget.TextView
@@ -34,35 +33,36 @@ import org.devmiyax.yabasanshiro.R
 import org.uoyabause.android.PadManager.Companion.padManager
 import org.uoyabause.android.YabausePad.OnPadListener
 
-class PadTestFragment : Fragment(), OnPadListener {
+class PadTestFragment :
+    Fragment(),
+    OnPadListener {
     var mPadView: YabausePad? = null
     var mSlide: SeekBar? = null
     var mLeftSlideY: SeekBar? = null
     var mCenterSlideY: SeekBar? = null
     var mRightSlideY: SeekBar? = null
     var mTransSlide: SeekBar? = null
+    var mHitsizeSlide: SeekBar? = null
+    var mAnalogDistanceSlide: SeekBar? = null
     private var padm: PadManager? = null
     var tv: TextView? = null
 
     var mChkForceFeedback: CheckBox? = null
-    var mChkVIsualFeedback: CheckBox? = null
+    var mChkVisualFeedback: CheckBox? = null
     var mChkAnalogDpad: CheckBox? = null
-
+    var mChkClassicPadStyle: CheckBox? = null
 
     interface PadTestListener {
         fun onFinish()
+
         fun onCancel()
 
-        fun onUpdateTransparency(a : Float )
+        fun onUpdateTransparency(a: Float)
 
-        fun onUpdateAnalogDpad( a : Boolean )
-
+        fun onUpdateAnalogDpad(a: Boolean)
     }
 
-    var listener_: PadTestListener? = null
-    fun setListener(listner: PadTestListener?) {
-        listener_ = listner
-    }
+    var listener: PadTestListener? = null
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -81,15 +81,20 @@ class PadTestFragment : Fragment(), OnPadListener {
         mSlide!!.progress = (mPadView!!.scale * 100.0f).toInt()
         mSlide!!.setOnSeekBarChangeListener(
             object : OnSeekBarChangeListener {
-                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
+                override fun onProgressChanged(
+                    seekBar: SeekBar,
+                    progress: Int,
+                    fromUser: Boolean,
+                ) {
                     mPadView!!.scale = progress.toFloat() / 100.0f
                     mPadView!!.requestLayout()
                     mPadView!!.invalidate()
                 }
 
                 override fun onStartTrackingTouch(seekBar: SeekBar) {}
+
                 override fun onStopTrackingTouch(seekBar: SeekBar) {}
-            }
+            },
         )
 /*
         mLeftSlideY = rootView.findViewById<View>(R.id.button_lypos) as SeekBar
@@ -140,43 +145,93 @@ class PadTestFragment : Fragment(), OnPadListener {
         mTransSlide!!.progress = (mPadView!!.trans * 100.0f).toInt()
         mTransSlide!!.setOnSeekBarChangeListener(
             object : OnSeekBarChangeListener {
-                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
+                override fun onProgressChanged(
+                    seekBar: SeekBar,
+                    progress: Int,
+                    fromUser: Boolean,
+                ) {
                     mPadView!!.trans = progress.toFloat() / 100.0f
-                    listener_?.onUpdateTransparency(mPadView!!.trans)
+                    listener?.onUpdateTransparency(mPadView!!.trans)
                     mPadView!!.invalidate()
                 }
+
                 override fun onStartTrackingTouch(seekBar: SeekBar) {}
+
                 override fun onStopTrackingTouch(seekBar: SeekBar) {}
-            }
+            },
+        )
+
+        mHitsizeSlide = rootView.findViewById<View>(R.id.button_hitsize) as SeekBar
+        mHitsizeSlide!!.progress = (mPadView!!.hitsizeMultiplier * 100.0f).toInt()
+        mHitsizeSlide!!.setOnSeekBarChangeListener(
+            object : OnSeekBarChangeListener {
+                override fun onProgressChanged(
+                    seekBar: SeekBar,
+                    progress: Int,
+                    fromUser: Boolean,
+                ) {
+                    mPadView!!.hitsizeMultiplier = progress.toFloat() / 100.0f
+                }
+
+                override fun onStartTrackingTouch(seekBar: SeekBar) {}
+
+                override fun onStopTrackingTouch(seekBar: SeekBar) {}
+            },
+        )
+
+        mAnalogDistanceSlide = rootView.findViewById<View>(R.id.button_analog_distance) as SeekBar
+        mAnalogDistanceSlide!!.progress =
+            PreferenceManager
+                .getDefaultSharedPreferences(requireActivity())
+                .getFloat("pref_analog_max_distance", 200f)
+                .toInt()
+        mAnalogDistanceSlide!!.setOnSeekBarChangeListener(
+            object : OnSeekBarChangeListener {
+                override fun onProgressChanged(
+                    seekBar: SeekBar,
+                    progress: Int,
+                    fromUser: Boolean,
+                ) {
+                    mPadView!!.analogMaxDistance = progress.toFloat()
+                }
+
+                override fun onStartTrackingTouch(seekBar: SeekBar) {}
+
+                override fun onStopTrackingTouch(seekBar: SeekBar) {}
+            },
         )
 
         mChkForceFeedback = rootView.findViewById<CheckBox>(R.id.cb_forcefeedback)
-        mChkForceFeedback?.setOnCheckedChangeListener( object : CompoundButton.OnCheckedChangeListener{
-            override fun onCheckedChanged(buttonView: CompoundButton?, isChecked: Boolean) {
-                mPadView!!.forceFeedback = isChecked
-            }
-        })
+        mChkForceFeedback?.setOnCheckedChangeListener { _, isChecked ->
+            mPadView!!.forceFeedback = isChecked
+        }
         mChkForceFeedback?.isChecked = mPadView!!.forceFeedback
 
-        mChkVIsualFeedback= rootView.findViewById<CheckBox>(R.id.cb_visual_feedback)
-        mChkVIsualFeedback?.setOnCheckedChangeListener( object : CompoundButton.OnCheckedChangeListener{
-            override fun onCheckedChanged(buttonView: CompoundButton?, isChecked: Boolean) {
-                mPadView!!.visualFeedback = isChecked
-            }
-        })
-        mChkVIsualFeedback?.isChecked = mPadView!!.visualFeedback
+        mChkVisualFeedback = rootView.findViewById<CheckBox>(R.id.cb_visual_feedback)
+        mChkVisualFeedback?.setOnCheckedChangeListener { _, isChecked ->
+            mPadView!!.visualFeedback = isChecked
+        }
+        mChkVisualFeedback?.isChecked = mPadView!!.visualFeedback
 
         mChkAnalogDpad = rootView.findViewById<CheckBox>(R.id.cb_show_analog_dpad_button)
-        mChkAnalogDpad?.setOnCheckedChangeListener( object : CompoundButton.OnCheckedChangeListener{
-            override fun onCheckedChanged(buttonView: CompoundButton?, isChecked: Boolean) {
-                listener_?.onUpdateAnalogDpad(isChecked)
-            }
-        })
+        mChkAnalogDpad?.setOnCheckedChangeListener { _, isChecked ->
+            listener?.onUpdateAnalogDpad(isChecked)
+        }
 
-        val sharedPref = PreferenceManager.getDefaultSharedPreferences(
-            requireActivity())
+        val sharedPref =
+            PreferenceManager.getDefaultSharedPreferences(
+                requireActivity(),
+            )
         mChkAnalogDpad?.isChecked = sharedPref.getBoolean("pref_show_analog_switch", false)
 
+        mChkClassicPadStyle = rootView.findViewById<CheckBox>(R.id.cb_classic_pad_style)
+        mChkClassicPadStyle?.setOnCheckedChangeListener { _, isChecked ->
+            mPadView!!.useClassicPadStyle = isChecked
+            mPadView!!.reloadBitmapStyle()
+            mPadView!!.requestLayout()
+            mPadView!!.invalidate()
+        }
+        mChkClassicPadStyle?.isChecked = sharedPref.getBoolean("pref_classic_pad_style", false)
 
         tv = rootView.findViewById<View>(R.id.text_status) as TextView
         return rootView
@@ -187,8 +242,10 @@ class PadTestFragment : Fragment(), OnPadListener {
         alert.setTitle("")
         alert.setMessage(R.string.do_you_want_to_save_this_setting)
         alert.setPositiveButton(R.string.yes) { _, _ ->
-            val sharedPref = PreferenceManager.getDefaultSharedPreferences(
-                requireActivity())
+            val sharedPref =
+                PreferenceManager.getDefaultSharedPreferences(
+                    requireActivity(),
+                )
             val editor = sharedPref.edit()
             var value = mSlide!!.progress.toFloat() / 100.0f
             editor.putFloat("pref_pad_scale", value)
@@ -202,28 +259,36 @@ class PadTestFragment : Fragment(), OnPadListener {
             value = mTransSlide!!.progress.toFloat() / 100.0f
             editor.putFloat("pref_pad_trans", value)
 
+            value = mHitsizeSlide!!.progress.toFloat() / 100.0f
+            editor.putFloat("pref_pad_hitsize", value)
+
+            value = mAnalogDistanceSlide!!.progress.toFloat()
+            editor.putFloat("pref_analog_max_distance", value)
+
             editor.putBoolean("pref_force_feedback", mChkForceFeedback!!.isChecked())
-            editor.putBoolean("pref_visual_feedback", mChkVIsualFeedback!!.isChecked())
+            editor.putBoolean("pref_visual_feedback", mChkVisualFeedback!!.isChecked())
             editor.putBoolean("pref_show_analog_switch", mChkAnalogDpad!!.isChecked())
+            editor.putBoolean("pref_classic_pad_style", mChkClassicPadStyle!!.isChecked())
             editor.commit()
 
             mPadView!!.saveCurrentPositionState()
 
-            if (listener_ != null) listener_!!.onFinish()
+            if (listener != null) listener!!.onFinish()
         }
-        alert.setNegativeButton(R.string.no) { _, _ -> if (listener_ != null) listener_!!.onCancel() }
+        alert.setNegativeButton(R.string.no) { _, _ -> if (listener != null) listener!!.onCancel() }
         alert.show()
     }
 
     override fun onPad(event: PadEvent?): Boolean {
         // TextView tv = (TextView)findViewById(R.id.text_status);
-        tv!!.text = mPadView!!.statusString
-        tv!!.invalidate()
+        // tv!!.text = mPadView!!.statusString
+        // tv!!.invalidate()
         return true
     }
 
     companion object {
         const val TAG = "PadTestFragment"
+
         fun newInstance(): PadTestFragment {
             val fragment = PadTestFragment()
             val args = Bundle()
@@ -232,4 +297,3 @@ class PadTestFragment : Fragment(), OnPadListener {
         }
     }
 }
-

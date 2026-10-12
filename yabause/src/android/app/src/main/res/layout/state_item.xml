@@ -60,11 +60,7 @@
             <ImageView
                 android:id="@+id/imageView"
                 android:layout_width="match_parent"
-                android:layout_height="165dp"
-                riv_corner_radius_top_left="@dimen/card_corner_radius"
-                riv_corner_radius_top_right="@dimen/card_corner_radius"
-                riv_corner_radius_bottom_left="@dimen/card_corner_radius"
-                riv_corner_radius_bottom_right="@dimen/card_corner_radius" />
+                android:layout_height="165dp" />
 
         </LinearLayout>
 

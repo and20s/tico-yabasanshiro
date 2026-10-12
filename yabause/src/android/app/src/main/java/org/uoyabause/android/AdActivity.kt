@@ -26,12 +26,17 @@ import android.util.Log
 import android.widget.Button
 import android.widget.ImageButton
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 
 class AdActivity : AppCompatActivity() {
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
         setContentView(org.devmiyax.yabasanshiro.R.layout.activity_ad)
+
+        // Setup edge-to-edge window insets handling
+        setupEdgeToEdgeInsets()
 
         val button = findViewById<ImageButton>(org.devmiyax.yabasanshiro.R.id.got_to_store_button)
         button.setOnClickListener {
@@ -45,6 +50,25 @@ class AdActivity : AppCompatActivity() {
 
         findViewById<Button>(org.devmiyax.yabasanshiro.R.id.close)?.setOnClickListener {
             finish()
+        }
+    }
+
+    /**
+     * Setup edge-to-edge window insets handling for Android 15+ (API 35+)
+     */
+    private fun setupEdgeToEdgeInsets() {
+        val rootView = findViewById<android.view.View>(android.R.id.content)
+        ViewCompat.setOnApplyWindowInsetsListener(rootView) { view, windowInsets ->
+            val insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())
+
+            view.setPadding(
+                view.paddingLeft,
+                insets.top,
+                view.paddingRight,
+                view.paddingBottom,
+            )
+
+            windowInsets
         }
     }
 }

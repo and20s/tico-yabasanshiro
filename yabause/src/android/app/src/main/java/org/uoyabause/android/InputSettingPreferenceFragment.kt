@@ -20,48 +20,46 @@ package org.uoyabause.android
 
 import android.app.Dialog
 import android.os.Bundle
-import android.view.*
+import android.view.View
 import androidx.appcompat.app.AlertDialog
 import androidx.preference.PreferenceDialogFragmentCompat
-import java.io.*
-import java.util.*
 import org.devmiyax.yabasanshiro.R
 
-class InputSettingPreferenceFragment() : PreferenceDialogFragmentCompat() {
+class InputSettingPreferenceFragment : PreferenceDialogFragmentCompat() {
+    val presenter: InputSettingPresenter = InputSettingPresenter()
 
-  val presenter: InputSettingPresenter = InputSettingPresenter()
+    lateinit var mainView: View
 
-  lateinit var mainView: View
-  override fun onPrepareDialogBuilder(builder: AlertDialog.Builder) {
-    super.onPrepareDialogBuilder(builder)
-    builder.setTitle(R.string.input_the_key)
-    builder.setPositiveButton(null, null)
-    val view = requireActivity().layoutInflater.inflate(R.layout.keymap, null, false)
-    onBindDialogView(view)
-    builder.setView(view)
-    mainView = view
-  }
-
-  override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
-    val dlg = super.onCreateDialog(savedInstanceState)
-    presenter.onCreateDialog(requireActivity(), dlg, mainView)
-    return dlg
-  }
-
-  override fun onDialogClosed(positiveResult: Boolean) {
-    if (positiveResult) {
-      val `is` = preference as InputSettingPreference
-      `is`.save()
+    override fun onPrepareDialogBuilder(builder: AlertDialog.Builder) {
+        super.onPrepareDialogBuilder(builder)
+        builder.setTitle(R.string.input_the_key)
+        builder.setPositiveButton(null, null)
+        val view = requireActivity().layoutInflater.inflate(R.layout.keymap, null, false)
+        onBindDialogView(view)
+        builder.setView(view)
+        mainView = view
     }
-  }
 
-  companion object {
-    fun newInstance(key: String?): InputSettingPreferenceFragment {
-      val fragment = InputSettingPreferenceFragment()
-      val b = Bundle(1)
-      b.putString(ARG_KEY, key)
-      fragment.arguments = b
-      return fragment
+    override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
+        val dlg = super.onCreateDialog(savedInstanceState)
+        presenter.onCreateDialog(requireActivity(), dlg, mainView)
+        return dlg
     }
-  }
+
+    override fun onDialogClosed(positiveResult: Boolean) {
+        if (positiveResult) {
+            val `is` = preference as InputSettingPreference
+            `is`.save()
+        }
+    }
+
+    companion object {
+        fun newInstance(key: String?): InputSettingPreferenceFragment {
+            val fragment = InputSettingPreferenceFragment()
+            val b = Bundle(1)
+            b.putString(ARG_KEY, key)
+            fragment.arguments = b
+            return fragment
+        }
+    }
 }

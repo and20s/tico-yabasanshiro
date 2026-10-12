@@ -3,6 +3,8 @@ project( yabause-qt )
 yab_port_start()
 
 find_package(Qt6 COMPONENTS Widgets QUIET)
+find_package(Qt6 COMPONENTS Test QUIET)
+find_package(Qt6 COMPONENTS Network QUIET)
 
 # FetchContentモジュールのインクルード
 include(FetchContent)
@@ -69,8 +71,9 @@ set( yabause_qt_RESOURCES resources/resources.qrc )
 if ( WIN32 )
 	# Windows port libraries
 	set( yabause_qt_windows_LIBRARIES
-		vfw32 legacy_stdio_definitions.lib 
+		vfw32 legacy_stdio_definitions.lib
 		advapi32 ws2_32 crypt32  Psapi Iphlpapi Userenv
+		dbghelp bcrypt
 		)
 
 	# resources
@@ -114,8 +117,9 @@ set( yabause_qt_FORMS
     ui/UIHexInput.ui
     ui/UIMemoryTransfer.ui 
     ui/UIMemoryEditor.ui 
-	ui/UIMemorySearch.ui 
-	ui/WebLoginWindow.ui )
+	ui/UIMemorySearch.ui
+	ui/WebLoginWindow.ui
+	ui/UIReportList.ui )
 
 # pure C headers
 set( yabause_qt_HEADERS
@@ -149,8 +153,10 @@ set( yabause_qt_MOC_HEADERS
     ui/UIDebugSCSP.h
     ui/UIDebugSCSPChan.h
     ui/UIDebugSCSPDSP.h
+    ui/UIDebugSCSPGraph.h
     ui/UIDebugSCUDSP.h
     ui/UIDebugSH2.h
+    DebugMcpServer.h
     ui/UIDebugVDP1.h
     ui/UIDebugVDP2.h
     ui/UIDebugVDP2Viewer.h
@@ -161,17 +167,30 @@ set( yabause_qt_MOC_HEADERS
     ui/UIMemoryEditor.h
 	ui/UIMemorySearch.h
 	ui/WebLoginWindow.h
+	ui/UIReportList.h
 	YabauseGL.h
 	VolatileSettings.h
 	Settings.h
-	YabauseThread.h 
+	YabauseThread.h
 	QGameInfo.h
+	GameInfoCache.h
 #	GameItemDelegate.h
 	filesearchwidget.h
 	filesearchworker.h
 	qprogressindicator.h
 	GameTableView.h
 	ImageLoader.h
+	models/ReportListModel.h
+	services/FirestoreService.h
+	services/FirestoreServiceImpl.h
+	services/StorageService.h
+	services/StorageServiceImpl.h
+	services/ReproductionManager.h
+	services/ReproductionManagerImpl.h
+	services/PreferenceManager.h
+	services/ImageCacheManager.h
+	widgets/ReportListItemDelegate.h
+	widgets/ToastNotification.h
 	)
 
 # C sources
@@ -204,8 +223,10 @@ set( yabause_qt_SOURCES
     ui/UIDebugSCSP.cpp
     ui/UIDebugSCSPChan.cpp
     ui/UIDebugSCSPDSP.cpp
+    ui/UIDebugSCSPGraph.cpp
     ui/UIDebugSCUDSP.cpp
     ui/UIDebugSH2.cpp
+    DebugMcpServer.cpp
     ui/UIDebugVDP1.cpp
     ui/UIDebugVDP2.cpp
     ui/UIDebugVDP2Viewer.cpp
@@ -223,10 +244,26 @@ set( yabause_qt_SOURCES
 	VolatileSettings.cpp
 	YabauseThread.cpp
 	QGameInfo.cpp
+	GameInfoCache.cpp
 #	GameItemDelegate.cpp
 	Arguments.cpp
 	GameTableView.cpp
 	ImageLoader.cpp
+	models/ReportData.cpp
+	models/AttachmentMetadata.cpp
+	models/ReproductionSession.cpp
+	models/ReportListModel.cpp
+	services/FirestoreService.cpp
+	services/FirestoreServiceImpl.cpp
+	services/StorageService.cpp
+	services/StorageServiceImpl.cpp
+	services/ReproductionManager.cpp
+	services/ReproductionManagerImpl.cpp
+	services/PreferenceManager.cpp
+	services/ImageCacheManager.cpp
+	ui/UIReportList.cpp
+	widgets/ReportListItemDelegate.cpp
+	widgets/ToastNotification.cpp
 	)
 
 if( OPENGL_FOUND )
@@ -269,7 +306,7 @@ include_directories(
 if ("${CMAKE_SYSTEM_NAME}" STREQUAL "Linux")
   # git clone https://github.com/firebase/firebase-cpp-sdk.git -b v6.11.0 yabause/src/qt/firebase-cpp-sdk
 	add_subdirectory( firebase-cpp-sdk )
-	set( FIREBASE_TARGETS firebase_app firebase_auth firebase_storage firebase_database)
+	set( FIREBASE_TARGETS firebase_app firebase_auth firebase_storage firebase_database firebase_firestore)
 else()
   # SET var=%cd%
 	# bitsadmin.exe /TRANSFER htmlget https://dl.google.com/firebase/sdk/cpp/firebase_cpp_sdk_6.11.0.zip %var%\a.zip
@@ -277,11 +314,15 @@ else()
 	#set(MSVC_RUNTIME_MODE MT)
 	set(MSVC_RUNTIME_MODE MD)
 	add_subdirectory( firebase_cpp_sdk )
-	set( FIREBASE_TARGETS firebase_app firebase_auth firebase_storage firebase_database)
+	set( FIREBASE_TARGETS firebase_app firebase_auth firebase_storage firebase_database firebase_firestore)
 	include_directories(${zlib_INCLUDE_DIR})
 endif()
 
-
+# RetroAchievements support
+option(HAVE_RETROACHIEVEMENTS "Enable RetroAchievements support" ON)
+if(HAVE_RETROACHIEVEMENTS)
+    add_subdirectory(../retroachievements retroachievements)
+endif()
 
 # APPLE // not necessary mac os x, but i don't care ;)
 if (APPLE)
@@ -293,17 +334,25 @@ if (APPLE)
 	set_target_properties( yabause-qt PROPERTIES MACOSX_BUNDLE_COPYRIGHT "(c) Yabause Team" )
 endif (APPLE)
 
+# Add RetroAchievements dependencies
+if(HAVE_RETROACHIEVEMENTS)
+    add_dependencies( yabause-qt yabause_retroachievements rcheevos)
+	target_sources( yabause-qt PRIVATE $<TARGET_OBJECTS:yabause_retroachievements> $<TARGET_OBJECTS:rcheevos>)	
+endif()
+
+
 target_link_libraries( yabause-qt yabause )
 target_link_libraries( yabause-qt ${YABAUSE_LIBRARIES} )
 target_link_libraries( yabause-qt ${PORT_LIBRARIES} )
 target_link_libraries( yabause-qt ${yabause_qt_windows_LIBRARIES} )
 target_link_libraries( yabause-qt ${yabause_qt_macosx_LIBRARIES} )
 target_link_libraries( yabause-qt ${LIBCHDR_LIBRARIES} )
-target_link_libraries( yabause-qt ${zlib_STATIC_LIBRARIES} )
+# zlib is already included in YABAUSE_LIBRARIES via find_package(ZLIB)
+# target_link_libraries( yabause-qt ${zlib_STATIC_LIBRARIES} )
 
 include_directories(${ICU_INCLUDE_DIR})
 
-target_link_libraries(yabause-qt PRIVATE ${ICU_LIBRARY_DIR}/icuuc.lib ${ICU_LIBRARY_DIR}/icuin.lib ${ICU_LIBRARY_DIR}/icudt.lib)
+target_link_libraries(yabause-qt ${ICU_LIBRARY_DIR}/icuuc.lib ${ICU_LIBRARY_DIR}/icuin.lib ${ICU_LIBRARY_DIR}/icudt.lib)
 
 # OpenSSL for https
 if(WIN32) 
@@ -342,12 +391,13 @@ else()
 
 endif()
 
-target_link_libraries( yabause-qt 
-	${Qt6Widgets_LIBRARIES} 
-	${Qt6OpenGL_LIBRARIES} 
-	${Qt6OpenGLWidgets_LIBRARIES} 
-	${Qt6Core_QTMAIN_LIBRARIES} 
-	${Qt6Multimedia_LIBRARIES})
+target_link_libraries( yabause-qt
+	${Qt6Widgets_LIBRARIES}
+	${Qt6OpenGL_LIBRARIES}
+	${Qt6OpenGLWidgets_LIBRARIES}
+	${Qt6Core_QTMAIN_LIBRARIES}
+	${Qt6Multimedia_LIBRARIES}
+	${Qt6Network_LIBRARIES})
 
 target_link_libraries( yabause-qt ${FIREBASE_TARGETS} )
 
@@ -387,9 +437,9 @@ if (WIN32)
 	set_property(INSTALL $<TARGET_FILE_NAME:yabause-qt>
 		PROPERTY CPACK_START_MENU_SHORTCUTS "Yaba Sanshiro"
 	)
-	if (GLUT_FOUND)
-		install(FILES ${GLUT_INCLUDE_DIR}/../freeglut.dll DESTINATION ".")
-	endif ()
+#	if (GLUT_FOUND)
+#		install(FILES ${GLUT_INCLUDE_DIR}/../freeglut.dll DESTINATION ".")
+#	endif ()
 	if (SDL_FOUND)
 		get_filename_component(SDL_BINARY_DIR ${SDL_LIBRARY} PATH)
 		install(DIRECTORY ${SDL_BINARY_DIR}/
@@ -412,7 +462,7 @@ if (WIN32)
 	#install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../ChangeLog  DESTINATION "." RENAME ChangeLog.txt)
 	install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../COPYING.txt    DESTINATION "." RENAME COPYING.txt)
 	install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../../win_template/readme.txt     DESTINATION "." RENAME README.txt)
-	install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../settings.ini     DESTINATION "." RENAME settings.ini)
+	install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/settings.ini     DESTINATION "." RENAME settings.ini)
 	#install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../README.WIN DESTINATION "." RENAME README.WIN.txt)
 	#install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/donate.png DESTINATION "." )
 	#install(FILES c:/bin/libeay32.dll DESTINATION "." )

@@ -1,13 +1,16 @@
 import UIKit
 import FirebaseCore
+import FirebaseMessaging
+import FirebaseInAppMessaging
 import GoogleSignIn
 #if FREE_VERSION
 import GoogleMobileAds
 #endif
 import FirebaseAuth
+import UserNotifications
 
-@UIApplicationMain
-class AppDelegate: UIResponder, UIApplicationDelegate {
+@UIApplicationMain  
+class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationCenterDelegate, MessagingDelegate {
 
     var window: UIWindow?
     private let discordRedirectHandler = DiscordOAuthRedirectHandler()
@@ -19,11 +22,11 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
         var filePath: String?
 
-        #if DEBUG
-        filePath = Bundle.main.path(forResource: "GoogleService-Info-Debug", ofType: "plist")
-        #else
+        //#if DEBUG
+        //filePath = Bundle.main.path(forResource: "GoogleService-Info-Debug", ofType: "plist")
+        //#else
         filePath = Bundle.main.path(forResource: "GoogleService-Info", ofType: "plist")
-        #endif
+        //#endif
 
         if let filePath = filePath, let options = FirebaseOptions(contentsOfFile: filePath) {
             FirebaseApp.configure(options: options)
@@ -35,6 +38,19 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 #if FREE_VERSION
         GADMobileAds.sharedInstance().start(completionHandler: nil)
 #endif
+        
+        // Configure Firebase Messaging
+        configureFirebaseMessaging()
+        
+        // Auto-login to RetroAchievements on app startup
+        RetroAchievementsAuthManager.shared.attemptAutoLogin { success, error in
+            if success {
+                NSLog("RetroAchievements: Auto-login successful on app startup")
+            } else {
+                NSLog("RetroAchievements: Auto-login failed on app startup: \(error ?? "Unknown error")")
+            }
+        }
+        
         return true
     }
 
@@ -136,5 +152,150 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
     // MainScreenControllerを起動してファイルを処理するためのカスタムメソッド
     func openMainScreenController(withFileAt url: URL) {
+    }
+    
+    // MARK: - Firebase Messaging Configuration
+    private func configureFirebaseMessaging() {
+        // Set messaging delegate
+        Messaging.messaging().delegate = self
+        
+        // Set UNUserNotificationCenter delegate
+        UNUserNotificationCenter.current().delegate = self
+        
+        // Request notification permissions
+        requestNotificationPermissions()
+        
+        // Register for remote notifications
+        UIApplication.shared.registerForRemoteNotifications()
+        
+        // FCM token will be retrieved after APNs token is set in didRegisterForRemoteNotificationsWithDeviceToken
+        // This avoids the "APNS device token not set" error
+        print("Waiting for APNs token before retrieving FCM token...")
+    }
+    
+    private func requestNotificationPermissions() {
+        let authOptions: UNAuthorizationOptions = [.alert, .badge, .sound]
+        UNUserNotificationCenter.current().requestAuthorization(
+            options: authOptions,
+            completionHandler: { granted, error in
+                if let error = error {
+                    print("Error requesting notification permissions: \(error)")
+                } else {
+                    print("Notification permissions granted: \(granted)")
+                    // Store permission status in UserDefaults for settings screen
+                    UserDefaults.standard.set(granted, forKey: "notificationPermissionGranted")
+                }
+            }
+        )
+    }
+    
+    private func saveFCMTokenToFirestore(token: String) {
+        MessagingManager.shared.saveFCMTokenToFirestore(token: token)
+    }
+    
+    // MARK: - MessagingDelegate
+    func messaging(_ messaging: Messaging, didReceiveRegistrationToken fcmToken: String?) {
+        print("Firebase registration token: \(String(describing: fcmToken))")
+        
+        if let token = fcmToken {
+            saveFCMTokenToFirestore(token: token)
+        }
+        
+        // Subscribe to enabled notification topics
+        MessagingManager.shared.subscribeToEnabledTopics()
+        
+        // Note: This callback is fired at each app startup and whenever a new token is generated.
+    }
+    
+    // MARK: - UNUserNotificationCenterDelegate
+    // Handle notification when app is in foreground
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                              willPresent notification: UNNotification,
+                              withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        let userInfo = notification.request.content.userInfo
+        
+        // Print message ID if available
+        if let messageID = userInfo["gcm.message_id"] {
+            print("Message ID: \(messageID)")
+        }
+        
+        // Show notification even when app is in foreground
+        if #available(iOS 14.0, *) {
+            completionHandler([[.alert, .sound, .badge, .list, .banner]])
+        } else {
+            completionHandler([[.alert, .sound, .badge]])
+        }
+    }
+    
+    // Handle notification tap
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                              didReceive response: UNNotificationResponse,
+                              withCompletionHandler completionHandler: @escaping () -> Void) {
+        let userInfo = response.notification.request.content.userInfo
+        
+        // Print message ID if available
+        if let messageID = userInfo["gcm.message_id"] {
+            print("Message ID: \(messageID)")
+        }
+        
+        // Handle notification tap actions
+        handleNotificationTap(userInfo: userInfo)
+        
+        completionHandler()
+    }
+    
+    private func handleNotificationTap(userInfo: [AnyHashable: Any]) {
+        // TODO: Handle different notification types
+        // - Achievement notifications -> open RetroAchievements
+        // - Game updates -> open specific game
+        // - System notifications -> open settings
+        print("Notification tapped with userInfo: \(userInfo)")
+        
+        // Check for notification type
+        if let notificationType = userInfo["type"] as? String {
+            switch notificationType {
+            case "achievement":
+                // Open RetroAchievements section
+                print("Would open RetroAchievements section")
+                break
+            case "game_update":
+                // Open specific game if gameId is provided
+                print("Would open game update section")
+                break
+            case "system":
+                // Open settings or appropriate section
+                print("Would open settings section")
+                break
+            default:
+                break
+            }
+        }
+    }
+    
+    // MARK: - Remote Notification Registration
+    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        let tokenParts = deviceToken.map { data in String(format: "%02.2hhx", data) }
+        let token = tokenParts.joined()
+        print("APNs device token (hex): \(token)")
+        
+        // Set APNs token for Firebase Messaging
+        Messaging.messaging().apnsToken = deviceToken
+        
+        // Now retrieve FCM token after APNs token is set
+        Messaging.messaging().token { fcmToken, error in
+            if let error = error {
+                print("Error fetching FCM registration token after APNs: \(error)")
+            } else if let fcmToken = fcmToken {
+                print("FCM registration token (after APNs): \(fcmToken)")
+                self.saveFCMTokenToFirestore(token: fcmToken)
+                
+                // Subscribe to enabled topics
+                MessagingManager.shared.subscribeToEnabledTopics()
+            }
+        }
+    }
+    
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        print("Failed to register for remote notifications: \(error)")
     }
 }

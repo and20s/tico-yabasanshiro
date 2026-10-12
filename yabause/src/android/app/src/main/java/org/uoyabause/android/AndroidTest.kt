@@ -19,9 +19,9 @@ object AndroidTest {
     external fun androidtestNative()
 
     /* This is the static constructor used to load the
-	 * 'AndroidTest' library when the class is
-	 * loaded.
-	 */
+     * 'AndroidTest' library when the class is
+     * loaded.
+     */
     init {
         System.loadLibrary("AndroidTest")
     }

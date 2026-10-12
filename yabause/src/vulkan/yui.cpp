@@ -1,9 +1,21 @@
 #include <array>
 #include <chrono>
 #include <iostream>
+#include <filesystem>
+#include <fstream>
 
 #include "Renderer.h"
 #include "Window.h"
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 #include <map>
 #include <string>
@@ -15,6 +27,9 @@ map< int, int > g_Keymap;
 #include "VIDVulkan.h"
 #include "VIDVulkanCInterface.h"
 #include "PlayRecorder.h"
+#include "debug/DebugUI.h"
+
+static DebugUI g_debugUI;
 
 
 #include <SDL.h>
@@ -50,7 +65,19 @@ static char biospath[256] = "";
 
 //static char * biospath = NULL;
 //static char * cdpath = NULL;
-static char cdpath[256] = "C:/ext/osusume/SonycR.cue";
+//static char cdpath[256] = "K:/games/Saturn/g/Guardian Heroes (Japan) (3M).chd";
+//static char cdpath[256] = "K:/games/Saturn/s/Sega Rally Championship (Japan).chd";
+//static char cdpath[256] = "K:/games/Saturn/n/NiGHTS into Dreams... (Japan).chd";
+//static char cdpath[256] = "K:/games/Saturn/d/Daytona USA (Japan).chd";
+//static char cdpath[256] = "K:/games/Saturn/v/Victory Goal (Japan) (2B).chd";
+//static char cdpath[256] = "K:/games/Saturn/f/F-1 Challenge (Europe).chd";
+//static char cdpath[256] = "K:/games/Saturn/v/Vandal Hearts - Ushinawareta Kodai Bunmei (Japan).chd";
+static char cdpath[256] = "K:/games/Saturn/t/Techno Motor (Japan).chd";
+//static char cdpath[256] = "K:/games/Saturn/j/J. League Pro Soccer Club o Tsukurou! 2 (Japan) (1M).chd";
+//static char cdpath[256] = "K:/games/Saturn/s/Shining Force III - Scenario 1 - Outo no Kyoshin (Japan) (Rev A).chd";
+//static char cdpath[256] = "K:/games/Saturn/b/Bio Hazard (Japan).chd";
+//static char cdpath[256] = "K:/games/Saturn/s/Sonic R (Japan) (2M).chd";
+//static char cdpath[256] = "K:/games/Saturn/p/Panzer Dragoon (Japan) (5A).chd";
 //static char cdpath[256] = "C:/ext/osusume/AfterBuner2.cue";
 //static char cdpath[256] = "C:/ext/osusume/nights.cue";
 //static char cdpath[] = "K:/Saturn/Shining Force III - Scenario 1 - Outo no Kyoshin (Japan).chd"; //UserClip
@@ -98,6 +125,10 @@ int g_scsp_sync = 1;
 int g_frame_skip = 1;
 int g_emulated_bios = 1;
 char * playdataPath = NULL;
+
+const char * YuiGetShaderCachePath() {
+  return "./";
+}
 
 const char * s_buppath = "./backup.bin";
 char * s_playrecord_path = NULL;
@@ -190,7 +221,7 @@ int YuiRevokeOGLOnThisThread() {
   return 0;
 }
 
-} 
+}
 
 int yabauseinit()
 {
@@ -198,7 +229,7 @@ int yabauseinit()
   yabauseinit_struct yinit = {};
   void * padbits;
 
-  
+
 
   yinit.m68kcoretype = M68KCORE_MUSASHI;
   yinit.percoretype = PERCORE_DUMMY;
@@ -222,13 +253,28 @@ int yabauseinit()
   yinit.mpegpath = mpegpath;
   yinit.cartpath = cartpath;
   yinit.videoformattype = VIDEOFORMATTYPE_NTSC;
-  yinit.frameskip = g_frame_skip;
+  yinit.frameskip = 0; //g_frame_skip;
+  // VDP2SetFrameLimit() convention: 0 = 60Hz limit ON (Saturn-side
+  // throttle + Vulkan FIFO present), 1 = no limit (MAILBOX present +
+  // throttle off), 2 = 120Hz. We pick 1 so we can measure raw rendering
+  // throughput.
   yinit.framelimit = 0;
   yinit.usethreads = 0;
   yinit.skip_load = 0;
   yinit.video_filter_type = 0;
-  yinit.polygon_generation_mode = GPU_TESSERATION;
+  //yinit.polygon_generation_mode = GPU_TESSERATION; //COMPUTE_RASTERIZER;
+  yinit.polygon_generation_mode = COMPUTE_RASTERIZER;
   yinit.use_new_scsp = 1;
+  // Match the proven Qt/Android timing model. Without these, yinit={} leaves
+  // scsp_main_mode=0 which selects ScspAsynMainCpuTime (strict per-frame
+  // CPU<->SCSP lockstep) and starves VDP1/VDP2 frame updates.
+  yinit.scsp_main_mode = 1;            // ScspAsynMainRealtime (Qt/Android default)
+  yinit.scsp_sync_count_per_frame = 1; // explicit parity (currently 0 -> clamped to 1)
+  yinit.sync_shift = 0;                // Qt parity (desktop)
+  // Enable SH2 cache emulation. Every other port (Qt/Android/iOS/retro_arena)
+  // turns this on; leaving it 0 makes the devmiyax dynarec take its no-cache
+  // memory paths and hangs cache-sensitive games (e.g. Dracula X) after a while.
+  yinit.use_sh2_cache = 1;
   yinit.rotate_screen = 0;
   yinit.playRecordPath = playdataPath;
   yinit.rbg_resolution_mode = RBG_RES_1080P;
@@ -273,15 +319,61 @@ int yabauseinit()
   return 0;
 }
 
+// Alt+Enter toggles between windowed and fullscreen. Passing a monitor
+// to glfwSetWindowMonitor() acts like borderless fullscreen (stretches
+// to the primary monitor at desktop resolution); passing nullptr returns
+// to windowed mode. We stash the windowed position / size in statics so
+// we can restore them.
+static void toggleFullscreen(GLFWwindow* window)
+{
+  static int savedX = 0, savedY = 0, savedW = 800, savedH = 600;
+  static bool savedValid = false;
+
+  GLFWmonitor* current = glfwGetWindowMonitor(window);
+  if (current == nullptr) {
+    // windowed -> fullscreen: snapshot current geometry for later restore.
+    glfwGetWindowPos(window, &savedX, &savedY);
+    glfwGetWindowSize(window, &savedW, &savedH);
+    savedValid = true;
+    GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+    if (monitor) {
+      const GLFWvidmode* mode = glfwGetVideoMode(monitor);
+      if (mode) {
+        glfwSetWindowMonitor(window, monitor, 0, 0,
+                             mode->width, mode->height, mode->refreshRate);
+      }
+    }
+  } else {
+    // fullscreen -> windowed: restore the saved position / size.
+    if (!savedValid) {
+      // Fallback when no saved value exists (e.g. launched in fullscreen).
+      savedW = 800; savedH = 600;
+      savedX = 100; savedY = 100;
+    }
+    glfwSetWindowMonitor(window, nullptr, savedX, savedY, savedW, savedH, 0);
+  }
+}
+
 static void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
-  if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
+  // Task 15: while the debug UI is paused, Esc means "resume" (handled
+  // below via onKeyDown) -- do NOT close the window in that case.
+  if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS && !g_debugUI.isPaused())
     glfwSetWindowShouldClose(window, GL_TRUE);
 
+  // Alt+Enter toggles fullscreen <-> windowed.
+  // GLFW_KEY_ENTER is mapped to PERPAD_START, so when Alt is held we
+  // early-return instead of forwarding the key to the emulator.
+  if (key == GLFW_KEY_ENTER && action == GLFW_PRESS && (mods & GLFW_MOD_ALT)) {
+    toggleFullscreen(window);
+    return;
+  }
 
   if (action == GLFW_PRESS)
   {
     //int yabaky = g_Keymap[key];
+    bool ctrl = (mods & GLFW_MOD_CONTROL) != 0;
+    g_debugUI.onKeyDown(key, ctrl);
     PerKeyDown(key);
   }
   else if (action == GLFW_RELEASE) {
@@ -310,8 +402,44 @@ static void key_callback(GLFWwindow* window, int key, int scancode, int action, 
   }
 }
 
+// Window size persistence: kept alongside the exe so the user's preferred
+// window size survives restarts. Saved on every framebuffer resize and
+// once more on clean shutdown.
+static std::filesystem::path getWindowConfigPath() {
+#ifdef _WIN32
+  char buf[MAX_PATH];
+  GetModuleFileNameA(nullptr, buf, MAX_PATH);
+  return std::filesystem::path(buf).parent_path() / "yabasanshiro_window.ini";
+#else
+  return std::filesystem::path("./yabasanshiro_window.ini");
+#endif
+}
+
+static void loadWindowSize(int& w, int& h) {
+  std::ifstream f(getWindowConfigPath());
+  if (!f) return;
+  int newW = 0, newH = 0;
+  std::string line;
+  while (std::getline(f, line)) {
+    if (line.rfind("width=", 0) == 0)  newW = std::atoi(line.c_str() + 6);
+    else if (line.rfind("height=", 0) == 0) newH = std::atoi(line.c_str() + 7);
+  }
+  // Sanity-clamp to plausible monitor sizes; bogus values keep the defaults.
+  if (newW >= 320 && newW <= 7680) w = newW;
+  if (newH >= 240 && newH <= 4320) h = newH;
+}
+
+static void saveWindowSize(int w, int h) {
+  if (w < 320 || h < 240) return;
+  std::ofstream f(getWindowConfigPath(), std::ios::trunc);
+  if (!f) return;
+  f << "width="  << w << "\n";
+  f << "height=" << h << "\n";
+}
+
 void framebufferResizeCallback(GLFWwindow* window, int width, int height) {
   VIDCore->Resize(0, 0, width, height, 0, 0);
+  saveWindowSize(width, height);
 }
 
 class ScreenRecorder {
@@ -333,6 +461,11 @@ int main( int argc, char *argv[] )
   Renderer r;
 
 
+  bool autoload_state = false;
+  bool enable_tile_binning = false;  // -t / --tile-binning to test Phase B1
+  // -fd / --frame-debug: auto-trigger DebugUI pause once the emulator has
+  // produced N frames. -1 disables the feature.
+  int  fd_target_frame = -1;
   std::string current_exec_name = argv[0]; // Name of the current exec program
   std::vector<std::string> all_args;
   if (argc > 1) {
@@ -345,8 +478,11 @@ int main( int argc, char *argv[] )
       printf("  -a         --keep_aspect_rate\n");
       printf("  -s NUMBER  --scps_sync_per_frame NUMBER\n");
       printf("  -nf         --no_frame_skip              disable frame skip\n");
+      printf("  -l         --autoload                    auto-load state slot 1 if it exists\n");
+      printf("  -t         --tile-binning                 enable Phase B1 tile-binning rasterizer\n");
+      printf("  -fd NUMBER --frame-debug NUMBER          auto-pause and open frame debugger after N emulated frames\n");
+      printf("  -p STRING  --playrecord STRING           playback recorded input from directory\n");
       printf("  -v         --version\n");
-      printf("-p/--playrecord  <DIR>  Play play record.");
       exit(0);
     }
   }
@@ -372,7 +508,24 @@ int main( int argc, char *argv[] )
     else if ((x == "-nf" || x == "--no_frame_skip")) {
       g_frame_skip = 0;
     }
-    else if ((x == "-p" || x == "--p")) {
+    else if ((x == "-l" || x == "--autoload")) {
+      autoload_state = true;
+    }
+    //else if ((x == "-t" || x == "--tile-binning")) {
+    //  enable_tile_binning = true;
+    //}
+    else if ((x == "-fd" || x == "--frame-debug") && (i + 1 < all_args.size())) {
+      // Accept any non-negative integer; <= 0 silently disables (matches
+      // "off" semantics without aborting the launch).
+      try {
+        int v = std::stoi(all_args[i + 1]);
+        if (v > 0) fd_target_frame = v;
+      } catch (...) {
+        std::cout << "[FrameDebug] invalid -fd value '" << all_args[i + 1]
+                  << "', ignoring" << std::endl;
+      }
+    }
+    else if ((x == "-p" || x == "--playrecord") && (i + 1 < all_args.size())) {
       int len = all_args[i + 1].length();
       playdataPath = (char*)malloc(len + 1);
       strcpy(playdataPath, all_args[i + 1].c_str());
@@ -383,14 +536,16 @@ int main( int argc, char *argv[] )
     }
   }
 
+  enable_tile_binning = true;
   gsc.setScreenshotCallback(PlayRecorder::getInstance());
 
-    
-  
+
+
   SDL_Init(SDL_INIT_AUDIO);
 
-  const int width = 800;
-  const int height = 600;
+  int width = 800;
+  int height = 600;
+  loadWindowSize(width, height);
   auto w = r.OpenWindow(width, height, "Yaba sanshiro Vulkan",nullptr);
   VIDVulkan::getInstance()->setRenderer(&r);
 
@@ -400,13 +555,43 @@ int main( int argc, char *argv[] )
     return -1;
   }
 
+  // -l / --autoload: try slot 1 right after init. YabLoadStateSlot returns
+  // non-zero when the .yss file is missing for the loaded disc; in that case
+  // we silently fall through and start the game from boot (the user often
+  // hits this on first launch for a new game, before any state exists).
+  if (autoload_state) {
+    int lr = YabLoadStateSlot(".\\", 1);
+    if (lr == 0) {
+      std::cout << "Auto-loaded state slot 1." << std::endl;
+    } else {
+      std::cout << "Auto-load skipped: no state file for slot 1." << std::endl;
+    }
+  }
+
   VIDCore->Resize(0, 0, width, height, 0,0);
+
+  // Phase B1: tile-binning rasterizer is now always-on inside
+  // Vdp1ComputeRasterizer; the CLI flag and runtime toggle were removed
+  // because the legacy scanline fallback no longer exists.
+
+  // DebugUI: initialize after Vulkan / swapchain / VIDVulkan are settled.
+  // F9 toggles the ImGui demo window.
+  g_debugUI.init(&r, w, VIDVulkan::getInstance());
 
   float color_rotator = 0.0f;
   auto timer = std::chrono::steady_clock();
   auto last_time = timer.now();
   uint64_t frame_counter = 0;
   uint64_t fps = 0;
+  // Total emulated frames since launch (incremented only when YabauseExec
+  // actually runs; pause-mode iterations do not advance it). Used by the
+  // -fd CLI auto-pause check below.
+  uint64_t emulated_frames = 0;
+  bool     fd_triggered    = false;
+  if (fd_target_frame > 0) {
+    std::cout << "[FrameDebug] auto-pause armed for frame "
+              << fd_target_frame << std::endl;
+  }
 
   glfwSetKeyCallback(w->getWindowHandle(), key_callback);
   glfwSetFramebufferSizeCallback(w->getWindowHandle(), framebufferResizeCallback);
@@ -420,12 +605,45 @@ int main( int argc, char *argv[] )
       frame_counter = 0;
       std::cout << "FPS: " << fps << std::endl;
     }
-    YabauseExec(); // exec one frame
+    g_debugUI.buildFrame(); // build ImGui frame (ShowDemoWindow etc.)
 
+    // -fd auto-pause: once the emulator has produced fd_target_frame frames,
+    // request a DebugUI pause. requestTogglePause() defers the actual capture
+    // to the next Vdp1ComputeRasterizer::beginFrame hook, which sees cpuCmds
+    // still holding the just-finished frame's parsed list -- so the snapshot
+    // freezes frame N's state, matching the F9 hotkey behavior.
+    if (!fd_triggered && fd_target_frame > 0 &&
+        emulated_frames >= static_cast<uint64_t>(fd_target_frame) &&
+        !g_debugUI.isPaused()) {
+      std::cout << "[FrameDebug] auto-pause requested at frame "
+                << emulated_frames << std::endl;
+      g_debugUI.requestTogglePause();
+      fd_triggered = true;
+    }
+
+    if (g_debugUI.isPaused()) {
+      // Pause mode (Task 14): replay snapshot commands [0, N] into the
+      // VDP1 offscreen image and present so the Offscreen Preview panel
+      // (and the rest of the ImGui overlay) reflect the new step value.
+      g_debugUI.renderPausedFrame();
+    } else {
+      YabauseExec();        // exec one frame
+      ++emulated_frames;
+    }
   }
-  
+
   vkQueueWaitIdle(r.GetVulkanQueue());
 
+  // Save final window size on clean shutdown (the resize callback also
+  // saves on every resize, but capturing it again here covers the case
+  // where the user moved/resized in window manager and we missed events).
+  {
+    int sw = 0, sh = 0;
+    glfwGetWindowSize(w->getWindowHandle(), &sw, &sh);
+    saveWindowSize(sw, sh);
+  }
+
+  g_debugUI.shutdown();
   YabauseDeInit();
 
   return 0;
@@ -440,7 +658,7 @@ int saveScreenshot(const char * filename) {
   unsigned char * buf = NULL;
   int width = 0;
   int height = 0;
-  
+
   unsigned char * bufRGB = NULL;
   png_bytep * row_pointers = NULL;
   int quality = 100; // best
@@ -455,7 +673,7 @@ int saveScreenshot(const char * filename) {
   png_infop info_ptr;
   int number_of_passes;
   int rtn = -1;
-  
+
 
   VIDCore->GetScreenshot((void**)&buf, &width, &height);
 
@@ -596,4 +814,3 @@ extern "C" {
 
 
 }
-

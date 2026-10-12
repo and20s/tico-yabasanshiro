@@ -35,12 +35,17 @@ public:
   VdpPipelineFactory();
   ~VdpPipelineFactory();
 
+  // issue #22 T-004: gbufferOutput selects the per-layer G-buffer MRT variant
+  // (color + packed attr, fixed-function blend disabled). The flag is part of
+  // the pipeline identity so the GBuffer and legacy variants of the same prgid
+  // are cached/recycled independently.
   VdpPipeline * getPipeline(
     YglPipelineId id,
     VIDVulkan * vulkan,
     TextureManager * tm,
     VertexManager * vm,
-    uint8_t winflag
+    uint8_t winflag,
+    bool gbufferOutput = false
   );
 
   void setRenderPath(VkRenderPass renderPass) {
@@ -57,7 +62,7 @@ protected:
 
   VkPipelineCache threadPipelineCache{ VK_NULL_HANDLE };
 
-  VdpPipeline * findInGarbage(YglPipelineId id, uint8_t winflg);
+  VdpPipeline * findInGarbage(YglPipelineId id, uint8_t winflg, bool gbufferOutput);
   vector<VdpPipeline*> garbageCollction;
 
   VkRenderPass renderPass;

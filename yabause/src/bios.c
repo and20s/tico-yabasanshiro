@@ -75,7 +75,7 @@ u32 interruptlist[2][0x80];
 static void FASTCALL BiosBUPRead(SH2_struct * sh);
 
 
-typedef void(*ON_BACKUP_WRITE_CALLBACK)(const char * fname, char * before, char * after, int size);
+typedef void(*ON_BACKUP_WRITE_CALLBACK)(const char * fname, int deviceId, char * before, char * after, int size);
 
 static ON_BACKUP_WRITE_CALLBACK Bios_onBackupWrite = NULL;
 
@@ -498,7 +498,7 @@ static u32 GetDeviceStats(u32 device, u32 *size, u32 *addr, u32 *blocksize)
         }
         else {
           *addr      = 0x20180000;
-          *size      = 0x800;
+          *size      = 0x10000>>1;  // 64KB for non-extended backup
           *blocksize = 0x40;
         }
         return 0;
@@ -790,20 +790,17 @@ void FASTCALL BiosBUPInit(SH2_struct * sh)
 
    LOG("BiosBUPInit. arg1 = %08X, arg2 = %08X, arg3 = %08X\n", sh->regs.R[4], sh->regs.R[5], sh->regs.R[6]);
 
-   // Setup Function table
-   MappedMemoryWriteLong(0x06000354, sh->regs.R[5],&cycle);
-   MappedMemoryWriteLong(sh->regs.R[5]+0x00, 0x00000380,&cycle);
-   MappedMemoryWriteLong(sh->regs.R[5]+0x04, 0x00000384,&cycle);
-   MappedMemoryWriteLong(sh->regs.R[5]+0x08, 0x00000388,&cycle);
-   MappedMemoryWriteLong(sh->regs.R[5]+0x0C, 0x0000038C,&cycle);
-   MappedMemoryWriteLong(sh->regs.R[5]+0x10, 0x00000390,&cycle);
-   MappedMemoryWriteLong(sh->regs.R[5]+0x14, 0x00000394,&cycle);
-   MappedMemoryWriteLong(sh->regs.R[5]+0x18, 0x00000398,&cycle);
-   MappedMemoryWriteLong(sh->regs.R[5]+0x1C, 0x0000039C,&cycle);
-   MappedMemoryWriteLong(sh->regs.R[5]+0x20, 0x000003A0,&cycle);
-   MappedMemoryWriteLong(sh->regs.R[5]+0x24, 0x000003A4,&cycle);
-   MappedMemoryWriteLong(sh->regs.R[5]+0x28, 0x000003A8,&cycle);
-   MappedMemoryWriteLong(sh->regs.R[5]+0x2C, 0x000003AC,&cycle);
+   // Setup Function table. With a real BIOS the virtual entries must not
+   // collide with executable BIOS code (see BUP_TABLE_REAL_BASE in bios.h);
+   // the emulated BIOS keeps the classic 0x380-based entries because
+   // BiosHandleFunc dispatches them via the (PC - 0x200) >> 2 indices.
+   {
+      const u32 bupbase = yabsys.emulatebios ? 0x00000380u : BUP_TABLE_REAL_BASE;
+      int i;
+      MappedMemoryWriteLong(0x06000354, sh->regs.R[5],&cycle);
+      for (i = 0; i < 12; i++)
+         MappedMemoryWriteLong(sh->regs.R[5] + (i << 2), bupbase + (u32)(i << 2), &cycle);
+   }
 
    // Setup Device list
 
@@ -909,6 +906,20 @@ static void FASTCALL BiosBUPStatus(SH2_struct * sh)
    freeblocks = GetFreeSpace(sh->regs.R[4], size, addr, blocksize);
 
    needsize = sh->regs.R[5];
+
+   // When the extended (8MB) backup file backs the internal device, the raw
+   // geometry (131072 blocks of 64 bytes) is impossible on real hardware
+   // (internal backup is 32KB / 512 blocks) and overflows 16-bit arithmetic
+   // inside games: Area 51 turns the huge free-block count into a bogus
+   // "AN ADDITIONAL 12299 BLOCKS ... IS REQUIRED" screen and refuses to
+   // boot. Report the classic internal geometry instead; reads and writes
+   // still operate on the full extended file, so the extra space keeps
+   // working -- games just never see more free space than real hardware
+   // could report.
+   if (sh->regs.R[4] == 0 && yabsys.extend_backup) {
+      size = 0x8000;
+      if (freeblocks > 510) freeblocks = 510;
+   }
    aftersize = (((blocksize - 6) * freeblocks) - 30) - needsize;
    if (aftersize < 0) aftersize = 0;
    if ( aftersize > 0xFFFF) {
@@ -1106,7 +1117,7 @@ static void FASTCALL BiosBUPWrite(SH2_struct * sh)
          before_addr = addr + (blocktbl[tmpblockswritten] * blocksize * 2) + 9;
        }
      }
-     Bios_onBackupWrite(fname, before, after, datasize);
+     Bios_onBackupWrite(fname, (int)sh->regs.R[4], before, after, datasize);
      free(before);
      free(after);
    }
@@ -1696,12 +1707,21 @@ static void FASTCALL BiosHandleScuInterruptReturn(SH2_struct * sh)
 
 int FASTCALL BiosHandleFunc(SH2_struct * sh)
 {
+   u32 funcpc;
+
    SH2GetRegisters(sh, &sh->regs);
 
-   LOG("BiosHandleFunc %02X", (sh->regs.PC - 0x200) >> 2);
+   funcpc = sh->regs.PC;
+   // Real-BIOS extend_backup mode places the virtual BUP table entries at
+   // BUP_TABLE_REAL_BASE (see BiosBUPInit); remap them onto the classic
+   // 0x380-based dispatch indices used below.
+   if (funcpc >= BUP_TABLE_REAL_BASE && funcpc <= BUP_TABLE_REAL_LAST)
+      funcpc = 0x380 + (funcpc - BUP_TABLE_REAL_BASE);
+
+   LOG("BiosHandleFunc %02X", (funcpc - 0x200) >> 2);
 
    // Let's see if it's a bios function
-   switch((sh->regs.PC - 0x200) >> 2)
+   switch((funcpc - 0x200) >> 2)
    {
       case 0x04: // 0x06000210
          BiosPowerOnMemoryClear(sh);
@@ -1752,6 +1772,16 @@ int FASTCALL BiosHandleFunc(SH2_struct * sh)
          BiosBUPInit(sh);
          break;
       case 0x60: // 0x06000380
+         // Reserved BUP library vector (slot 0 of the function table
+         // written by BiosBUPInit). Leaving this case empty kept PC at
+         // 0x380 forever: the invalid-opcode trap re-fired every step and
+         // the master SH2 hung (Area 51 calls this slot before starting
+         // its FMV streaming). Behave as a harmless "return 0" like the
+         // real BIOS entry does.
+         SH2GetRegisters(sh, &sh->regs);
+         sh->regs.R[0] = 0;
+         sh->regs.PC = sh->regs.PR;
+         SH2SetRegisters(sh, &sh->regs);
          break;
       case 0x61: // 0x06000384
          BiosBUPSelectPartition(sh);
@@ -1784,6 +1814,12 @@ int FASTCALL BiosHandleFunc(SH2_struct * sh)
          BiosBUPSetDate(sh);
          break;
       case 0x6B: // 0x060003AC
+         // Same as case 0x60: an empty case never returns to the caller
+         // and pins PC on the trap address forever. Return 0 instead.
+         SH2GetRegisters(sh, &sh->regs);
+         sh->regs.R[0] = 0;
+         sh->regs.PC = sh->regs.PR;
+         SH2SetRegisters(sh, &sh->regs);
          break;
       case 0x80: // Interrupt Handler
       case 0x81:
@@ -2461,7 +2497,9 @@ int BiosBUPStatusMem( int device, devicestatus_struct * status )
    status->totalsize = size; // Size of Backup Ram (in bytes)
    status->totalblock = size / blocksize; // Size of Backup Ram (in blocks)
    status->blocksize = blocksize; // Size of block
-   status->freesize = ((blocksize - 6) * freeblocks) - 30; // Free space(in bytes)
+   // Calculate free size, ensuring it doesn't go negative
+   int calcFreeSize = ((blocksize - 6) * freeblocks) - 30;
+   status->freesize = (calcFreeSize < 0) ? 0 : calcFreeSize; // Free space(in bytes)
    status->freeblock = freeblocks; // Free space(in blocks)
    status->datanum = aftersize / blocksize; // writable block size
    return 0;

@@ -22,6 +22,9 @@ import android.app.Activity
 import android.content.pm.ActivityInfo
 import android.os.Bundle
 import android.view.View
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.preference.PreferenceManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -32,16 +35,25 @@ class YabauseGameSelectActivity : Activity() {
     private var mRecyclerView: RecyclerView? = null
     private var mAdapter: RecyclerView.Adapter<*>? = null
     private var mLayoutManager: RecyclerView.LayoutManager? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         val sharedPref = PreferenceManager.getDefaultSharedPreferences(this)
-        val lock_landscape = sharedPref.getBoolean("pref_landscape", false)
-        requestedOrientation = if (lock_landscape == true) {
-            ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-        } else {
-            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        }
+        val lockLandscape = sharedPref.getBoolean("pref_landscape", false)
+        requestedOrientation =
+            if (lockLandscape == true) {
+                ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            } else {
+                ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            }
         super.onCreate(savedInstanceState)
+
+        // Enable edge-to-edge display
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+
         setContentView(R.layout.activity_yabause_game_select)
+
+        // Setup edge-to-edge window insets handling
+        setupEdgeToEdgeInsets()
         mRecyclerView = findViewById<View>(R.id.game_recycler_view) as RecyclerView
 
         // use this setting to improve performance if you know that changes
@@ -55,5 +67,24 @@ class YabauseGameSelectActivity : Activity() {
         // specify an adapter (see also next example)
         mAdapter = RecyclerGameListAdapter()
         mRecyclerView!!.adapter = mAdapter
+    }
+
+    /**
+     * Setup edge-to-edge window insets handling for Android 15+ (API 35+)
+     */
+    private fun setupEdgeToEdgeInsets() {
+        val rootView = findViewById<android.view.View>(android.R.id.content)
+        ViewCompat.setOnApplyWindowInsetsListener(rootView) { view, windowInsets ->
+            val insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())
+
+            view.setPadding(
+                view.paddingLeft,
+                insets.top,
+                view.paddingRight,
+                view.paddingBottom,
+            )
+
+            windowInsets
+        }
     }
 }

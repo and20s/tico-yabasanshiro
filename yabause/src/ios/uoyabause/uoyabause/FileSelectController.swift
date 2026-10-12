@@ -63,8 +63,8 @@ class GameItemCell: UICollectionViewCell {
 
         // TitleLabelの設定
         titleLabel.textAlignment = .center
-        titleLabel.numberOfLines = 0
-        titleLabel.lineBreakMode = .byWordWrapping
+        titleLabel.numberOfLines = 2  // 最大2行に制限
+        titleLabel.lineBreakMode = .byTruncatingTail  // 超過分は省略
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.font = UIFont.systemFont(ofSize: 14)
         contentView.addSubview(titleLabel)
@@ -91,7 +91,19 @@ class GameItemCell: UICollectionViewCell {
 }
 
 
-class FileSelectController : UIViewController, UICollectionViewDataSource, UICollectionViewDelegate,UICollectionViewDelegateFlowLayout, UISearchBarDelegate, UISearchResultsUpdating {
+// Focus management helper enum (shared)
+enum FocusDirection {
+    case up, down, left, right
+}
+
+// GamePad navigation protocol
+protocol GamePadNavigationDelegate: AnyObject {
+    func handleGamePadNavigation(_ direction: FocusDirection) -> Bool
+    func handleGamePadSelection()
+    func handlePageNavigation(_ direction: FocusDirection)
+}
+
+class FileSelectController : UIViewController, UICollectionViewDataSource, UICollectionViewDelegate,UICollectionViewDelegateFlowLayout, UISearchBarDelegate, UISearchResultsUpdating, GamePadNavigationDelegate {
 
 #if FREE_VERSION
     var bannerView: GADBannerView!
@@ -104,7 +116,11 @@ class FileSelectController : UIViewController, UICollectionViewDataSource, UICol
     var columns = 3.0
     var searchController: UISearchController!
     var collectionView: UICollectionView!
-
+    
+    // GamePad focus management
+    private var currentFocusedIndexPath: IndexPath?
+    private var isFocusVisible: Bool = true
+    
     var completionHandler: ((String?) -> Void)?
 
     var activityIndicator: UIActivityIndicatorView!
@@ -145,7 +161,7 @@ class FileSelectController : UIViewController, UICollectionViewDataSource, UICol
         let totalSpacing = spacing * (columns - 1) + 20 // 合計のスペース
         let width = (view.frame.width - totalSpacing) / columns
         layout.itemSize = CGSize(width: width, height: width)
-        layout.minimumLineSpacing = spacing
+        layout.minimumLineSpacing = 18 // フォーカス表示のために行間を広く設定
         layout.minimumInteritemSpacing = spacing
         collectionView.collectionViewLayout = layout
     }
@@ -190,7 +206,7 @@ class FileSelectController : UIViewController, UICollectionViewDataSource, UICol
 
 
         searchBar.delegate = self
-        searchBar.placeholder = "Search"
+        searchBar.placeholder = NSLocalizedString("Search", comment: "Search placeholder text")
         searchBar.barTintColor = .defaultBackground
         searchBar.backgroundColor = .defaultBackground
 
@@ -246,12 +262,16 @@ class FileSelectController : UIViewController, UICollectionViewDataSource, UICol
 
         addBannerViewToView(bannerView)
 
-        bannerView.adUnitID = "ca-app-pub-3940256099942544/2435281174"
-
+        // Load adUnitID from secrets.plist (not committed to git)
+        // For testing, use Google's test banner ad unit ID
         if let path = Bundle.main.path(forResource: "secrets", ofType: "plist"),
            let dict = NSDictionary(contentsOfFile: path) as? [String: AnyObject],
-           let bunnerid = dict["bunnerid"] as? String {
-            bannerView.adUnitID = bunnerid
+           let bannerId = dict["bannerId"] as? String {
+            bannerView.adUnitID = bannerId
+        } else {
+            // Google's test ad unit ID for development
+            // See: https://developers.google.com/admob/ios/test-ads
+            bannerView.adUnitID = "ca-app-pub-3940256099942544/2934735716"
         }
 
 
@@ -361,8 +381,10 @@ class FileSelectController : UIViewController, UICollectionViewDataSource, UICol
         let totalSpacing = spacing * (columns - 1) + 20 // 合計のスペース
         let width = (view.frame.width - totalSpacing) / columns
 
-        let height = calculateCellHeight(for: indexPath)
-        return CGSize(width: width, height: height)
+        // 固定の高さを使用（画像100 + タイトル2行分約50 + マージン10）
+        // これにより同じ行の全セルが同じ高さになり、画像の位置が揃う
+        let fixedHeight: CGFloat = 160
+        return CGSize(width: width, height: fixedHeight)
     }
 
     func addSkipBackupAttributeToItemAtURL(url: URL) throws {
@@ -523,11 +545,15 @@ class FileSelectController : UIViewController, UICollectionViewDataSource, UICol
                                 preferredStyle: .alert
                             )
 
-                            alert.addAction(UIAlertAction(
+                            let okAction = UIAlertAction(
                                 title: NSLocalizedString("OK", comment: "Default action button title"),
                                 style: .default,
                                 handler: nil
-                            ))
+                            )
+                            
+                            alert.addAction(okAction)
+                            // ゲームパッド対応: デフォルトアクションを設定
+                            alert.preferredAction = okAction
 
                             self.present(alert, animated: true, completion: nil)
                         }
@@ -547,6 +573,9 @@ class FileSelectController : UIViewController, UICollectionViewDataSource, UICol
                 self?.collectionView.reloadData() // collectionViewのデータをリロード
                 self?.blurEffectView.isHidden = true
                 self?.activityIndicator.stopAnimating()
+                
+                // 親のMainScreenControllerにGameControllerハンドラー復元を通知
+                self?.notifyParentOfDocumentUpdate()
             }
 
         }
@@ -674,3 +703,238 @@ extension FileSelectController: GADBannerViewDelegate {
 
 }
 #endif
+
+// MARK: - GamePad Navigation Support
+
+extension FileSelectController {
+    
+    // GamePadNavigationDelegate implementation
+    func handleGamePadNavigation(_ direction: FocusDirection) -> Bool {
+        guard !filteredFiles.isEmpty else { 
+            print("GamePad Navigation: No files available")
+            return false 
+        }
+        
+        let itemsPerRow = Int(columns)
+        let totalItems = filteredFiles.count
+        
+        print("GamePad Navigation: \(direction) - itemsPerRow: \(itemsPerRow), totalItems: \(totalItems)")
+        
+        // 現在のフォーカス位置を決定
+        let currentIndex: Int
+        if let indexPath = currentFocusedIndexPath {
+            currentIndex = indexPath.item
+        } else {
+            // 初回の場合は最初の項目にフォーカス
+            print("GamePad Navigation: Initializing focus to first item")
+            currentIndex = 0
+            currentFocusedIndexPath = IndexPath(item: 0, section: 0)
+            updateCellFocusVisuals()
+            return true
+        }
+        
+        var newIndex = currentIndex
+        
+        switch direction {
+        case .up:
+            // 上に移動: 現在の行が0行目でなければ上の行の同じ列に移動
+            let currentRow = currentIndex / itemsPerRow
+            let currentColumn = currentIndex % itemsPerRow
+            print("GamePad Navigation UP: currentIndex=\(currentIndex), currentRow=\(currentRow), currentColumn=\(currentColumn)")
+            if currentRow > 0 {
+                let targetRow = currentRow - 1
+                newIndex = targetRow * itemsPerRow + currentColumn
+                newIndex = min(newIndex, totalItems - 1)
+                print("GamePad Navigation UP: Moving to newIndex=\(newIndex)")
+            } else {
+                print("GamePad Navigation UP: Already at top row, no movement")
+            }
+        case .down:
+            // 下に移動: 下の行が存在する場合、下の行の同じ列に移動
+            let currentRow = currentIndex / itemsPerRow
+            let currentColumn = currentIndex % itemsPerRow
+            let maxRow = (totalItems - 1) / itemsPerRow
+            print("GamePad Navigation DOWN: currentIndex=\(currentIndex), currentRow=\(currentRow), currentColumn=\(currentColumn), maxRow=\(maxRow)")
+            if currentRow < maxRow {
+                let targetRow = currentRow + 1
+                newIndex = targetRow * itemsPerRow + currentColumn
+                newIndex = min(newIndex, totalItems - 1)
+                print("GamePad Navigation DOWN: Moving to newIndex=\(newIndex)")
+            } else {
+                print("GamePad Navigation DOWN: Already at bottom row, no movement")
+            }
+        case .left:
+            // 左に移動: 同じ行内で左に移動、行の最初なら前の行の最後に移動
+            if currentIndex > 0 {
+                newIndex = currentIndex - 1
+            }
+        case .right:
+            // 右に移動: 同じ行内で右に移動、行の最後なら次の行の最初に移動
+            if currentIndex < totalItems - 1 {
+                newIndex = currentIndex + 1
+            }
+        }
+        
+        if newIndex != currentIndex {
+            print("GamePad Navigation: \(direction) - from \(currentIndex) to \(newIndex)")
+            currentFocusedIndexPath = IndexPath(item: newIndex, section: 0)
+            updateCellFocusVisuals()
+            
+            // フォーカスされた項目が画面内に見えるようにスクロール
+            collectionView.scrollToItem(at: currentFocusedIndexPath!, 
+                                      at: .centeredVertically, 
+                                      animated: true)
+            return true
+        } else {
+            print("GamePad Navigation: \(direction) - no movement from \(currentIndex)")
+            return false
+        }
+    }
+    
+    func handleGamePadSelection() {
+        guard let indexPath = currentFocusedIndexPath,
+              indexPath.item < filteredFiles.count else { return }
+        
+        // 選択されたゲームを起動
+        let selectedGame = filteredFiles[indexPath.item]
+        selected_file_path = selectedGame.filePath ?? ""
+        productNumber = selectedGame.productNumber ?? ""
+        
+        // MainScreenController経由でゲームビューに遷移
+        if let mainScreenController = parent as? MainScreenController {
+            mainScreenController.performSegue(withIdentifier: "toGameViewFromMain", sender: self)
+        }
+    }
+    
+    private func updateCellFocusVisuals() {
+        // 全てのセルからフォーカス表示を削除
+        for cell in collectionView.visibleCells {
+            if let gameCell = cell as? GameItemCell {
+                removeFocusHighlight(from: gameCell)
+            }
+        }
+        
+        // フォーカス表示が有効な場合のみハイライトを追加
+        if isFocusVisible,
+           let indexPath = currentFocusedIndexPath,
+           let cell = collectionView.cellForItem(at: indexPath) as? GameItemCell {
+            addFocusHighlight(to: cell)
+        }
+    }
+    
+    private func addFocusHighlight(to cell: GameItemCell) {
+        // 既存のハイライト表示を削除
+        removeFocusHighlight(from: cell)
+        
+        // セル全体に境界線とバックグラウンドでフォーカス表示
+        cell.layer.borderWidth = 3.0
+        cell.layer.borderColor = UIColor.tint.cgColor
+        cell.layer.cornerRadius = 8.0
+        cell.backgroundColor = UIColor.tint.withAlphaComponent(0.1)
+        
+        // アニメーションで強調（少し控えめに）
+        let animationDuration = UserDefaults.standard.double(forKey: "mainScreenFocusAnimationSpeed") == 0 ? 0.1 : 
+                               UserDefaults.standard.double(forKey: "mainScreenFocusAnimationSpeed") == 2 ? 0.3 : 0.2
+        UIView.animate(withDuration: animationDuration) {
+            cell.transform = CGAffineTransform(scaleX: 1.02, y: 1.02)
+        }
+    }
+    
+    private func removeFocusHighlight(from cell: GameItemCell) {
+        // セルの境界線とバックグラウンドをクリア
+        cell.layer.borderWidth = 0.0
+        cell.layer.borderColor = UIColor.clear.cgColor
+        cell.backgroundColor = .defaultBackground
+        
+        // スケールをリセット
+        let animationDuration = UserDefaults.standard.double(forKey: "mainScreenFocusAnimationSpeed") == 0 ? 0.1 : 
+                               UserDefaults.standard.double(forKey: "mainScreenFocusAnimationSpeed") == 2 ? 0.3 : 0.2
+        UIView.animate(withDuration: animationDuration) {
+            cell.transform = CGAffineTransform.identity
+        }
+    }
+    
+    func handlePageNavigation(_ direction: FocusDirection) {
+        guard !filteredFiles.isEmpty else { return }
+        
+        let itemsPerRow = Int(columns)
+        let totalItems = filteredFiles.count
+        let currentIndex = currentFocusedIndexPath?.item ?? 0
+        
+        // ページサイズを計算（見える行数 × 列数）
+        let visibleBounds = collectionView.bounds
+        let layout = collectionView.collectionViewLayout as? UICollectionViewFlowLayout
+        let itemSize = layout?.itemSize ?? CGSize(width: 100, height: 100)
+        let spacing = layout?.minimumLineSpacing ?? 10
+        
+        let visibleRows = Int(visibleBounds.height / (itemSize.height + spacing))
+        let pageSize = max(1, visibleRows * itemsPerRow)
+        
+        var newIndex: Int
+        
+        switch direction {
+        case .up:
+            // Page Up: 現在位置からページサイズ分上に移動
+            newIndex = max(0, currentIndex - pageSize)
+            
+        case .down:
+            // Page Down: 現在位置からページサイズ分下に移動  
+            newIndex = min(totalItems - 1, currentIndex + pageSize)
+            
+        default:
+            return // 左右は無視
+        }
+        
+        if newIndex != currentIndex {
+            print("Page Navigation: \(direction) - from \(currentIndex) to \(newIndex) (pageSize: \(pageSize))")
+            currentFocusedIndexPath = IndexPath(item: newIndex, section: 0)
+            updateCellFocusVisuals()
+            
+            // フォーカスされた項目が画面内に見えるようにスクロール
+            collectionView.scrollToItem(at: currentFocusedIndexPath!,
+                                      at: .centeredVertically,
+                                      animated: true)
+        }
+    }
+    
+    func setFocusVisibility(_ visible: Bool) {
+        isFocusVisible = visible
+        print("FileSelectController focus visibility set to: \(visible)")
+        
+        if visible {
+            // フォーカス表示を有効にする
+            updateCellFocusVisuals()
+        } else {
+            // フォーカス表示を無効にする - 全てのセルからハイライトを削除
+            for cell in collectionView.visibleCells {
+                if let gameCell = cell as? GameItemCell {
+                    removeFocusHighlight(from: gameCell)
+                }
+            }
+        }
+    }
+    
+    func resetFocusToFirstItem() {
+        guard !filteredFiles.isEmpty else { return }
+        
+        // 一行目の最初の項目（インデックス0）にフォーカスを設定
+        currentFocusedIndexPath = IndexPath(item: 0, section: 0)
+        print("FileSelectController focus reset to first item (index 0)")
+        
+        // フォーカス表示を更新
+        updateCellFocusVisuals()
+        
+        // フォーカスされた項目が画面内に見えるようにスクロール
+        collectionView.scrollToItem(at: currentFocusedIndexPath!,
+                                  at: .top,
+                                  animated: true)
+    }
+    
+    private func notifyParentOfDocumentUpdate() {
+        // 親のMainScreenControllerにGameControllerハンドラー復元を通知
+        if let parent = self.parent as? MainScreenController {
+            print("FileSelectController: Notifying parent to restore GameController handlers")
+            parent.restoreGameControllerAfterDocumentUpdate()
+        }
+    }
+}

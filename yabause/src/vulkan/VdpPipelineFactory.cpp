@@ -113,12 +113,13 @@ VdpPipeline * VdpPipelineFactory::getPipeline(
   VIDVulkan * vulkan,
   TextureManager * tm,
   VertexManager * vm,
-  uint8_t winflag
+  uint8_t winflag,
+  bool gbufferOutput
 ) {
 
   VdpPipeline * current = nullptr;
 
-  current = findInGarbage(id, winflag);
+  current = findInGarbage(id, winflag, gbufferOutput);
   if (current != NULL) {
     return current;
   }
@@ -199,6 +200,12 @@ VdpPipeline * VdpPipelineFactory::getPipeline(
   case PG_LINECOLOR_INSERT_CRAM:
     current = new VdpCramLine(vulkan, tm, vm);
     break;
+  case PG_LINECOLOR_INSERT_DESTALPHA:
+    current = new VdpLineColDst(vulkan, tm, vm);
+    break;
+  case PG_LINECOLOR_INSERT_DESTALPHA_CRAM:
+    current = new VdpCramLineDst(vulkan, tm, vm);
+    break;
   case PG_VDP2_MOSAIC:
     current = new VdpPipelineMosaic(vulkan, tm, vm);
     break;
@@ -223,6 +230,12 @@ VdpPipeline * VdpPipelineFactory::getPipeline(
   case PG_VDP2_PER_LINE_ALPHA_CRAM:
     current = new VdpPipelinePreLineAlphaCram(vulkan, tm, vm);
     break;
+  case PG_VDP2_PER_LINE_GBUFFER_CRAM:
+    current = new VdpPipelineCramPerLineGBuffer(vulkan, tm, vm);
+    break;
+  case PG_VDP2_PER_LINE_GBUFFER:
+    current = new VdpPipelinePerLineGBuffer(vulkan, tm, vm);
+    break;
   case PG_VDP2_NORMAL_CRAM_SPECIAL_PRIORITY_COLOROFFSET:
     current = new VdpPipelineSpecialPriorityColorOffset(vulkan, tm, vm);
     break;
@@ -240,6 +253,9 @@ VdpPipeline * VdpPipelineFactory::getPipeline(
 
   current->setRenderPass(this->renderPass);
   current->setWinFlg(winflag);
+  // issue #22 T-004: enable GBuffer MRT output before the pipeline is built so
+  // createGraphicsPipeline rewrites the fragment shader and disables blend.
+  current->gbufferOutput = gbufferOutput;
   current->createGraphicsPipeline();
   return current;
 }
@@ -257,12 +273,13 @@ void VdpPipelineFactory::garbage(VdpPipeline * p) {
   garbageCollction.push_back(p);
 }
 
-VdpPipeline * VdpPipelineFactory::findInGarbage(YglPipelineId id, uint8_t winflg) {
+VdpPipeline * VdpPipelineFactory::findInGarbage(YglPipelineId id, uint8_t winflg, bool gbufferOutput) {
 
   VdpPipeline * p;
   int removeIndex = -1;
   for (int i = 0; i < garbageCollction.size(); i++) {
-    if (garbageCollction[i]->prgid == id && garbageCollction[i]->getWinFlg() == winflg) {
+    if (garbageCollction[i]->prgid == id && garbageCollction[i]->getWinFlg() == winflg
+        && garbageCollction[i]->gbufferOutput == gbufferOutput) {
       p = garbageCollction[i];
       removeIndex = i;
       break;

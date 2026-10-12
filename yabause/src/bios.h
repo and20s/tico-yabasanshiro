@@ -65,6 +65,18 @@ typedef struct
 void BiosInit(void);
 int FASTCALL BiosHandleFunc(SH2_struct * sh);
 
+// Virtual BUP library entry addresses used by the extend_backup hijack when
+// a REAL BIOS is loaded. They must not collide with executable BIOS code:
+// the previously used 0x380..0x3AC range is real code (the BIOS itself does
+// "bsr 0x380" from its SYS_CHGSCUIM service at 0x200), so trapping it hung
+// the master SH2 as soon as a game combined BUP_Init with SYS_CHGSCUIM
+// (Area 51). This range sits inside the real BUP library body right after
+// the BUP_Init entry point (0x7D600, already trapped) which is unreachable
+// once BUP_Init itself is hijacked. The emulated BIOS keeps the classic
+// 0x380-based entries (its ROM is empty, no collision).
+#define BUP_TABLE_REAL_BASE 0x0007D604u
+#define BUP_TABLE_REAL_LAST (BUP_TABLE_REAL_BASE + 0x2Cu)
+
 deviceinfo_struct *BupGetDeviceList(int *numdevices);
 int BupGetStats(u32 device, u32 *freespace, u32 *maxspace);
 saveinfo_struct *BupGetSaveList(u32 device, int *numsaves);
@@ -80,7 +92,7 @@ int BiosBUPImport( u32 device, saveinfo_struct * saveinfo, const char * buf, int
 int BiosBUPExport(u32 device, const char *savename, char ** buf, int * bufsize );
 int BiosBUPStatusMem( int device, devicestatus_struct * status );
 
-typedef void(*ON_BACKUP_WRITE_CALLBACK)(const char * fname, char * before, char * after, int size);
+typedef void(*ON_BACKUP_WRITE_CALLBACK)(const char * fname, int deviceId, char * before, char * after, int size);
 void BiosSetOnBackupWrite(ON_BACKUP_WRITE_CALLBACK cbk);
 
 

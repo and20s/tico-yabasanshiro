@@ -46,7 +46,11 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 #ifdef WIN32
 #include <windows.h>
 #endif
+#include <stdio.h>
 #include <string.h>
+#ifndef WIN32
+#include <glob.h>
+#endif
 #include "yabause.h"
 #include "cheat.h"
 #include "cs0.h"
@@ -127,9 +131,11 @@ char ssf_artist[256] = {0};
 
 u32 saved_scsp_cycles = 0;          // fixed point
 volatile u64 saved_m68k_cycles = 0; // fixed point
-static u32 g_scsp_main_mode = 1;
+static u32 g_scsp_main_mode = 0;
 
 extern char *getLastShaderError();
+
+#define MEMCMP 0
 
 //////////////////////////////////////////////////////////////////////////////
 
@@ -182,13 +188,20 @@ extern int tweak_backup_file_size;
 YabEventQueue *q_scsp_frame_start;
 YabEventQueue *q_scsp_finish;
 
+// Forward declarations for HighWram debug functions
+void DebugCleanupOldFiles(void);
+void DebugDeleteOldFile(u32 old_frame_count);
+void DebugHighWramChanges(u32 frame_count);
+
 int YabauseInit(yabauseinit_struct *init)
 {
 
    YabThreadInit();
 
-   if (init->use_cpu_affinity)
-   {
+  // Debug: Clean up all existing HighWram debug files on startup
+  DebugCleanupOldFiles();
+
+  if( init->use_cpu_affinity ){
       YabThreadSetCurrentThreadAffinityMask(YabThreadGetFastestCpuIndex());
    }
 
@@ -234,16 +247,33 @@ int YabauseInit(yabauseinit_struct *init)
    if (yabsys.extend_backup)
    {
       FILE *pbackup;
-      pbackup = fopen_utf8(bupfilename, "a+b");
-      if (pbackup == NULL)
-      {
+     bupfilename = init->buppath;
+     pbackup = fopen_utf8(bupfilename, "r+b");
+     if (pbackup == NULL) {
+       pbackup = fopen_utf8(bupfilename, "w+b");
+     }
+     if (pbackup == NULL) {
          YabSetError(YAB_ERR_CANNOTINIT, _("InternalBackup"));
          return -1;
       }
 
+     // Guard against bloated backup files (bug: was using "a+b" append mode)
+     fseek(pbackup, 0, SEEK_END);
+     long bupfilesize = ftell(pbackup);
       fseek(pbackup, 0, SEEK_SET);
-      if (CheckBackupFile(pbackup) != 0)
-      {
+
+     if (bupfilesize > 10 * 1024 * 1024) {
+       LOG("ERROR: Backup file too large: %ld bytes. Reformatting: %s\n",
+           bupfilesize, bupfilename);
+       fclose(pbackup);
+       pbackup = fopen_utf8(bupfilename, "w+b");
+       if (pbackup == NULL) {
+         YabSetError(YAB_ERR_CANNOTINIT, _("InternalBackup"));
+         return -1;
+       }
+       FormatBackupRamFile(pbackup, tweak_backup_file_size);
+     }
+     else if (CheckBackupFile(pbackup) != 0) {
          FormatBackupRamFile(pbackup, tweak_backup_file_size);
       }
       else
@@ -264,13 +294,43 @@ int YabauseInit(yabauseinit_struct *init)
          yabsys.extend_backup = 0;
       }
    }
-   else
-   {
-      if ((BupRam = T1MemoryInit(0x10000)) == NULL)
+   else {
+     bupfilename = init->buppath;
+     FILE* pbackup;
+     pbackup = fopen_utf8(bupfilename, "r+b");
+     if (pbackup == NULL) {
+       pbackup = fopen_utf8(bupfilename, "w+b");
+     }
+     if (pbackup == NULL) {
+       YabSetError(YAB_ERR_CANNOTINIT, _("InternalBackup"));
          return -1;
+     }
 
-      if (LoadBackupRam(init->buppath) != 0)
-         FormatBackupRam(BupRam, 0x10000);
+     // Guard against bloated backup files (bug: was using "a+b" append mode)
+     fseek(pbackup, 0, SEEK_END);
+     long bupfilesize = ftell(pbackup);
+     fseek(pbackup, 0, SEEK_SET);
+
+     if (bupfilesize > 10 * 1024 * 1024) {
+       LOG("ERROR: Backup file too large: %ld bytes. Reformatting: %s\n",
+           bupfilesize, bupfilename);
+       fclose(pbackup);
+       pbackup = fopen_utf8(bupfilename, "w+b");
+       if (pbackup == NULL) {
+         YabSetError(YAB_ERR_CANNOTINIT, _("InternalBackup"));
+         return -1;
+       }
+       FormatBackupRamFile(pbackup, tweak_backup_file_size);
+     }
+     else if (CheckBackupFile(pbackup) != 0) {
+       FormatBackupRamFile(pbackup, tweak_backup_file_size);
+     }
+     else {
+       ExtendBackupFile(pbackup, tweak_backup_file_size);
+     }
+     fclose(pbackup);
+
+     BupRam = YabMemMap(bupfilename, 0x10000);
       BupRamWritten = 0;
    }
 
@@ -391,7 +451,9 @@ int YabauseInit(yabauseinit_struct *init)
    else
    {
       yabsys.emulatebios = 1;
+     T2WriteLong(BiosRom, 0x00, 0x20002000); // retuns actual data dispite of null pointer acess
       T2WriteLong(BiosRom, 0x04, 0x06002000);       // set base stack pointer
+     T2WriteLong(BiosRom, 0x08, 0x20002000); 
       T2WriteByte(BiosRom, 0x00000013, 0x22);       // patch for SAKURA TAISEN
       T2WriteLong(BiosRom, 0x00000018, 0x20000222); // patch for SAKURA TAISEN
       T2WriteLong(BiosRom, 0x00000220, 0x277AAFFE); // patch for SAKURA TAISEN
@@ -483,15 +545,11 @@ void YabFlushBackups(void)
 {
    if (BupRam)
    {
-      if (yabsys.extend_backup)
-      {
-         //  YabFreeMap(BupRam);
-      }
-      else
-      {
-         if (T123Save(BupRam, 0x10000, 1, bupfilename) != 0)
-            YabSetError(YAB_ERR_FILEWRITE, (void *)bupfilename);
-         T1MemoryDeInit(BupRam);
+    if (yabsys.extend_backup) {
+      YabFlushMemMap(BupRam);
+    }
+    else {
+      YabFlushMemMap(BupRam);
       }
    }
    CartFlush();
@@ -530,15 +588,12 @@ void YabauseDeInit(void)
 
    if (BupRam)
    {
-      if (yabsys.extend_backup)
-      {
-         YabFreeMap(BupRam);
-      }
-      else
-      {
-         if (T123Save(BupRam, 0x10000, 1, bupfilename) != 0)
-            YabSetError(YAB_ERR_FILEWRITE, (void *)bupfilename);
-         T1MemoryDeInit(BupRam);
+     YabFlushBackups();
+     if (yabsys.extend_backup) {
+       YabFreeMap(BupRam);
+     }
+     else {
+       YabFreeMap(BupRam);
       }
    }
    BupRam = NULL;
@@ -720,11 +775,104 @@ void SyncCPUtoSCSP();
 u64 getM68KCounter();
 u64 g_m68K_dec_cycle = 0;
 
-int YabauseEmulate(void)
-{
+// HighWram debug feature
+static u8 HighWram_snapshot[0x100000];
+static int debug_highwram_enabled = 0;
+#define MAX_DEBUG_FILES 300
+
+void DebugCleanupOldFiles(void) {
+#if MEMCMP         
+#ifdef WIN32
+   WIN32_FIND_DATAA findData;
+   HANDLE hFind = FindFirstFileA("highwram_changes_frame_*.txt", &findData);
+
+   if (hFind != INVALID_HANDLE_VALUE) {
+      do {
+         DeleteFileA(findData.cFileName);
+      } while (FindNextFileA(hFind, &findData));
+      FindClose(hFind);
+   }
+#else
+   // Unix/Linux implementation using glob
+   glob_t glob_result;
+   if (glob("highwram_changes_frame_*.txt", GLOB_NOSORT, NULL, &glob_result) == 0) {
+      for (size_t i = 0; i < glob_result.gl_pathc; i++) {
+         remove(glob_result.gl_pathv[i]);
+      }
+      globfree(&glob_result);
+   }
+#endif
+   printf("HighWram debug: Cleaned up all existing debug files\n");
+#endif   
+}
+
+void DebugDeleteOldFile(u32 old_frame_count) {
+#if MEMCMP      
+   char filename[256];
+   sprintf(filename, "highwram_changes_frame_%u.txt", old_frame_count);
+   remove(filename);
+#endif   
+}
+
+void DebugHighWramChanges(u32 frame_count) {
+#if MEMCMP   
+   if (!debug_highwram_enabled || !HighWram) return;
+
+   // Delete old files if we have more than MAX_DEBUG_FILES
+   if (frame_count > MAX_DEBUG_FILES) {
+      DebugDeleteOldFile(frame_count - MAX_DEBUG_FILES);
+   }
+
+   char filename[256];
+   FILE *fp;
+   int change_count = 0;
+   const int max_changes = 65535;
+
+   sprintf(filename, "highwram_changes_frame_%u.txt", frame_count);
+   fp = fopen(filename, "w");
+   if (!fp) {
+      fprintf(stderr, "Failed to open %s for writing\n", filename);
+      return;
+   }
+
+   fprintf(fp, "HighWram Changes for Frame %u\n", frame_count);
+   fprintf(fp, "=====================================\n\n");
+   fprintf(fp, "Address    | Old Value | New Value\n");
+   fprintf(fp, "-----------|-----------|----------\n");
+
+   for (u32 i = 0; i < 0x100000 && change_count < max_changes; i++) {
+      if (HighWram[i] != HighWram_snapshot[i]) {
+         fprintf(fp, "0x%08X | 0x%02X      | 0x%02X\n",
+                 i, HighWram_snapshot[i], HighWram[i]);
+         change_count++;
+      }
+   }
+
+   fprintf(fp, "\n=====================================\n");
+   fprintf(fp, "Total changes detected: %d", change_count);
+   if (change_count >= max_changes) {
+      fprintf(fp, " (limited to first %d changes)", max_changes);
+   }
+   fprintf(fp, "\n");
+
+   fclose(fp);
+   printf("HighWram debug: Wrote %d changes to %s\n", change_count, filename);
+#else
+   return;
+#endif   
+}
+
+
+
+int YabauseEmulate(void) {
    int oneframeexec = 0;
    yabsys.frame_count++;
    // PlayRecorder_proc(yabsys.frame_count);
+
+   // Debug: Save HighWram snapshot at the beginning of the frame
+   if (debug_highwram_enabled && HighWram) {
+      memcpy(HighWram_snapshot, HighWram, 0x100000);
+   }
 
    const u32 cyclesinc =
        yabsys.DecilineMode ? yabsys.DecilineStop : yabsys.DecilineStop * 10;
@@ -783,6 +931,12 @@ int YabauseEmulate(void)
          YabauseDynarecOneFrameExec(722, 0); // m68kcycles,m68kcenticycles
       else
          YabauseDynarecOneFrameExec(716, 20);
+
+     // Debug: Compare HighWram and write changes to file (Dynarec mode)
+     if (debug_highwram_enabled && HighWram) {
+        DebugHighWramChanges(yabsys.frame_count);
+     }
+
       return 0;
    }
 #endif
@@ -845,8 +999,12 @@ int YabauseEmulate(void)
       yabsys.DecilineCount++;
       // Vdp2UpdateHv(yabsys.DecilineCount,yabsys.LineCount);
 
-      if (yabsys.DecilineCount == 9)
-      {
+       if (yabsys.DecilineCount == 7) {
+         // Start of horizontal blanking as seen through TVSTAT (status bit
+         // only; the HBLANK-IN interrupt still fires at deciline 9).
+         Vdp2HBlankStatusIN();
+       }
+       else if(yabsys.DecilineCount == 9) {
          // HBlankIN
          PROFILE_START("hblankin");
          Vdp2HBlankIN();
@@ -868,7 +1026,7 @@ int YabauseEmulate(void)
          {
 
 #if defined(ASYNC_SCSP)
-            setM68kCounter((u64)(44100 * 256 / 60) << SCSP_FRACTIONAL_BITS);
+            setM68kCounter((u64)(44100 * 256 / (yabsys.IsPal ? 50 : 60)) << SCSP_FRACTIONAL_BITS);
 #endif
             PROFILE_START("vblankin");
             // VBlankIN
@@ -913,11 +1071,11 @@ int YabauseEmulate(void)
          int cycles;
          PROFILE_START("68K");
          cycles = m68kcycles;
-         // yabsys.saved_centicycles += m68kcenticycles;
-         // if (yabsys.saved_centicycles >= 100) {
-         //    cycles++;
-         //    yabsys.saved_centicycles -= 100;
-         // }
+         saved_centicycles += m68kcenticycles;
+         if (saved_centicycles >= 100) {
+            cycles++;
+            saved_centicycles -= 100;
+         }
          M68KExec(cycles);
          PROFILE_STOP("68K");
       }
@@ -997,6 +1155,11 @@ int YabauseEmulate(void)
    SSH2->onchip.cache.write_count = 0;
 #endif
 
+   // Debug: Compare HighWram and write changes to file
+   if (debug_highwram_enabled && HighWram) {
+      DebugHighWramChanges(yabsys.frame_count);
+   }
+
    return 0;
 }
 
@@ -1009,6 +1172,8 @@ void SyncCPUtoSCSP()
       YabWaitEventQueue(q_scsp_finish);
       saved_m68k_cycles = 0;
       setM68kCounter(saved_m68k_cycles);
+    // commit staged SH2 sound RAM writes while the SCSP thread is parked
+    ScspCommitSh2SoundRamWrites();
       YabAddEventQueue(q_scsp_frame_start, 0);
    }
    // LOG("[SH2] START SCSP");
@@ -1424,8 +1589,20 @@ int YabauseQuickLoadGame(void)
 
       // Now setup SH2 registers to start executing at ip code
       SH2GetRegisters(MSH2, &MSH2->regs);
-      MSH2->onchip.VCRC = 0x64 << 8;
+      // The real BIOS leaves the master SH2 on-chip interrupt vector
+      // registers programmed (same values the HLE slave start path in
+      // YabauseStartSlave uses). Games rely on these defaults: e.g.
+      // Cyberia enables FRT OCI on the master and expects vector 0x65
+      // from VCRC; leaving the OCI field at 0 made its streaming timer
+      // interrupt vanish and the game waited forever on a black screen.
+      MSH2->onchip.VCRA = 0x6061;
+      MSH2->onchip.VCRB = 0x6263;
+      MSH2->onchip.VCRC = 0x6465;
+      MSH2->onchip.VCRD = 0x6600;
       MSH2->onchip.VCRWDT = 0x6869;
+      MSH2->onchip.VCRDIV = 0x6E;
+      MSH2->onchip.VCRDMA0 = 0x6D;
+      MSH2->onchip.VCRDMA1 = 0x6C;
       MSH2->onchip.IPRB = 0x0F00;
       MSH2->regs.PC = 0x06002E00;
       MSH2->regs.R[15] = Cs2GetMasterStackAdress();

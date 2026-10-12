@@ -19,11 +19,8 @@
 package org.uoyabause.android
 
 import android.content.Context
-import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import android.os.Parcel
-import android.os.Parcelable
 import android.provider.DocumentsContract
 import android.util.Log
 import androidx.documentfile.provider.DocumentFile
@@ -36,34 +33,23 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
-import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverter
 import androidx.room.TypeConverters
 import androidx.room.Update
+import com.google.firebase.Firebase
 import com.google.firebase.analytics.FirebaseAnalytics
-import com.google.firebase.firestore.ktx.firestore
-import com.google.firebase.ktx.Firebase
-import com.google.type.DateTime
-import okhttp3.Credentials
-import okhttp3.MediaType
-import okhttp3.MediaType.Companion.toMediaTypeOrNull
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody
+import com.google.firebase.firestore.firestore
+import kotlinx.coroutines.tasks.await
 import org.devmiyax.yabasanshiro.BuildConfig
-import org.uoyabause.android.YabauseStorage.Companion.storage
-import org.uoyabause.android.YabauseApplication.Companion.appContext
 import org.devmiyax.yabasanshiro.R
-import org.json.JSONObject
-import org.json.JSONException
+import org.uoyabause.android.YabauseApplication.Companion.appContext
 import org.uoyabause.android.YabauseStorage.Companion.dao
 import org.uoyabause.android.backup.GameBackupManager.BackupGameInfo
 import org.uoyabause.android.cheat.Cheat
 import org.uoyabause.android.cheat.CheatDao
 import java.io.BufferedInputStream
 import java.io.BufferedReader
-import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
 import java.io.File
 import java.io.FileInputStream
@@ -72,52 +58,71 @@ import java.io.FileReader
 import java.io.IOException
 import java.io.InputStreamReader
 import java.lang.Exception
-import java.lang.StringBuilder
 import java.net.Authenticator
-import java.net.HttpURLConnection
-import java.net.MalformedURLException
 import java.net.PasswordAuthentication
-import java.net.URL
 import java.nio.charset.Charset
 import java.text.SimpleDateFormat
 import java.util.ArrayList
 import java.util.Date
 import java.util.Locale
-import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
-import kotlinx.coroutines.tasks.await
-
 
 class Converters {
     @TypeConverter
-    fun fromTimestamp(value: Long?): Date? {
-        return value?.let { Date(it) }
-    }
+    fun fromTimestamp(value: Long?): Date? = value?.let { Date(it) }
 
     @TypeConverter
-    fun dateToTimestamp(date: Date?): Long? {
-        return date?.time
-    }
+    fun dateToTimestamp(date: Date?): Long? = date?.time
 }
 
-@Database(entities = [GameInfo::class,GameStatus::class, Cheat::class], version = 1)
+@Database(entities = [GameInfo::class, GameStatus::class, Cheat::class], version = 3)
 @TypeConverters(Converters::class)
 abstract class GameInfoDatabase : RoomDatabase() {
     abstract fun gameInfoDao(): GameInfoDao
+
     abstract fun gameStatusDao(): GameStatusDao
+
     abstract fun cheatDao(): CheatDao
+
+    companion object {
+        val MIGRATION_1_2 =
+            object : androidx.room.migration.Migration(1, 2) {
+                override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                    // Add RetroAchievements related columns
+                    database.execSQL("ALTER TABLE GameInfo ADD COLUMN ra_game_id INTEGER")
+                    database.execSQL("ALTER TABLE GameInfo ADD COLUMN ra_hash TEXT")
+                    database.execSQL("ALTER TABLE GameInfo ADD COLUMN ra_unlocked INTEGER NOT NULL DEFAULT 0")
+                    database.execSQL("ALTER TABLE GameInfo ADD COLUMN ra_total INTEGER NOT NULL DEFAULT 0")
+                    database.execSQL("ALTER TABLE GameInfo ADD COLUMN ra_last_update INTEGER")
+                    database.execSQL("ALTER TABLE GameInfo ADD COLUMN ra_not_supported INTEGER NOT NULL DEFAULT 0")
+                }
+            }
+
+        val MIGRATION_2_3 =
+            object : androidx.room.migration.Migration(2, 3) {
+                override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
+                    database.execSQL("ALTER TABLE GameInfo ADD COLUMN ra_unlocked_hardcore INTEGER NOT NULL DEFAULT 0")
+                }
+            }
+    }
 }
 
 @Dao
-interface GameInfoDao{
+interface GameInfoDao {
     @Query("SELECT * FROM GameInfo")
     fun getAll(): List<GameInfo>
 
     @Query("SELECT * FROM GameInfo WHERE file_path = :file_path")
     fun findByFilePath(file_path: String): GameInfo?
 
+    @Query("SELECT * FROM GameInfo WHERE file_path LIKE '%' || :documentIdSuffix")
+    fun findByDocumentIdSuffix(documentIdSuffix: String): GameInfo?
+
     @Query("SELECT * FROM GameInfo WHERE product_number = :product_number AND device_infomation = :device_infomation")
-    fun findByProductId(product_number: String, device_infomation:String ): GameInfo
+    fun findByProductId(
+        product_number: String,
+        device_infomation: String,
+    ): GameInfo
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     fun insertAll(vararg gameInfo: GameInfo)
@@ -142,13 +147,19 @@ interface GameInfoDao{
 
     @Query("SELECT * FROM GameInfo ORDER BY game_title ASC")
     fun getAllSortedByTitle(): List<GameInfo>
+
+    @Query("SELECT * FROM GameInfo WHERE product_number = :product_number LIMIT 1")
+    fun findByProductNumber(product_number: String): GameInfo?
 }
 
 /**
  * Interface for handling permission requests during file deletion
  */
 interface PermissionRequestCallback {
-    fun onPermissionRequired(uri: Uri, message: String): Boolean
+    fun onPermissionRequired(
+        uri: Uri,
+        message: String,
+    ): Boolean
 }
 
 /**
@@ -163,20 +174,27 @@ data class GameInfo(
     @ColumnInfo(name = "maker_id") var maker_id: String = "",
     @ColumnInfo(name = "product_number", index = true) var product_number: String = "",
     @ColumnInfo(name = "version") var version: String = "",
-    @ColumnInfo(name = "release_date") var release_date:String  = "",
-    @ColumnInfo(name = "device_infomation") var device_infomation:String = "",
-    @ColumnInfo(name = "area") var area:String = "",
-    @ColumnInfo(name = "input_device") var input_device:String = "",
-    @ColumnInfo(name = "last_playdate") var last_playdate:Date? = null,
+    @ColumnInfo(name = "release_date") var release_date: String = "",
+    @ColumnInfo(name = "device_infomation") var device_infomation: String = "",
+    @ColumnInfo(name = "area") var area: String = "",
+    @ColumnInfo(name = "input_device") var input_device: String = "",
+    @ColumnInfo(name = "last_playdate") var last_playdate: Date? = null,
     @ColumnInfo(name = "update_at") var update_at: Date? = Date(),
     @ColumnInfo(name = "image_url") var image_url: String? = "",
-    @ColumnInfo(name = "rating") var rating: Int  = 0,
+    @ColumnInfo(name = "rating") var rating: Int = 0,
     @ColumnInfo(name = "lastplay_date") var lastplay_date: Date? = null,
+    // RetroAchievements related fields
+    @ColumnInfo(name = "ra_game_id") var raGameId: Int? = null, // RA Game ID (numeric)
+    @ColumnInfo(name = "ra_hash") var raHash: String? = null, // MD5 hash (32 characters)
+    @ColumnInfo(name = "ra_unlocked") var raUnlocked: Int = 0, // Unlocked achievements count
+    @ColumnInfo(name = "ra_total") var raTotal: Int = 0, // Total achievements count
+    @ColumnInfo(name = "ra_last_update") var raLastUpdate: Date? = null, // Last update timestamp
+    @ColumnInfo(name = "ra_not_supported") var raNotSupported: Boolean = false, // RA not registered flag
+    @ColumnInfo(name = "ra_unlocked_hardcore") var raUnlockedHardcore: Int = 0, // Hardcore unlocked achievements count
     // These fields are not stored in the database but used for display
     @Ignore var isCloudOnly: Boolean = false,
-    @Ignore var cloudBackupInfo: BackupGameInfo? = null
-)  {
-
+    @Ignore var cloudBackupInfo: BackupGameInfo? = null,
+) {
     companion object {
         /*
         fun getFromFileName(file_path: String?): GameInfo? {
@@ -186,7 +204,8 @@ data class GameInfo(
                 .where("file_path = ?", file_path)
                 .executeSingle()
         }
-        */
+         */
+
 /*
         fun getFromInDirectFileName(file_path: String): GameInfo? {
             var lfile_path = file_path
@@ -198,39 +217,40 @@ data class GameInfo(
                 .executeSingle()
         }
 */
-        /*
+
+/*
         fun deleteAll() {
             Delete().from(GameInfo::class.java).execute<Model>()
         }
-        */
+         */
 
         var sigin = ""
 
-        fun initSigin( context: Context) {
+        fun initSigin(context: Context) {
             sigin = context.getString(R.string.boxart_sigin).replace("%26", "&")
         }
 
         fun genGameInfoFromCUE(file_path: String?): GameInfo? {
-            if( file_path == null ) return null
+            if (file_path == null) return null
             val file = File(file_path)
             val dirName = file.parent
-            var iso_file_name = ""
+            var isoFileName = ""
             try {
                 val filereader = FileReader(file)
                 val br = BufferedReader(filereader)
                 var str = br.readLine()
                 while (str != null) {
-                    //System.out.println(str);
+                    // System.out.println(str);
                     val p = Pattern.compile("FILE \"(.*)\"")
                     val m = p.matcher(str)
                     if (m.find()) {
-                        iso_file_name = m.group(1) as String
+                        isoFileName = m.group(1) as String
                         break
                     }
                     str = br.readLine()
                 }
                 br.close()
-                if (iso_file_name == "") {
+                if (isoFileName == "") {
                     return null // bad file format;
                 }
             } catch (e: FileNotFoundException) {
@@ -241,49 +261,58 @@ data class GameInfo(
                 return null
             }
             if (dirName != null) {
-                iso_file_name = dirName + File.separator + iso_file_name
+                isoFileName = dirName + File.separator + isoFileName
             }
-            var tmp: GameInfo? = genGameInfoFromIso(iso_file_name)
+            var tmp: GameInfo? = genGameInfoFromIso(isoFileName)
             if (tmp == null) return null
             tmp.file_path = file_path
-            tmp.iso_file_path = iso_file_name.uppercase(Locale.getDefault())
+            tmp.iso_file_path = isoFileName.uppercase(Locale.getDefault())
             return tmp
         }
 
         fun genGameInfoFromMDS(file_path: String?): GameInfo? {
-            if( file_path == null ) return null
-            val iso_file_name = file_path.replace(".mds", ".mdf")
-            var tmp = genGameInfoFromIso(iso_file_name)
+            if (file_path == null) return null
+            val isoFileName = file_path.replace(".mds", ".mdf")
+            var tmp = genGameInfoFromIso(isoFileName)
             if (tmp == null) return null
             tmp.file_path = file_path
-            tmp.iso_file_path = iso_file_name.uppercase(Locale.getDefault())
+            tmp.iso_file_path = isoFileName.uppercase(Locale.getDefault())
 
             // read mdf
             return tmp
         }
 
         fun genGameInfoFromCCD(file_path: String?): GameInfo? {
-            if( file_path == null ) return null
-            val iso_file_name = file_path.replace(".ccd", ".img")
-            var tmp = genGameInfoFromIso(iso_file_name)
+            if (file_path == null) return null
+            val isoFileName = file_path.replace(".ccd", ".img")
+            var tmp = genGameInfoFromIso(isoFileName)
             if (tmp == null) return null
             tmp.file_path = file_path
-            tmp.iso_file_path = iso_file_name.uppercase(Locale.getDefault())
+            tmp.iso_file_path = isoFileName.uppercase(Locale.getDefault())
             return tmp
         }
 
-        fun getGimeInfoFromBuf(file_path: String?, header: ByteArray): GameInfo? {
-            if( file_path == null ) return null
+        fun getGimeInfoFromBuf(
+            file_path: String?,
+            header: ByteArray,
+        ): GameInfo? {
+            if (file_path == null) return null
             var startindex = -1
-            val check_str =
+            val checkStr =
                 byteArrayOf(
                     'S'.code.toByte(),
                     'E'.code.toByte(),
                     'G'.code.toByte(),
                     'A'.code.toByte(),
-                    ' '.code.toByte())
-            for (i in 0 until header.size - check_str.size) {
-                if (header[i + 0] == check_str[0] && header[i + 1] == check_str[1] && header[i + 2] == check_str[2] && header[i + 3] == check_str[3] && header[i + 4] == check_str[4]) {
+                    ' '.code.toByte(),
+                )
+            for (i in 0 until header.size - checkStr.size) {
+                if (header[i + 0] == checkStr[0] &&
+                    header[i + 1] == checkStr[1] &&
+                    header[i + 2] == checkStr[2] &&
+                    header[i + 3] == checkStr[3] &&
+                    header[i + 4] == checkStr[4]
+                ) {
                     startindex = i
                     break
                 }
@@ -294,7 +323,7 @@ data class GameInfo(
                 val charaset = Charset.forName("MS932")
                 tmp.file_path = file_path
                 tmp.iso_file_path = file_path.uppercase(Locale.getDefault())
-                tmp.maker_id = String(header, startindex + 0x10, 0x10, )
+                tmp.maker_id = String(header, startindex + 0x10, 0x10)
                 tmp.maker_id = tmp.maker_id.trim { it <= ' ' }
                 tmp.product_number = String(header, startindex + 0x20, 0xA, charaset)
                 tmp.product_number = tmp.product_number.trim { it <= ' ' }
@@ -310,7 +339,7 @@ data class GameInfo(
                 tmp.device_infomation = tmp.device_infomation.trim { it <= ' ' }
                 tmp.game_title = String(header, startindex + 0x60, 0x70, charaset)
                 tmp.game_title = tmp.game_title.trim { it <= ' ' }
-                tmp.image_url = "https://d3edktb2n8l35b.cloudfront.net/BOXART/"+tmp.product_number+".PNG?" + sigin
+                tmp.image_url = "https://d3edktb2n8l35b.cloudfront.net/BOXART/" + tmp.product_number + ".PNG?" + sigin
             } catch (e: Exception) {
                 e.localizedMessage?.let { Log.e("GameInfo", it) }
                 return null
@@ -319,7 +348,7 @@ data class GameInfo(
         }
 
         fun genGameInfoFromCHD(file_path: String?): GameInfo? {
-            if( file_path == null ) return null
+            if (file_path == null) return null
             Log.d("yabause", file_path)
             val header = YabauseRunnable.getGameinfoFromChd(file_path) ?: return null
             return getGimeInfoFromBuf(file_path, header)
@@ -327,11 +356,13 @@ data class GameInfo(
 
         @JvmStatic
         fun genGameInfoFromIso(file_path: String?): GameInfo? {
-            if( file_path == null ) return null
+            if (file_path == null) return null
             return try {
                 val buff = ByteArray(0xFF)
-                val dataInStream = DataInputStream(
-                    BufferedInputStream(FileInputStream(file_path)))
+                val dataInStream =
+                    DataInputStream(
+                        BufferedInputStream(FileInputStream(file_path)),
+                    )
                 dataInStream.read(buff, 0x0, 0xFF)
                 dataInStream.close()
                 getGimeInfoFromBuf(file_path, buff)
@@ -357,11 +388,12 @@ data class GameInfo(
         return try {
             // For content URIs, we need to check if we have permission for the parent tree URI
             val persistedUris = context.contentResolver.persistedUriPermissions
-            
+
             // First check if we have direct permission for this URI
-            val hasDirectPermission = persistedUris.any { permission ->
-                permission.uri == uri && permission.isWritePermission
-            }
+            val hasDirectPermission =
+                persistedUris.any { permission ->
+                    permission.uri == uri && permission.isWritePermission
+                }
 
             if (hasDirectPermission) {
                 Log.d("GameInfo", "Has direct persisted write permission for URI: $uri")
@@ -369,11 +401,12 @@ data class GameInfo(
             }
 
             // For single file URIs, check if we have permission for any parent tree URI
-            val hasTreePermission = persistedUris.any { permission ->
-                permission.isWritePermission && 
-                DocumentsContract.isTreeUri(permission.uri) &&
-                isUriUnderTree(uri, permission.uri)
-            }
+            val hasTreePermission =
+                persistedUris.any { permission ->
+                    permission.isWritePermission &&
+                        DocumentsContract.isTreeUri(permission.uri) &&
+                        isUriUnderTree(uri, permission.uri)
+                }
 
             if (hasTreePermission) {
                 Log.d("GameInfo", "Has tree write permission covering URI: $uri")
@@ -395,41 +428,42 @@ data class GameInfo(
     /**
      * Check if a file URI is under a tree URI
      */
-    private fun isUriUnderTree(fileUri: Uri, treeUri: Uri): Boolean {
-        return try {
+    private fun isUriUnderTree(
+        fileUri: Uri,
+        treeUri: Uri,
+    ): Boolean = try {
+        val context = YabauseApplication.appContext
+
+        // Get the document ID from the file URI
+        val fileDocumentId = DocumentsContract.getDocumentId(fileUri)
+
+        // Get the tree document ID from the tree URI
+        val treeDocumentId = DocumentsContract.getTreeDocumentId(treeUri)
+
+        // Check if the file document ID starts with the tree document ID
+        val isUnderTree = fileDocumentId.startsWith(treeDocumentId)
+
+        Log.d("GameInfo", "Checking if file URI is under tree:")
+        Log.d("GameInfo", "  File URI: $fileUri")
+        Log.d("GameInfo", "  Tree URI: $treeUri")
+        Log.d("GameInfo", "  File document ID: $fileDocumentId")
+        Log.d("GameInfo", "  Tree document ID: $treeDocumentId")
+        Log.d("GameInfo", "  Is under tree: $isUnderTree")
+
+        isUnderTree
+    } catch (e: Exception) {
+        Log.e("GameInfo", "Error checking if URI is under tree: ${e.message}")
+        // Fallback: try to use DocumentFile to check if the tree can access the file
+        try {
             val context = YabauseApplication.appContext
-            
-            // Get the document ID from the file URI
-            val fileDocumentId = DocumentsContract.getDocumentId(fileUri)
-            
-            // Get the tree document ID from the tree URI
-            val treeDocumentId = DocumentsContract.getTreeDocumentId(treeUri)
-            
-            // Check if the file document ID starts with the tree document ID
-            val isUnderTree = fileDocumentId.startsWith(treeDocumentId)
-            
-            Log.d("GameInfo", "Checking if file URI is under tree:")
-            Log.d("GameInfo", "  File URI: $fileUri")
-            Log.d("GameInfo", "  Tree URI: $treeUri")
-            Log.d("GameInfo", "  File document ID: $fileDocumentId")
-            Log.d("GameInfo", "  Tree document ID: $treeDocumentId")
-            Log.d("GameInfo", "  Is under tree: $isUnderTree")
-            
-            isUnderTree
-        } catch (e: Exception) {
-            Log.e("GameInfo", "Error checking if URI is under tree: ${e.message}")
-            // Fallback: try to use DocumentFile to check if the tree can access the file
-            try {
-                val context = YabauseApplication.appContext
-                val treeDocumentFile = DocumentFile.fromTreeUri(context, treeUri)
-                val fileDocumentFile = DocumentFile.fromSingleUri(context, fileUri)
-                
-                // If both can be resolved, there's a good chance they're related
-                treeDocumentFile != null && fileDocumentFile != null
-            } catch (fallbackException: Exception) {
-                Log.e("GameInfo", "Fallback check also failed: ${fallbackException.message}")
-                false
-            }
+            val treeDocumentFile = DocumentFile.fromTreeUri(context, treeUri)
+            val fileDocumentFile = DocumentFile.fromSingleUri(context, fileUri)
+
+            // If both can be resolved, there's a good chance they're related
+            treeDocumentFile != null && fileDocumentFile != null
+        } catch (fallbackException: Exception) {
+            Log.e("GameInfo", "Fallback check also failed: ${fallbackException.message}")
+            false
         }
     }
 
@@ -441,9 +475,10 @@ data class GameInfo(
         return try {
             // Check if we have persistable permission for the parent URI
             val persistedUris = context.contentResolver.persistedUriPermissions
-            val hasPersistedPermission = persistedUris.any { permission ->
-                permission.uri == parentUri && permission.isWritePermission
-            }
+            val hasPersistedPermission =
+                persistedUris.any { permission ->
+                    permission.uri == parentUri && permission.isWritePermission
+                }
 
             if (hasPersistedPermission) {
                 Log.d("GameInfo", "Has persisted write permission for parent URI: $parentUri")
@@ -466,7 +501,10 @@ data class GameInfo(
      * Request write permission for the given URI by launching document tree picker
      * This method should be called from an Activity context
      */
-    private fun requestWritePermission(uri: Uri, callback: PermissionRequestCallback? = null): Boolean {
+    private fun requestWritePermission(
+        uri: Uri,
+        callback: PermissionRequestCallback? = null,
+    ): Boolean {
         Log.w("GameInfo", "Write permission not available for URI: $uri")
 
         val message = "Write permission is required to delete files. Please grant permission through the file picker."
@@ -537,16 +575,19 @@ data class GameInfo(
                     }
 
                     if (parentDir != null && documentFile != null && parentDir.canWrite()) {
-                        val baseName = documentFile.name?.let { name ->
-                            name.replace(".(?i)ccd".toRegex(), "")
-                                .replace(".(?i)mds".toRegex(), "")
-                        }
+                        val baseName =
+                            documentFile.name?.let { name ->
+                                name
+                                    .replace(".(?i)ccd".toRegex(), "")
+                                    .replace(".(?i)mds".toRegex(), "")
+                            }
 
                         if (baseName != null) {
                             // Find and delete all files with the same base name
-                            val filesToDelete = parentDir.listFiles().filter { file ->
-                                file.name?.startsWith(baseName) == true
-                            }
+                            val filesToDelete =
+                                parentDir.listFiles().filter { file ->
+                                    file.name?.startsWith(baseName) == true
+                                }
 
                             for (fileToDelete in filesToDelete) {
                                 try {
@@ -554,9 +595,15 @@ data class GameInfo(
                                         val deleted = fileToDelete.delete()
                                         Log.d("GameInfo", "Deleted related file ${fileToDelete.name}: $deleted")
                                         if (!deleted) {
-                                            Log.w("GameInfo", "Failed to delete ${fileToDelete.name} via DocumentFile, trying ContentResolver")
+                                            Log.w(
+                                                "GameInfo",
+                                                "Failed to delete ${fileToDelete.name} via DocumentFile, trying ContentResolver",
+                                            )
                                             val deletedViaResolver = context.contentResolver.delete(fileToDelete.uri, null, null)
-                                            Log.d("GameInfo", "ContentResolver deletion result for ${fileToDelete.name}: $deletedViaResolver")
+                                            Log.d(
+                                                "GameInfo",
+                                                "ContentResolver deletion result for ${fileToDelete.name}: $deletedViaResolver",
+                                            )
                                         }
                                     } else {
                                         Log.e("GameInfo", "No write permission for related file: ${fileToDelete.name}")
@@ -576,7 +623,7 @@ data class GameInfo(
             } else if (fname.endsWith("CUE")) {
                 // For CUE files, read the content and delete referenced files
                 try {
-                    val delete_files: MutableList<String> = ArrayList()
+                    val deleteFiles: MutableList<String> = ArrayList()
 
                     context.contentResolver.openInputStream(uri)?.use { inputStream ->
                         BufferedReader(InputStreamReader(inputStream)).use { reader ->
@@ -585,7 +632,7 @@ data class GameInfo(
                                 val p = Pattern.compile("FILE \"(.*)\"")
                                 val m = p.matcher(line)
                                 if (m.find()) {
-                                    m.group(1)?.let { delete_files.add(it) }
+                                    m.group(1)?.let { deleteFiles.add(it) }
                                 }
                                 line = reader.readLine()
                             }
@@ -607,7 +654,7 @@ data class GameInfo(
                     }
 
                     if (parentDir != null && parentDir.canWrite()) {
-                        for (fileName in delete_files) {
+                        for (fileName in deleteFiles) {
                             val fileToDelete = parentDir.findFile(fileName)
                             if (fileToDelete != null) {
                                 try {
@@ -650,7 +697,6 @@ data class GameInfo(
                     } else {
                         Log.e("GameInfo", "CUE file does not exist or cannot be accessed")
                     }
-
                 } catch (e: Exception) {
                     Log.e("GameInfo", "Failed to delete CUE files: ${e.message}")
                 }
@@ -695,7 +741,7 @@ data class GameInfo(
                 searchName = searchName.replace(".(?i)mds".toRegex(), "")
                 val searchNamef = searchName
                 val matchingFiles = dir?.listFiles { _, name -> name.startsWith(searchNamef) }
-                if( matchingFiles != null ) {
+                if (matchingFiles != null) {
                     for (removefile in matchingFiles) {
                         if (removefile.exists()) {
                             removefile.delete()
@@ -704,23 +750,23 @@ data class GameInfo(
                 }
                 YabauseStorage.dao.delete(this)
             } else if (fname.endsWith("CUE")) {
-                val delete_files: MutableList<String> = ArrayList()
+                val deleteFiles: MutableList<String> = ArrayList()
                 try {
                     val filereader = FileReader(file_path)
                     val br = BufferedReader(filereader)
                     var str = br.readLine()
                     while (str != null) {
-                        //System.out.println(str);
+                        // System.out.println(str);
                         val p = Pattern.compile("FILE \"(.*)\"")
                         val m = p.matcher(str)
                         if (m.find()) {
-                            m.group(1)?.let { delete_files.add(it) }
+                            m.group(1)?.let { deleteFiles.add(it) }
                         }
                         str = br.readLine()
                     }
                     br.close()
                     val file = File(file_path)
-                    for (removefile in delete_files) {
+                    for (removefile in deleteFiles) {
                         val delname = file.parentFile?.absolutePath + "/" + removefile
                         val f = File(delname)
                         if (f.exists()) {
@@ -749,11 +795,9 @@ data class GameInfo(
 
     internal inner class BasicAuthenticator(
         private val user: String,
-        private val password: String
+        private val password: String,
     ) : Authenticator() {
-        override fun getPasswordAuthentication(): PasswordAuthentication {
-            return PasswordAuthentication(user, password.toCharArray())
-        }
+        override fun getPasswordAuthentication(): PasswordAuthentication = PasswordAuthentication(user, password.toCharArray())
     }
 
     suspend fun updateState(): Int {
@@ -776,10 +820,12 @@ data class GameInfo(
 
         try {
             // Firestoreから検索（await を使用して同期的に処理）
-            val documents = db.collection("games")
-                .whereEqualTo("product_number", product_number)
-                .get()
-                .await()
+            val documents =
+                db
+                    .collection("games")
+                    .whereEqualTo("product_number", product_number)
+                    .get()
+                    .await()
 
             if (!documents.isEmpty) {
                 // ドキュメントが見つかった場合
@@ -792,10 +838,14 @@ data class GameInfo(
 
                 // games/{id}/summary/ratings/averageRating から rating を取得（await を使用して同期的に処理）
                 val documentId = document.id
-                val ratingsDoc = db.collection("games").document(documentId)
-                    .collection("summary").document("ratings")
-                    .get()
-                    .await()
+                val ratingsDoc =
+                    db
+                        .collection("games")
+                        .document(documentId)
+                        .collection("summary")
+                        .document("ratings")
+                        .get()
+                        .await()
 
                 ratingsDoc.getLong("averageRating")?.let {
                     rating = it.toInt()
@@ -807,35 +857,39 @@ data class GameInfo(
                 bundle.putString(FirebaseAnalytics.Param.ITEM_ID, product_number)
                 bundle.putString(FirebaseAnalytics.Param.ITEM_NAME, game_title)
                 mFirebaseAnalytics.logEvent(
-                    "yab_game_not_found", bundle
+                    "yab_game_not_found",
+                    bundle,
                 )
 
                 // 新しいゲーム情報をFirestoreに追加（デバッグモードのみ）
                 try {
                     Log.i(
                         "GameInfo",
-                        product_number + "( " + game_title + " ) is not found "
+                        product_number + "( " + game_title + " ) is not found ",
                     )
 
                     // automatic update
                     if (BuildConfig.DEBUG) {
-                        val gameData = hashMapOf(
-                            "maker_id" to maker_id,
-                            "product_number" to product_number,
-                            "version" to version,
-                            "release_date" to release_date,
-                            "device_infomation" to device_infomation,
-                            "area" to area,
-                            "game_title" to game_title,
-                            "input_device" to input_device,
-                            "rating" to 0,
-                            "update_at" to Date()
-                        )
+                        val gameData =
+                            hashMapOf(
+                                "maker_id" to maker_id,
+                                "product_number" to product_number,
+                                "version" to version,
+                                "release_date" to release_date,
+                                "device_infomation" to device_infomation,
+                                "area" to area,
+                                "game_title" to game_title,
+                                "input_device" to input_device,
+                                "rating" to 0,
+                                "update_at" to Date(),
+                            )
 
                         // Firestoreに追加（await を使用して同期的に処理）
-                        val documentReference = db.collection("games")
-                            .add(gameData)
-                            .await()
+                        val documentReference =
+                            db
+                                .collection("games")
+                                .add(gameData)
+                                .await()
 
                         Log.i("GameInfo", "Game added with ID: ${documentReference.id}")
                     }
@@ -897,5 +951,4 @@ data class GameInfo(
         }
     }
  */
-
 }

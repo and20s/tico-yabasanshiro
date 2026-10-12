@@ -19,50 +19,50 @@
 package org.uoyabause.android.cheat
 
 import android.annotation.SuppressLint
-import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.CheckBox
 import android.widget.TextView
-import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.card.MaterialCardView
+import com.google.android.material.color.MaterialColors
+import com.google.android.material.materialswitch.MaterialSwitch
 import org.devmiyax.yabasanshiro.R
 
 class LocalCheatItemRecyclerViewAdapter(
-    private val mValues: List<CheatItem?>?,
-    private var mListener: OnItemClickListener?
+    private val values: List<CheatItem?>?,
+    private var listener: OnItemClickListener?,
 ) : RecyclerView.Adapter<LocalCheatItemRecyclerViewAdapter.ViewHolder>() {
     private var focusedItem = 0
+    private var attachedRecyclerView: RecyclerView? = null
+
     override fun onAttachedToRecyclerView(recyclerView: RecyclerView) {
         super.onAttachedToRecyclerView(recyclerView)
-
-        // Handle key up and key down and attempt to move selection
-        recyclerView.setOnKeyListener(View.OnKeyListener { _, keyCode, event ->
-            val lm = recyclerView.layoutManager
-
-            // Return false if scrolled to the bounds and allow focus to move off the list
-            if (event.action == KeyEvent.ACTION_DOWN) {
-                if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
-                    return@OnKeyListener tryMoveSelection(lm, 1)
-                } else if (keyCode == KeyEvent.KEYCODE_DPAD_UP) {
-                    return@OnKeyListener tryMoveSelection(lm, -1)
-                } else if (keyCode == KeyEvent.KEYCODE_BUTTON_A) {
-                    if (mListener != null) {
-                        val holder =
-                            recyclerView.findViewHolderForAdapterPosition(focusedItem) as ViewHolder?
-                        mListener!!.onItemClick(focusedItem, holder!!.mItem, holder.mView)
-                    }
-                }
-            }
-            false
-        })
+        attachedRecyclerView = recyclerView
     }
 
-    private fun tryMoveSelection(lm: RecyclerView.LayoutManager?, direction: Int): Boolean {
+    override fun onDetachedFromRecyclerView(recyclerView: RecyclerView) {
+        super.onDetachedFromRecyclerView(recyclerView)
+        attachedRecyclerView = null
+    }
+
+    fun moveCursor(direction: Int) {
+        val rv = attachedRecyclerView ?: return
+        tryMoveSelection(rv.layoutManager, direction)
+    }
+
+    fun selectFocused() {
+        val rv = attachedRecyclerView ?: return
+        val holder = rv.findViewHolderForAdapterPosition(focusedItem) as? ViewHolder ?: return
+        listener?.onItemClick(focusedItem, holder.item, holder.itemView)
+    }
+
+    private fun tryMoveSelection(
+        lm: RecyclerView.LayoutManager?,
+        direction: Int,
+    ): Boolean {
         val tryFocusItem = focusedItem + direction
 
-        // If still within valid bounds, move the selection, notify to redraw, and scroll
         if (tryFocusItem >= 0 && tryFocusItem < itemCount) {
             notifyItemChanged(focusedItem)
             focusedItem = tryFocusItem
@@ -73,70 +73,87 @@ class LocalCheatItemRecyclerViewAdapter(
         return false
     }
 
-    fun setOnItemClickListener(listener: OnItemClickListener?) {
-        mListener = listener
+    fun setOnItemClickListener(itemClickListener: OnItemClickListener?) {
+        listener = itemClickListener
     }
 
     interface OnItemClickListener {
-        fun onItemClick(position: Int, item: CheatItem?, v: View?)
+        fun onItemClick(
+            position: Int,
+            item: CheatItem?,
+            v: View?,
+        )
     }
 
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
-        val view = LayoutInflater.from(parent.context)
-            .inflate(R.layout.fragment_localcheatitem, parent, false)
+    override fun onCreateViewHolder(
+        parent: ViewGroup,
+        viewType: Int,
+    ): ViewHolder {
+        val view =
+            LayoutInflater
+                .from(parent.context)
+                .inflate(R.layout.fragment_localcheatitem, parent, false)
         return ViewHolder(view)
     }
 
-    override fun onBindViewHolder(holder: ViewHolder, @SuppressLint("RecyclerView") position: Int) {
+    override fun onBindViewHolder(
+        holder: ViewHolder,
+        @SuppressLint("RecyclerView") position: Int,
+    ) {
+        if (values == null) return
 
-        if (mValues == null) return
-
-        holder.mItem = mValues.get(position)
-        holder.mIdView.setText(mValues.get(position)?.description)
-        holder.mContentView.setText(mValues.get(position)?.cheat_code)
+        holder.item = values.get(position)
+        holder.idView.setText(values.get(position)?.description)
+        holder.contentView.setText(values.get(position)?.cheat_code)
         holder.itemView.isSelected = focusedItem == position
-        if (focusedItem == position)
-            holder.itemView.setBackgroundColor(
-                ContextCompat.getColor(
-                holder.itemView.context,
-                R.color.colorPrimaryDark))
-        else
-            holder.itemView.setBackgroundColor(ContextCompat.getColor(
-                holder.itemView.context,
-                R.color.halfTransparent))
 
-        holder.mcb.isChecked = holder.mItem?.enable == true
+        val card = holder.itemView as MaterialCardView
+        if (focusedItem == position) {
+            card.strokeColor = MaterialColors.getColor(card, androidx.appcompat.R.attr.colorPrimary, 0)
+            card.strokeWidth = card.resources.getDimensionPixelSize(R.dimen.card_stroke_width_focused)
+            card.setCardBackgroundColor(
+                MaterialColors.getColor(card, com.google.android.material.R.attr.colorSurfaceContainerHigh, 0),
+            )
+        } else {
+            card.strokeColor = 0
+            card.strokeWidth = 0
+            card.setCardBackgroundColor(
+                MaterialColors.getColor(card, com.google.android.material.R.attr.colorSurface, 0),
+            )
+        }
 
-        holder.mView.setOnClickListener {
+        holder.switchEnable.isChecked = holder.item?.enable == true
+
+        holder.itemView.setOnClickListener {
             notifyItemChanged(focusedItem)
             focusedItem = position
             notifyItemChanged(focusedItem)
-            if (null != mListener) {
-                mListener!!.onItemClick(position, holder.mItem, holder.mView)
+            if (null != listener) {
+                listener!!.onItemClick(position, holder.item, holder.itemView)
             }
         }
     }
 
-    override fun getItemCount(): Int {
-        return mValues?.size ?: 0
-    }
+    override fun getItemCount(): Int = values?.size ?: 0
 
-    inner class ViewHolder(val mView: View) : RecyclerView.ViewHolder(
-        mView) {
-        val mIdView: TextView
-        val mContentView: TextView
-        var mcb: CheckBox
-        var mItem: CheatItem? = null
-        override fun toString(): String {
-            return super.toString() + " '" + mContentView.text + "'"
-        }
+    inner class ViewHolder(
+        val view: View,
+    ) : RecyclerView.ViewHolder(
+            view,
+        ) {
+        val idView: TextView
+        val contentView: TextView
+        var switchEnable: MaterialSwitch
+        var item: CheatItem? = null
+
+        override fun toString(): String = super.toString() + " '" + contentView.text + "'"
 
         init {
-            mIdView = mView.findViewById<View>(R.id.id) as TextView
-            mContentView = mView.findViewById<View>(R.id.content) as TextView
-            mcb = mView.findViewById<View>(R.id.checkBox_enable) as CheckBox
-            mcb.isEnabled = false
-            mcb.isFocusable = false
+            idView = view.findViewById(R.id.id)
+            contentView = view.findViewById(R.id.content)
+            switchEnable = view.findViewById(R.id.checkBox_enable)
+            switchEnable.isEnabled = false
+            switchEnable.isFocusable = false
         }
     }
 }

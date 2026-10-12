@@ -57,7 +57,7 @@ class SonicRTest {
         // Test that SonicR initializes with correct leaderboards
         assertNotNull(sonicR.leaderBoards)
         assertEquals(5, sonicR.leaderBoards?.size)
-        
+
         // Check leaderboard names
         val expectedNames = listOf("Resort Island", "Radical City", "Regal Ruin", "Reactive Factory", "Radiant Emerald")
         val actualNames = sonicR.leaderBoards?.map { it.title }
@@ -81,10 +81,10 @@ class SonicRTest {
         // Create test backup data
         val beforeData = ByteArray(256) // Empty backup
         val afterData = ByteArray(256)
-        
+
         // Set some test score data (this would need to match the actual SonicR backup format)
         // This is a simplified test - in reality you'd need to understand the backup format
-        
+
         assertDoesNotThrow {
             sonicR.onBackUpUpdated("sonic_backup.dat", beforeData, afterData)
         }
@@ -96,7 +96,10 @@ class SonicRTest {
         }
     }
 
-    private fun assertEquals(expected: Any?, actual: Any?) {
+    private fun assertEquals(
+        expected: Any?,
+        actual: Any?,
+    ) {
         if (expected != actual) {
             throw AssertionError("Expected $expected but was $actual")
         }

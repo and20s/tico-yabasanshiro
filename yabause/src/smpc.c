@@ -120,6 +120,18 @@ void SmpcRecheckRegion(void) {
       // it's japanese
       if (SmpcInternalVars->regionid == 0)
          SmpcInternalVars->regionid = 1;
+
+      // Auto-detect PAL/NTSC based on region
+      if (SmpcInternalVars->regionid == REGION_ASIAPAL ||
+          SmpcInternalVars->regionid == REGION_EUROPE ||
+          SmpcInternalVars->regionid == REGION_CENTRALSOUTHAMERICAPAL)
+      {
+         YabauseSetVideoFormat(VIDEOFORMATTYPE_PAL);
+      }
+      else
+      {
+         YabauseSetVideoFormat(VIDEOFORMATTYPE_NTSC);
+      }
    }
    else
       Cs2GetIP(0);
@@ -130,6 +142,8 @@ void SmpcRecheckRegion(void) {
 void SmpcReset(void) {
    memset((void *)SmpcRegs, 0, sizeof(Smpc));
    memset((void *)SmpcInternalVars->SMEM, 0, 4);
+
+   SmpcRegs->OREG[31] = 0x0D; // initial value after reset
 
    SmpcRecheckRegion();
 
@@ -155,7 +169,16 @@ void SmpcReset(void) {
 //////////////////////////////////////////////////////////////////////////////
 
 static void SmpcSSHON(void) {
-   YabauseStartSlave();
+   // On real hardware SSHON releases the slave SH-2 from its reset line.
+   // If the slave is already running, re-issuing SSHON leaves the (already
+   // released) reset line untouched, so the slave keeps executing. Emulating
+   // it as an unconditional restart would reset the slave PC/registers and
+   // wipe any slave program the master has already uploaded and started,
+   // deadlocking games that issue a redundant SSHON (e.g. Madden NFL 97).
+   // The SSHOFF -> SSHON reset idiom is preserved because SSHOFF clears
+   // IsSSH2Running, allowing the following SSHON to start the slave.
+   if (!yabsys.IsSSH2Running)
+      YabauseStartSlave();
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -742,6 +765,8 @@ void FASTCALL SmpcWriteByte(u32 addr, u8 val) {
    addr &= 0x7F;
    bustmp = val;
    SmpcRegsT[addr >> 1] = val;
+
+   //SMPCLOG("smpc\t: write %08X:%X\n", addr,val);
 
    switch(addr) {
       case 0x01: // Maybe an INTBACK continue/break request

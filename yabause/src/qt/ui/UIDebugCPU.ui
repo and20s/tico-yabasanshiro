@@ -201,20 +201,42 @@
                   <property name="inputMask">
                    <string/>
                   </property>
+                  <property name="placeholderText">
+                   <string>Address</string>
+                  </property>
                  </widget>
                 </item>
                 <item>
-                 <spacer name="horizontalSpacer">
-                  <property name="orientation">
-                   <enum>Qt::Horizontal</enum>
+                 <widget class="QComboBox" name="cbRegCondition">
+                  <property name="sizePolicy">
+                   <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+                    <horstretch>0</horstretch>
+                    <verstretch>0</verstretch>
+                   </sizepolicy>
                   </property>
-                  <property name="sizeHint" stdset="0">
+                  <property name="minimumSize">
                    <size>
-                    <width>40</width>
-                    <height>20</height>
+                    <width>60</width>
+                    <height>0</height>
                    </size>
                   </property>
-                 </spacer>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QLineEdit" name="leRegConditionValue">
+                  <property name="enabled">
+                   <bool>false</bool>
+                  </property>
+                  <property name="sizePolicy">
+                   <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+                    <horstretch>0</horstretch>
+                    <verstretch>0</verstretch>
+                   </sizepolicy>
+                  </property>
+                  <property name="placeholderText">
+                   <string>Value (hex)</string>
+                  </property>
+                 </widget>
                 </item>
                </layout>
               </item>
@@ -298,6 +320,9 @@
                   <property name="inputMask">
                    <string/>
                   </property>
+                  <property name="placeholderText">
+                   <string>Address</string>
+                  </property>
                  </widget>
                 </item>
                 <item>
@@ -312,6 +337,27 @@
                    </size>
                   </property>
                  </spacer>
+                </item>
+               </layout>
+              </item>
+              <item>
+               <layout class="QHBoxLayout" name="horizontalLayout_9">
+                <item>
+                 <widget class="QCheckBox" name="cbValueCondition">
+                  <property name="text">
+                   <string>Value</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QLineEdit" name="leBreakpointValue">
+                  <property name="enabled">
+                   <bool>false</bool>
+                  </property>
+                  <property name="placeholderText">
+                   <string>Value (hex)</string>
+                  </property>
+                 </widget>
                 </item>
                </layout>
               </item>

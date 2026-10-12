@@ -1,6 +1,6 @@
 import UIKit
 
-// Discord連携の通知名を定義
+// Define notification names for Discord integration
 extension Notification.Name {
     static let discordLinkSuccess = Notification.Name("discordLinkSuccess")
     static let discordLinkFailure = Notification.Name("discordLinkFailure")
@@ -48,12 +48,12 @@ class DiscordOAuthRedirectHandler {
      */
     private func showSuccessAlert() {
         let alert = UIAlertController(
-            title: NSLocalizedString("Discord連携成功", comment: "Title for successful Discord link"),
-            message: NSLocalizedString("Discordアカウントの連携に成功しました", comment: "Message for successful Discord link"),
+            title: NSLocalizedString("Discord Link Successful", comment: "Title for successful Discord link"),
+            message: NSLocalizedString("Discord link successful", comment: "Message for successful Discord link"),
             preferredStyle: .alert
         )
         alert.addAction(UIAlertAction(title: "OK", style: .default) { _ in
-            // アラートが閉じられた後に通知を送信
+            // Send notification after alert is dismissed
             NotificationCenter.default.post(name: .discordLinkSuccess, object: nil)
         })
 
@@ -72,12 +72,12 @@ class DiscordOAuthRedirectHandler {
      */
     private func showErrorAlert() {
         let alert = UIAlertController(
-            title: NSLocalizedString("Discord連携失敗", comment: "Title for Discord link error"),
-            message: NSLocalizedString("Discordアカウントの連携に失敗しました", comment: "Message for Discord link error"),
+            title: NSLocalizedString("Discord Link Failed", comment: "Title for Discord link error"),
+            message: NSLocalizedString("Discord link failed", comment: "Message for Discord link error"),
             preferredStyle: .alert
         )
         alert.addAction(UIAlertAction(title: "OK", style: .default) { _ in
-            // アラートが閉じられた後に通知を送信
+            // Send notification after alert is dismissed
             NotificationCenter.default.post(name: .discordLinkFailure, object: nil)
         })
 

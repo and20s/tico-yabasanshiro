@@ -1,0 +1,78 @@
+================================================================================
+App Store Release Notes - YabaSanshiro v1.20.28
+================================================================================
+
+[en] English
+--------------------------------------------------------------------------------
+Promotional Text:
+Experience the ultimate Sega Saturn emulator! Even more games now run correctly, plus in-app news.
+
+What's New:
+- Tenchi o Kurau II: fixed a progress blocker in Stage 3
+- Jikkyou Oshaberi Parodius: fixed a boot failure
+- Lupin the 3rd Chronicles, Dungeons & Dragons Collection: fixed boot failures
+- Die Hard Trilogy, Cyberia: fixed boot failures
+- Bubble Bobble feat. Rainbow Islands: fixed a boot failure
+- Can Can Bunny Premiere 2: fixed a boot failure
+- NHL Powerplay '96, Madden NFL 97, Independence Day: fixed boot failures
+- Added in-app news announcements
+
+[es] Spanish
+--------------------------------------------------------------------------------
+Promotional Text:
+¡Experimenta el mejor emulador de Sega Saturn! Aún más juegos funcionan correctamente, y avisos en la app.
+
+What's New:
+- Tenchi o Kurau II: corregido un bloqueo en la fase 3
+- Jikkyou Oshaberi Parodius: corregido el arranque
+- Lupin the 3rd Chronicles, Dungeons & Dragons Collection: corregido el arranque
+- Die Hard Trilogy, Cyberia: corregido el arranque
+- Bubble Bobble feat. Rainbow Islands: corregido el arranque
+- Can Can Bunny Premiere 2: corregido el arranque
+- NHL Powerplay '96, Madden NFL 97, Independence Day: corregido el arranque
+- Se añadieron avisos dentro de la app
+
+[pt-BR] Portuguese (Brazil)
+--------------------------------------------------------------------------------
+Promotional Text:
+Experimente o melhor emulador de Sega Saturn! Ainda mais jogos funcionam corretamente, e avisos no app.
+
+What's New:
+- Tenchi o Kurau II: corrigido um bloqueio na fase 3
+- Jikkyou Oshaberi Parodius: corrigido o início
+- Lupin the 3rd Chronicles, Dungeons & Dragons Collection: corrigido o início
+- Die Hard Trilogy, Cyberia: corrigido o início
+- Bubble Bobble feat. Rainbow Islands: corrigido o início
+- Can Can Bunny Premiere 2: corrigido o início
+- NHL Powerplay '96, Madden NFL 97, Independence Day: corrigido o início
+- Adicionados avisos dentro do app
+
+[zh-Hans] Chinese (Simplified)
+--------------------------------------------------------------------------------
+Promotional Text:
+体验终极世嘉土星模拟器！更多游戏可正常运行，并新增应用内消息公告。
+
+What's New:
+- 吞食天地II 赤壁之战: 修复第三关无法继续的问题
+- 实况欢乐大魔界: 修复无法启动的问题
+- 鲁邦三世 编年史、龙与地下城 合集: 修复无法启动的问题
+- 虎胆龙威 三部曲、Cyberia: 修复无法启动的问题
+- 泡泡龙 feat. 彩虹岛: 修复无法启动的问题
+- Can Can Bunny Premiere 2: 修复无法启动的问题
+- NHL Powerplay '96、Madden NFL 97、Independence Day: 修复无法启动的问题
+- 新增应用内消息公告
+
+[ja] Japanese
+--------------------------------------------------------------------------------
+Promotional Text:
+究極のセガサターンエミュレーター！さらに多くのゲームが正しく動作するようになり、アプリ内お知らせも追加。
+
+What's New:
+- 天地を喰らうII 赤壁の戦い: STAGE3 で先に進めなくなる問題を修正
+- 実況おしゃべりパロディウス: 起動しない問題を修正
+- ルパン三世 クロニクル、ダンジョンズ&ドラゴンズ コレクション: 起動しない問題を修正
+- ダイハード トリロジー、サイベリア: 起動しない問題を修正
+- バブルボブル feat. レインボーアイランド: 起動しない問題を修正
+- カンカンバニー プルミエール2: 起動しない問題を修正
+- NHLパワープレイ'96、マッデンNFL 97、インディペンデンス・デイ: 起動しない問題を修正
+- アプリ内でお知らせを表示する機能を追加

@@ -1,4 +1,4 @@
-/*
+﻿/*
         Copyright 2019 devMiyax(smiyaxdev@gmail.com)
 
 This file is part of YabaSanshiro.
@@ -541,6 +541,16 @@ const char prg_rbg_getcolor_4bpp[] =
     "        }\n"
     "      }\n"
     "      cramindex |= spriority << 16; \n"
+// SFPRMD mode 1 (per-character special priority): the priority LSB is the
+// character's special function bit, constant across the character's texels.
+// Bake it into cramindex bits 16-18 (-> texture B channel) exactly like the
+// CPU decoder (VIDVulkan setSpecialPriority). The new-composite GBuffer
+// companion reads per-pixel priority from B whenever SFPRMD != 0; without
+// this bake every RBG0 pixel reported priority 0 and the compositor dropped
+// the whole layer (Sega Rally: black rotation plane).
+"    } else if (specialprimode == 1) { \n"
+"      uint spriority = (priority & 0xEu) | (specialfunction_in & 0x1u); \n"
+"      cramindex |= spriority << 16; \n"
     "    }\n"
     "    switch (specialcolormode)\n"
     "    {\n"
@@ -581,6 +591,11 @@ const char prg_rbg_getcolor_8bpp[] =
     "        }\n"
     "      }\n"
     "      cramindex |= spriority << 16; \n"
+// SFPRMD mode 1: bake the per-character priority into B, mirroring the CPU
+// decoder (setSpecialPriority). See the 4bpp variant above for details.
+"    } else if (specialprimode == 1) { \n"
+"      uint spriority = (priority & 0xEu) | (specialfunction_in & 0x1u); \n"
+"      cramindex |= spriority << 16; \n"
     "    }\n"
     "    switch (specialcolormode)\n"
     "    {\n"
@@ -1335,6 +1350,15 @@ public:
     resize(width, height);
     if (ssbo_vram_ != 0)
       return; // always inisialized!
+
+    // SSBOまわり
+    GLint maxSSBOBindings = 0;                    // 全ステージ合計のバインドポイント
+    GLint maxCompSSBO     = 0;                    // Computeステージで使えるSSBO数
+    glGetIntegerv(GL_MAX_SHADER_STORAGE_BUFFER_BINDINGS, &maxSSBOBindings);
+    glGetIntegerv(GL_MAX_COMPUTE_SHADER_STORAGE_BLOCKS,   &maxCompSSBO);
+
+    yprintf("maxSSBOBindings=%d, maxCompSSBO=%d",maxSSBOBindings,maxCompSSBO);
+
 
     glGenBuffers(1, &ssbo_vram_);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_vram_);
@@ -3009,23 +3033,22 @@ public:
     ErrorHandle("glBindBufferBase 1 (vram)");
     CS_DEBUG_LOG("[CS] VRAM buffer bound OK");
 
-    if (rbg->info.specialcolormode == 3 || paraA.k_mem_type != 0 || paraB.k_mem_type != 0)
-    {
+    //if (rbg->info.specialcolormode == 3 || paraA.k_mem_type != 0 || paraB.k_mem_type != 0) {
       // Safety check: Vdp2ColorRam can be NULL during mode transitions
       if (Vdp2ColorRam == nullptr) {
-        return; // Cannot render with special color mode without CRAM
+        return;
       }
-      if (ssbo_cram_ == 0)
-      {
+      if (ssbo_cram_ == 0) {
         glGenBuffers(1, &ssbo_cram_);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_cram_);
         glBufferData(GL_SHADER_STORAGE_BUFFER, 0x1000, NULL, GL_DYNAMIC_DRAW);
+        //yprintf("glGenBuffers %d",ssbo_cram_);
       }
       glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_cram_);
       glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, 0x1000, (void *)Vdp2ColorRam);
       glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, ssbo_cram_);
-      ErrorHandle("glBindBufferBase 5");
-    }
+      //yprintf("glBindBufferBase %d",ssbo_cram_);
+    //}
 
     CS_DEBUG_LOG("[CS] Binding paraA/paraB buffer");
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_paraA_);

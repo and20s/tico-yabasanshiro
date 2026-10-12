@@ -68,12 +68,14 @@ signals:
    void killProgressDialog();
 
 protected:
+   void done(int r);
 
 protected slots:
    void on_pbGotoAddress_clicked();
    void on_pbSaveSelected_clicked();
    void on_pbSaveTab_clicked();
    void on_pbSearchMemory_clicked();
+   void on_pbCopy_clicked();
    void searchResult(bool found, bool cancel, u32 address);
 };
 

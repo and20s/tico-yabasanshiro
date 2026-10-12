@@ -211,7 +211,10 @@ if (YAB_USE_SSF)
   if (ZLIB_FOUND)
     add_definitions(-DYAB_WANT_SSF=1)
     include_directories(${ZLIB_INCLUDE_DIRS})
+    # On Windows, zlib is provided by external_zlib/libchdr, so don't link system zlib
+    if (NOT WIN32)
     set(YABAUSE_LIBRARIES ${YABAUSE_LIBRARIES} ${ZLIB_LIBRARIES})
+    endif()
 
     set(yabause_SOURCES ${yabause_SOURCES} 
       aosdk/corlett.c
@@ -366,13 +369,13 @@ if (YAB_WANT_OPENGL AND (YAB_RGB STREQUAL ""))
 		)
 		add_definitions(-DYAB_PORT_OSD)
 		
-		include(FindGLUT)
-		if (GLUT_FOUND)
-			message (WARNING "Deprecated Glut found. Support will be removed in the future. ")
-			include_directories(${GLUT_INCLUDE_DIR})
-			add_definitions(-DHAVE_LIBGLUT=1)
-			set(YABAUSE_LIBRARIES ${YABAUSE_LIBRARIES} ${GLUT_LIBRARIES})
-		endif()
+		#include(FindGLUT)
+		#if (GLUT_FOUND)
+		#	message (WARNING "Deprecated Glut found. Support will be removed in the future. ")
+		#	include_directories(${GLUT_INCLUDE_DIR})
+		#	add_definitions(-DHAVE_LIBGLUT=1)
+		#	set(YABAUSE_LIBRARIES ${YABAUSE_LIBRARIES} ${GLUT_LIBRARIES})
+		#endif()
 
 		# glXGetProcAddress
 		#set(CMAKE_REQUIRED_LIBRARIES ${CMAKE_REQUIRED_LIBRARIES} ${OPENGL_LIBRARIES})
@@ -728,27 +731,17 @@ option(YAB_WANT_MUSASHI "Enable musashi 68k" ON)
 #of the native one, making it impossible to generate the core
 if (YAB_WANT_MUSASHI)
     set (MUSASHI_GENERATED_SOURCES 
-        ${CMAKE_CURRENT_BINARY_DIR}/musashi/m68kopac.c
-        ${CMAKE_CURRENT_BINARY_DIR}/musashi/m68kopdm.c
-        ${CMAKE_CURRENT_BINARY_DIR}/musashi/m68kopnz.c
-        ${CMAKE_CURRENT_BINARY_DIR}/musashi/m68kops.c)
+        ${CMAKE_CURRENT_SOURCE_DIR}/musashi/m68kopac.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/musashi/m68kopdm.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/musashi/m68kopnz.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/musashi/m68kops.c)
 
     set (MUSASHI_GENERATED_HEADERS
-        ${CMAKE_CURRENT_BINARY_DIR}/musashi/m68kops.h)
-
-    include(ExternalProject)
-    ExternalProject_Add(m68kmake
-        DOWNLOAD_COMMAND ""
-        SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/musashi
-        CMAKE_GENERATOR "${CMAKE_GENERATOR}"
-        INSTALL_COMMAND ""
-        BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/musashi
-    )
+        ${CMAKE_CURRENT_SOURCE_DIR}/musashi/m68kops.h)
 
     add_definitions(-DHAVE_MUSASHI=1)
 
 	include_directories(
-      ${CMAKE_CURRENT_BINARY_DIR}/musashi
       ${CMAKE_CURRENT_SOURCE_DIR}/musashi
     )
 
@@ -766,8 +759,6 @@ if (YAB_WANT_MUSASHI)
       ${MUSASHI_GENERATED_HEADERS}
       m68kmusashi.h
       )
-
-    set_property(SOURCE ${MUSASHI_GENERATED_SOURCES} ${MUSASHI_GENERATED_HEADERS} PROPERTY GENERATED ON)
 endif(YAB_WANT_MUSASHI)
 
 
@@ -779,6 +770,14 @@ option(YAB_WANT_VULKAN "Vulkan Graphics Core" OFF)
 if (YAB_WANT_VULKAN)
 
 add_definitions(-DHAVE_VULKAN=1)
+
+# Experimental: enable async (threaded) VDP rendering for the standalone
+# Vulkan port, matching the Android build's model. Scoped to YAB_PORTS=vulkan
+# so other YAB_WANT_VULKAN consumers are unaffected.
+string(COMPARE EQUAL ${YAB_PORTS} "vulkan" yab_port_is_vulkan)
+if (yab_port_is_vulkan)
+  add_definitions(-DYAB_ASYNC_RENDERING)
+endif()
 
 include(vulkan/external_glm.cmake)
 
@@ -816,6 +815,11 @@ set( VULKAN_SOURCES
  vulkan/VertexManager.h
  vulkan/Vdp1Renderer.h
  vulkan/Vdp1Renderer.cpp
+ vulkan/Vdp1ComputeMath.h
+ vulkan/Vdp1ComputeMath.cpp
+ vulkan/Vdp1ComputeCommands.h
+ vulkan/Vdp1ComputeRasterizer.h
+ vulkan/Vdp1ComputeRasterizer.cpp
  vulkan/WindowRenderer.h
  vulkan/WindowRenderer.cpp
  vulkan/VdpPipeline.h
@@ -825,6 +829,14 @@ set( VULKAN_SOURCES
  vulkan/RBGGeneratorVulkan.h
  vulkan/VulkanScene.cpp
  vulkan/VulkanScene.h
+ vulkan/VulkanGpuProfiler.cpp
+ vulkan/VulkanGpuProfiler.h
+ vulkan/Vdp2GBuffer.cpp
+ vulkan/Vdp2GBuffer.h
+ vulkan/Vdp2Compositor.cpp
+ vulkan/Vdp2Compositor.h
+ vulkan/Vdp2SpriteDecoder.cpp
+ vulkan/Vdp2SpriteDecoder.h
  vulkan/VIDVulkan.cpp
  vulkan/VIDVulkan.h
  vulkan/VIDVulkanCInterface.h
@@ -1061,10 +1073,12 @@ include( ${CMAKE_SOURCE_DIR}/CMake/Packages/external_zlib.cmake )
 add_dependencies(yabause libchdr)
 #add_dependencies(yabause zlib)
 
+
 if(WIN32)
 	# Windows need to build zlib
 	add_dependencies(yabause zlib)
 	include_directories(${zlib_INCLUDE_DIR})
+	set(YABAUSE_LIBRARIES ${YABAUSE_LIBRARIES} ${zlib_STATIC_LIBRARIES})
 endif()
 
 if (YAB_WANT_C68K)
@@ -1072,7 +1086,6 @@ if (YAB_WANT_C68K)
 endif(YAB_WANT_C68K)
 
 if (YAB_WANT_MUSASHI)
-	add_dependencies(yabause m68kmake)
 endif(YAB_WANT_MUSASHI)
 
 macro(yab_port_start)

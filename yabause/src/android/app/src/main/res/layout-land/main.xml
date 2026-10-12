@@ -42,6 +42,15 @@
                     android:layout_height="match_parent"
                     android:layout_gravity="top|center_horizontal" />
 
+                <org.uoyabause.android.AxisDebugView
+                    android:id="@+id/axisDebugView"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="top|start"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginStart="8dp"
+                    android:visibility="gone" />
+
                 <org.uoyabause.android.YabausePad
                     android:id="@+id/yabause_pad"
                     android:layout_width="fill_parent"

@@ -1011,6 +1011,7 @@ void frameSkipAndLimit()
     }
 
     // just wait for next vsync
+    int waited = 0;
     targetTime -= 1000;
     if ((onesecondticks + diffticks) < targetTime)
     {
@@ -1031,10 +1032,21 @@ void frameSkipAndLimit()
       }
       // u64 realstime = YabauseGetTicks() - xcurticks;
       // yprintf("req time %d,real time %d diff = %d", (u32)sleeptime, (u32)realstime, realstime-sleeptime);
+      waited = 1;
     }
 
     onesecondticks += diffticks;
     lastticks = curticks;
+
+    // Anti-drift: pin onesecondticks to the busy-wait exit target so that
+    // per-frame poll-granularity overshoot does not accumulate. targetTime
+    // here is already (origTargetTime - 1000), matching the wait loop's
+    // exit condition. Pinning to the pre--1000 value would over-inflate
+    // onesecondticks by ~1000 ticks/frame and shrink the real second to
+    // ~940ms on Android (tickfreq=1MHz), producing ~64fps.
+    if (waited) {
+      onesecondticks = (s64)targetTime;
+    }
   }
 }
 
@@ -1118,8 +1130,22 @@ void Vdp2VBlankIN(void)
 
 //////////////////////////////////////////////////////////////////////////////
 
-void Vdp2HBlankIN(void)
-{
+// Assert the TVSTAT HBLANK status bit ahead of the HBlankIN interrupt point.
+// On real hardware horizontal blanking lasts about a quarter of a line, while
+// the HBLANK-IN interrupt is raised once at its start. If the status bit were
+// only raised together with the interrupt it would stay set for a single
+// deciline (~17 SH2 cycles), and the CPU spends that whole window entering the
+// HBLANK interrupt handler. A game that busy-polls TVSTAT for an HBLANK edge
+// would then never observe the bit and would hang forever. Raising the status
+// bit a few decilines early gives such polling loops a realistic window while
+// leaving the interrupt timing and the per-line register latch untouched.
+void Vdp2HBlankStatusIN(void) {
+  if (yabsys.LineCount < yabsys.VBlankLineCount) {
+    Vdp2Regs->TVSTAT |= 0x0004;
+  }
+}
+
+void Vdp2HBlankIN(void) {
 
   if (yabsys.LineCount < yabsys.VBlankLineCount)
   {
@@ -1375,7 +1401,7 @@ static void FPSDisplay(void)
   static u64 fpsticks;
   // yprintf("%02d/%02d FPS skip=%d vdp1=%02d", fps, yabsys.IsPal ? 50 : 60, show_skipped_frame, show_vdp1_frame);
 #if 1 // FPS only
-  OSDPushMessage(OSDMSG_FPS, 1, "%02d/%02d FPS skip=%d vdp1=%02d", fps, yabsys.IsPal ? 50 : 60, show_skipped_frame, show_vdp1_frame);
+   OSDPushMessage(OSDMSG_FPS, 1, "%02d/%02d FPS skip=%d vdp1=%02d, %d", fps, yabsys.IsPal ? 50 : 60, show_skipped_frame, show_vdp1_frame, yabsys.frame_count);
   // printf("\033[%d;%dH %02d/%02d FPS skip=%d vdp1=%02d \n", 0, 0, fps, yabsys.IsPal ? 50 : 60, show_skipped_frame, show_vdp1_frame);
 #else
   FILE *fp = NULL;
@@ -1663,8 +1689,32 @@ void vdp2VBlankOUT(void)
     VIDCore->Vdp1DrawEnd();
     if (!yabsys.UseAsyncRendering)
     {
-      yabsys.wait_line_count += 45;
-      yabsys.wait_line_count %= yabsys.VBlankLineCount;
+    // Delay the draw-end interrupt by an estimate of the real VDP1 draw
+    // time instead of a flat 45 lines. On real hardware a frame-change
+    // plot starts at the frame swap (VBlank-IN), which is a whole VBlank
+    // period before this VBlank-OUT anchored code runs, so a draw that
+    // fits into VBlank has already finished by the time we get here.
+    {
+      const int est = Vdp1EstimateDrawLines(Vdp1Ram, Vdp1Regs);
+      int lines = est - (yabsys.MaxLineCount - yabsys.VBlankLineCount);
+      if (lines <= 0 && Vdp1External.status == VDP1_STATUS_IDLE) {
+        // Draw already complete. Raising the interrupt right here would
+        // put it immediately after the VBlank-OUT interrupt, so mainline
+        // code gets no window at all between VBlank-OUT and draw-end -
+        // Jikkyou Oshaberi Parodius drives its main loop off exactly that
+        // window (draw-end -> VBlank-IN -> VBlank-OUT -> mainline) and
+        // never resumes. Schedule it at the phase hardware uses instead,
+        // just before the next VBlank-IN, which keeps it ahead of the
+        // mainline resume that Die Hard Trilogy depends on.
+        yabsys.wait_line_count =
+            (yabsys.VBlankLineCount + est) % yabsys.MaxLineCount;
+      }
+      else {
+        if (lines <= 0) lines = 1;
+        yabsys.wait_line_count += lines;
+        yabsys.wait_line_count %= yabsys.VBlankLineCount;
+      }
+    }
     }
   }
 
@@ -1695,21 +1745,41 @@ void vdp2VBlankOUT(void)
 #endif
   VdpUnLockVram();
 #if PROFILE_RENDERING
-  static FILE *framefp = NULL;
-  if (framefp == NULL)
-  {
+   {
+       // 1 Hz aggregation. Per-frame logging floods logcat / frame.csv on
+       // Adreno where each frame may emit several MB of profiler output.
+       // Accumulate frames + render time over yabsys.tickfreq (= 1 second
+       // in YabauseGetTicks units) and emit one summary line.
+       static s64  s_windowStart = 0;
+       static u32  s_frames      = 0;
+       static u64  s_renderAccum = 0;
+       static u32  s_renderMax   = 0;
+       s64 endTicks   = YabauseGetTicks();
+       u32 frameTime  = (u32)(endTicks - starttime);
+       if (s_windowStart == 0) s_windowStart = endTicks;
+       s_frames++;
+       s_renderAccum += frameTime;
+       if (frameTime > s_renderMax) s_renderMax = frameTime;
+       if ((u64)(endTicks - s_windowStart) >= yabsys.tickfreq) {
+           u32 avg = (u32)(s_renderAccum / s_frames);
 #if defined(ANDROID)
-    framefp = fopen("/mnt/sdcard/frame.csv", "w");
+           printf("YAB_PROFILE fps=%u frame=%d avgRender=%u maxRender=%u\n",
+                  s_frames, g_frame_count, avg, s_renderMax);
 #else
-    framefp = fopen("frame.csv", "w");
+           static FILE * framefp = NULL;
+           if (framefp == NULL) framefp = fopen("frame.csv", "w");
+           if (framefp != NULL) {
+               fprintf(framefp, "%d,%u,%u,%u\n",
+                       g_frame_count, s_frames, avg, s_renderMax);
+               fflush(framefp);
+           }
 #endif
-  }
-
-  if (framefp != NULL)
-  {
-    fprintf(framefp, "%d,%d\n", g_frame_count, (u32)(YabauseGetTicks() - starttime));
-    fflush(framefp);
-  }
+           s_windowStart = endTicks;
+           s_frames = 0;
+           s_renderAccum = 0;
+           s_renderMax = 0;
+       }
+   }
 #endif
 }
 
@@ -2292,7 +2362,12 @@ void FASTCALL Vdp2WriteWord(u32 addr, u16 val)
   {
   case 0x000:
     Vdp2Regs->TVMD = val;
-    yabsys.VBlankLineCount = 225 + (val & 0x30);
+         {
+           int vreso = (val >> 4) & 0x3;
+           // VRESO=3 is prohibited per hardware spec, treat as 256 lines
+           if (vreso == 3) vreso = 2;
+           yabsys.VBlankLineCount = 225 + (vreso << 4);
+         }
 
     switch (val & 0x07)
     {

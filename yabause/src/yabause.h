@@ -172,7 +172,12 @@ extern "C"
                 VDP_SETTING_RBG_USE_COMPUTESHADER,
                 VDP_SETTING_ROTATE_SCREEN,
                 VDP_SETTING_FRAMELIMIT_MODE,
-                VDP_SETTING_ASPECT_RATE_MODE
+  VDP_SETTING_ASPECT_RATE_MODE,
+  // issue #22 (T-007): runtime toggle between the legacy fixed-function
+  // VDP2 alpha-blend path (value 0, default) and the new per-pixel
+  // shader-composite path (value 1). The new path is a stub until the
+  // Vdp2Compositor (T-008) lands.
+  VDP_SETTING_VDP2_NEW_COMPOSITE
         } enSettings;
 
         int VideoSetSetting(int type, int value);

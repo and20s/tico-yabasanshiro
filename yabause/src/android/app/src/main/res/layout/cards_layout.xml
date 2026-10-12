@@ -58,6 +58,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_gravity="end|center_vertical"
+            android:gravity="center"
             android:text="Android Name"
             android:textAlignment="center"
             android:textAppearance="?android:attr/textAppearanceLarge"
@@ -86,7 +87,7 @@
             style="@style/Widget.Material3.Button.IconButton"
             android:layout_width="48dp"
             android:layout_height="48dp"
-            android:background="#00000000"
+            android:background="@color/transparent"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
             app:srcCompat="@drawable/ic_more_vert_black_24dp" />

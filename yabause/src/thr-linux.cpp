@@ -37,7 +37,7 @@ along with YabaSanshiro; if not, write to the Free Software
 Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 */
 
-#define _GNU_SOURCE
+//#define _GNU_SOURCE
 #include <sched.h>
 
 #include "core.h"
@@ -55,14 +55,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 #include <sys/stat.h>
 #include <sys/types.h>
 
-
-#if GCC_VERSION < 9
-#include <experimental/filesystem>
-namespace fs = std::experimental::filesystem;
-#else
 #include <filesystem>
 namespace fs = std::filesystem;
-#endif
 
 #ifdef ARCH_IS_MACOSX
 pid_t gettid(void)
@@ -315,7 +309,7 @@ void YabThreadFreeMutex( YabMutex * mtx ){
     }
 }
 
-pthread_mutex_t used_cpu_cores_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 int YabThreadGetFastestCpuIndex(){
 #if defined(IOS) || defined(__JETSON__)
   return 0;
@@ -329,7 +323,6 @@ int YabThreadGetFastestCpuIndex(){
 
   
     // Find Fastest CPU
-    pthread_mutex_lock(&used_cpu_cores_mutex);
     for ( int cpuindex = 0; cpuindex < cpu_count; cpuindex++){
         sprintf(fname, "/sys/devices/system/cpu/cpu%d/cpufreq/cpuinfo_max_freq", cpuindex);
         FILE * fp = fopen(fname, "r");
@@ -345,7 +338,6 @@ int YabThreadGetFastestCpuIndex(){
     }
 
     used_cpu_cores[max_cpu_index] = 1;
-    pthread_mutex_unlock(&used_cpu_cores_mutex);
     return max_cpu_index;
 #endif    
 }
@@ -398,7 +390,6 @@ int getCpuId() {
  #endif
   return 0;
 }
-
 
 int YabThreadGetCurrentThreadAffinityMask()
 {
@@ -455,7 +446,7 @@ int YabNanosleep(u64 ns) {
   return 0;
 }
 
+
 } // extern "C"
 
 //////////////////////////////////////////////////////////////////////////////
-

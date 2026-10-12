@@ -18,76 +18,88 @@
 */
 package org.uoyabause.android.cheat
 
-import android.app.AlertDialog
 import android.app.Dialog
 import android.content.Context
-import android.content.Intent
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.inputmethod.EditorInfo
-import android.widget.Button
-import android.widget.EditText
 import android.widget.TextView.OnEditorActionListener
+import androidx.core.os.bundleOf
 import androidx.fragment.app.DialogFragment
+import androidx.fragment.app.setFragmentResult
+import com.google.android.material.button.MaterialButton
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.textfield.TextInputEditText
 import org.devmiyax.yabasanshiro.R
 
 class LocalCheatEditDialog : DialogFragment() {
-    var mContent: View? = null
-    var target_: CheatItem? = null
+    var contentView: View? = null
+    var target: CheatItem? = null
+    private var requestKey: String = REQUEST_KEY_NEW
+
     fun setEditTarget(cheat: CheatItem?) {
-        target_ = cheat
+        target = cheat
+    }
+
+    fun setRequestKey(key: String) {
+        requestKey = key
     }
 
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
-        val builder = AlertDialog.Builder(requireActivity())
+        val builder = MaterialAlertDialogBuilder(requireActivity())
         val inflater =
             requireActivity().getSystemService(Context.LAYOUT_INFLATER_SERVICE) as LayoutInflater
-        mContent = inflater.inflate(R.layout.edit_cheat, null)
-        if (mContent == null) {
+        contentView = inflater.inflate(R.layout.edit_cheat, null)
+        if (contentView == null) {
             return builder.create()
         }
 
-        builder.setView(mContent)
-        val desc = mContent!!.findViewById<View>(R.id.editText_cheat_desc) as EditText
-        val code = mContent!!.findViewById<View>(R.id.editText_code) as EditText
-        if (target_ != null) {
-            desc.setText(target_!!.description)
-            code.setText(target_!!.cheat_code)
+        builder.setView(contentView)
+        val desc = contentView!!.findViewById<TextInputEditText>(R.id.editText_cheat_desc)
+        val code = contentView!!.findViewById<TextInputEditText>(R.id.editText_code)
+        if (target != null) {
+            desc.setText(target!!.description)
+            code.setText(target!!.cheat_code)
         }
 
         // Apply Button
-        val button_apply = mContent!!.findViewById<View>(R.id.button_cheat_edit_apply) as Button
-        button_apply.setOnClickListener {
-            val cheatDesc = mContent!!.findViewById<View>(R.id.editText_cheat_desc) as EditText
-            val cheatCode = mContent!!.findViewById<View>(R.id.editText_code) as EditText
-            val intent = Intent()
+        val buttonApply = contentView!!.findViewById<MaterialButton>(R.id.button_cheat_edit_apply)
+        buttonApply.setOnClickListener {
+            val cheatDesc = contentView!!.findViewById<TextInputEditText>(R.id.editText_cheat_desc)
+            val cheatCode = contentView!!.findViewById<TextInputEditText>(R.id.editText_code)
             val sdesc = cheatDesc.text.toString()
             val scode = cheatCode.text.toString()
-            intent.putExtra(DESC, sdesc)
-            intent.putExtra(CODE, scode)
-            if (target_ != null) {
-                intent.putExtra(KEY, target_!!.key)
+            val result =
+                bundleOf(
+                    RESULT_CODE to APPLY,
+                    DESC to sdesc,
+                    CODE to scode,
+                )
+            if (target != null) {
+                result.putString(KEY, target!!.key)
             }
-            targetFragment!!.onActivityResult(targetRequestCode, APPLY, intent)
+            setFragmentResult(requestKey, result)
             dialog!!.dismiss()
         }
-        val button_cancel = mContent!!.findViewById<View>(R.id.button_edit_cheat_cancel) as Button
-        button_cancel.setOnClickListener {
-            targetFragment!!.onActivityResult(targetRequestCode, CANCEL, null)
+        val buttonCancel = contentView!!.findViewById<MaterialButton>(R.id.button_edit_cheat_cancel)
+        buttonCancel.setOnClickListener {
+            setFragmentResult(requestKey, bundleOf(RESULT_CODE to CANCEL))
             dismiss()
         }
-        (mContent!!.findViewById<View>(R.id.editText_code) as EditText).setOnEditorActionListener(
-            OnEditorActionListener { _, actionId, _ -> // For ShieldTV
+        code.setOnEditorActionListener(
+            OnEditorActionListener { _, actionId, _ ->
+                // For ShieldTV
                 if (actionId == EditorInfo.IME_ACTION_NEXT) {
-                    val edit_view = mContent!!.findViewById<View>(R.id.editText_code) as EditText
-                    var currentstr: String? = edit_view.text.toString()
+                    val editView = contentView!!.findViewById<TextInputEditText>(R.id.editText_code)
+                    var currentstr: String? = editView.text.toString()
                     currentstr += System.lineSeparator()
-                    edit_view.setText(currentstr)
+                    editView.setText(currentstr)
                     return@OnEditorActionListener true
                 }
                 false
-            })
+            },
+        )
         return builder.create()
     }
 
@@ -97,5 +109,8 @@ class LocalCheatEditDialog : DialogFragment() {
         const val KEY = "key"
         const val DESC = "desc"
         const val CODE = "code"
+        const val RESULT_CODE = "result_code"
+        const val REQUEST_KEY_NEW = "local_cheat_new"
+        const val REQUEST_KEY_EDIT = "local_cheat_edit"
     }
 }

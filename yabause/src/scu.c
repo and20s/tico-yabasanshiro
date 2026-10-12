@@ -42,6 +42,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 */
 
 #include <stdlib.h>
+#include <string.h>
 #include "scu.h"
 #include "debug.h"
 #include "memory.h"
@@ -80,6 +81,52 @@ FILE *slogp = NULL;
 
 // #define LOG
 #define OLD_DMA 0
+
+// SCU DMA timing model (cycle-cost accuracy Phase 3).
+//
+// Legacy: the per-deciline DMA budget is timing<<4 time units (1 unit =
+// one 16-bit transfer for B-bus destinations), i.e. ~8 words per SH2
+// cycle -- a 16 KB WorkRAM->VDP1 transfer completes in ~1K cycles.
+// The reference (mednafen) transfers ~1 word/cycle (measured 8776 cycles
+// for the same 16 KB on the timing disc, tools/sh2timing S19) and HALTS
+// BOTH CPUs while a DMA involving the C-bus (WorkRAM) runs
+// (ss/scu.inc RecalcDMAHalt -> SetExtHalt).
+//
+// New model (opt-in via YABA_SCU_DMA_MODEL=new, default OFF: combined
+// with the DMAC model it slows Bio Hazard's CD streaming consumer past
+// a threshold where the game stops draining and locks up waiting on
+// SCU DMA state; needs its own investigation before default ON):
+//  - budget becomes timing<<1 (~1 word/cycle)
+//  - a C-bus DMA start charges the initiating CPU the whole transfer
+//    duration (halt approximation; the other CPU is not stalled)
+static int scu_dma_model_new_v = -1;
+
+static int scu_dma_model_new(void)
+{
+  if (scu_dma_model_new_v < 0)
+  {
+    const char *e = getenv("YABA_SCU_DMA_MODEL");
+    scu_dma_model_new_v = (e != NULL && strcmp(e, "new") == 0);
+  }
+  return scu_dma_model_new_v;
+}
+
+static void scu_dma_cbus_block(const scudmainfo_struct *dma)
+{
+  u32 ra, wa, words;
+  if (!scu_dma_model_new() || CurrentSH2 == NULL || SH2Core == NULL)
+    return;
+  ra = dma->ReadAddress & 0x1FFFFFFF;
+  wa = dma->WriteAddress & 0x1FFFFFFF;
+  if (!((ra >= 0x06000000 && ra < 0x06100000) ||
+        (ra >= 0x00200000 && ra < 0x00300000) ||
+        (wa >= 0x06000000 && wa < 0x06100000) ||
+        (wa >= 0x00200000 && wa < 0x00300000)))
+    return;
+  // ~1.07 cycles per 16-bit word measured on the timing disc
+  words = dma->TransferNumber >> 1;
+  SH2Core->AddCycle(CurrentSH2, words + (words >> 4));
+}
 //////////////////////////////////////////////////////////////////////////////
 
 int ScuInit(void)
@@ -1156,6 +1203,8 @@ void step_dsp_dma(scudspregs_struct *sc)
    if (sc->dsp_dma_wait > 0)
       return;
 
+  if (sc->ProgControlPort.part.T0 == 0) return;
+  
    if (((sc->dsp_dma_instruction >> 10) & 0x1F) == 0x00)
    {
       dsp_dma01(ScuDsp, sc->dsp_dma_instruction);
@@ -1587,7 +1636,8 @@ void ScuExec(u32 timing)
       //}
    }
 #else
-   ScuDmaProc(ScuRegs, (int)timing << 4);
+  // legacy budget ~8 words/cycle; new model ~1 word/cycle (see top of file)
+  ScuDmaProc(ScuRegs, scu_dma_model_new() ? ((int)timing << 1) : ((int)timing << 4));
 #endif
 
    // is dsp executing?
@@ -1623,7 +1673,6 @@ void ScuExec(u32 timing)
          }
 
          instruction = ScuDsp->ProgramRam[ScuDsp->PC];
-         // LOG("scu: dsp %08X @ %08X", instruction, ScuDsp->PC);
          incFlg[0] = 0;
          incFlg[1] = 0;
          incFlg[2] = 0;
@@ -2080,7 +2129,6 @@ void ScuExec(u32 timing)
                }
 
                ScuDsp->dsp_dma_size = Counter;
-               ScuDsp->dsp_dma_wait = 2; // DMA operation will be start when this count is zero
                ScuDsp->WA0M = ScuDsp->WA0;
                ScuDsp->RA0M = ScuDsp->RA0;
 
@@ -2229,6 +2277,11 @@ void ScuExec(u32 timing)
 
                break;
             case 0x0F: // End Commands
+                     // Finish pending DSP DMA before stopping
+                     if (ScuDsp->dsp_dma_wait > 0) {
+                       ScuDsp->dsp_dma_wait = 0;
+                       step_dsp_dma(ScuDsp);
+                     }
                ScuDsp->ProgControlPort.part.EX = 0;
 
                if (instruction & 0x8000000)
@@ -3205,6 +3258,7 @@ void FASTCALL ScuWriteLong(u32 addr, u32 val)
          ScuDMA(&ScuRegs->dma0);
 #else
          ScuSetAddValue(&ScuRegs->dma0);
+            scu_dma_cbus_block(&ScuRegs->dma0);
          ScuDmaProc(ScuRegs, 128);
 #endif
       }
@@ -3243,6 +3297,7 @@ void FASTCALL ScuWriteLong(u32 addr, u32 val)
          ScuDMA(&ScuRegs->dma1);
 #else
          ScuSetAddValue(&ScuRegs->dma1);
+            scu_dma_cbus_block(&ScuRegs->dma1);
          ScuDmaProc(ScuRegs, 128);
 #endif
       }
@@ -3282,6 +3337,7 @@ void FASTCALL ScuWriteLong(u32 addr, u32 val)
          ScuDMA(&ScuRegs->dma2);
 #else
          ScuSetAddValue(&ScuRegs->dma2);
+            scu_dma_cbus_block(&ScuRegs->dma2);
          ScuDmaProc(ScuRegs, 128);
 #endif
       }
@@ -3423,6 +3479,8 @@ void ScuRemoveInterruptByCPU(u32 pre, u32 after)
    }
 }
 
+static int scu_abus_queue_enabled(void);
+
 void ScuTestInterruptMask()
 {
    unsigned int i, i2;
@@ -3433,10 +3491,11 @@ void ScuTestInterruptMask()
       u32 mask = ScuRegs->interrupts[ScuRegs->NumberOfInterrupts - 1 - i].mask;
 
       // A-BUS?
-      if (mask & 0x8000)
-      {
-         if (ScuRegs->AIACK)
-         {
+     if (mask & 0x8000){
+       // new latch model: consume AIACK only when actually delivering
+       // (legacy burned it even while IMS still masked the interrupt)
+       if (ScuRegs->AIACK &&
+           (!scu_abus_queue_enabled() || !(ScuRegs->IMS & 0x8000))){
             ScuRegs->AIACK = 0;
             if (!(ScuRegs->IMS & 0x8000))
             {
@@ -3569,14 +3628,47 @@ void ScuRemoveInterrupt(u8 vector, u8 level, u32 statusbit)
 
 //////////////////////////////////////////////////////////////////////////////
 
-static INLINE void SendInterrupt(u8 vector, u8 level, u16 mask, u32 statusbit)
-{
+// A-bus (CD block) interrupt latching: the real SCU latches an A-bus
+// interrupt request in IST and delivers it when the game unmasks IMS or
+// re-arms AIACK; the legacy code dropped the request when it arrived
+// inside a masked window (and consumed AIACK even without delivering).
+// A lost HIRQ edge deadlocks CD drivers that issue a command with the
+// CD interrupt masked and unmask afterwards (Bio Hazard title freeze
+// with accurate command timings). YABA_SCU_ABUS_QUEUE=old reverts.
+static int scu_abus_queue_v = -1;
 
-   // A-BUS?
-   if ((mask & 0x8000))
-   {
-      if (ScuRegs->AIACK)
-      {
+static int scu_abus_queue_enabled(void)
+{
+  if (scu_abus_queue_v < 0)
+  {
+    const char *e = getenv("YABA_SCU_ABUS_QUEUE");
+    scu_abus_queue_v = !(e != NULL && strcmp(e, "old") == 0);
+  }
+  return scu_abus_queue_v;
+}
+
+static INLINE void SendInterrupt(u8 vector, u8 level, u16 mask, u32 statusbit) {
+
+  // A-BUS?
+  if ((mask & 0x8000) ){
+    if (scu_abus_queue_enabled()) {
+      if (ScuRegs->AIACK && !(ScuRegs->IMS & 0x8000)) {
+        ScuRegs->AIACK = 0;
+        SH2SendInterrupt(MSH2, vector, level);
+      }
+      else {
+        // latch: ScuTestInterruptMask() delivers on IMS/AIACK writes
+        if (getenv("YABA_DMAC_DEBUG")) {
+          printf("[ABUS] latched v=%02X AIACK=%d IMS=%08X f=%u\n", vector,
+                 (int)ScuRegs->AIACK, (unsigned)ScuRegs->IMS,
+                 (unsigned)yabsys.frame_count);
+          fflush(stdout);
+        }
+        ScuQueueInterrupt(vector, level, mask, statusbit);
+        ScuRegs->IST |= statusbit;
+      }
+    }
+    else if (ScuRegs->AIACK){
          ScuRegs->AIACK = 0;
          if (!(ScuRegs->IMS & 0x8000))
          {
@@ -3598,6 +3690,7 @@ static INLINE void SendInterrupt(u8 vector, u8 level, u16 mask, u32 statusbit)
          if (vector == 0x40)
             SH2SendInterrupt(SSH2, 0x43, 2);
       }
+    ScuRegs->IST &= ~statusbit;
    }
    else
    {

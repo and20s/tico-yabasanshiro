@@ -33,6 +33,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 
 #include "Platform.h"
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -64,9 +65,15 @@ public:
     return _surface_format.format;
   }
   VkSurfaceTransformFlagBitsKHR GetPreTransFlag() { return _surface_capabilities.currentTransform; }
-#if defined(__ANDROID__)  
+#if defined(__ANDROID__)
   void setNativeWindow(void* nativeWindow) {
-    window = (ANativeWindow*)nativeWindow;
+    ANativeWindow* newWindow = (ANativeWindow*)nativeWindow;
+    if (window != newWindow) {
+      // SurfaceView swap: bypass resize()'s equal-size early-return
+      // so the swapchain is rebuilt against the new VkSurfaceKHR.
+      _native_window_changed = true;
+    }
+    window = newWindow;
   }
   ANativeWindow* window;
 #elif defined(__RETORO_ARENA__) 
@@ -76,7 +83,7 @@ public:
   SDL_Window* window;
 #else
   void setNativeWindow(void* nativeWindow) {}
-  //GLFWwindow *getWindowHandle() { return _glfw_window; }
+  GLFWwindow *getWindowHandle() { return _glfw_window; }
 #endif
 
   void resize(int width, int height);
@@ -85,6 +92,17 @@ public:
   void setPresentpMode(VkPresentModeKHR presentMode) {
     this->presentMode = presentMode;
   }
+
+  // Hook for injecting ImGui or other overlays right before present.
+  // Called as hook(cb, swapchainImageIndex, framebuffer).
+  // The caller (Window) handles begin/end + submit on the command buffer.
+  using PrePresentHook = std::function<void(VkCommandBuffer cb,
+                                            uint32_t swapchainImageIndex,
+                                            VkFramebuffer framebuffer)>;
+  void setPrePresentHook(PrePresentHook h) { _prePresentHook = std::move(h); }
+  bool hasPrePresentHook() const { return static_cast<bool>(_prePresentHook); }
+
+  uint32_t getSwapchainImageCount() const { return _swapchain_image_count; }
 
 private:
   void _InitOSWindow();
@@ -113,6 +131,12 @@ private:
   void _InitSynchronizations();
   void _DeInitSynchronizations();
 
+  // (Re)allocate the pre-present hook CBs to match _swapchain_image_count.
+  // Called from both _InitSynchronizations() init and cleanupSwapChain()
+  // swapchain recreate. The pool must not be VK_NULL_HANDLE - the caller
+  // is expected to have allocated it already.
+  void _AllocPrePresentCommandBuffers();
+
   Renderer* _renderer = nullptr;
 
   VkSurfaceKHR _surface = VK_NULL_HANDLE;
@@ -122,6 +146,12 @@ private:
 
   uint32_t _surface_size_x = 512;
   uint32_t _surface_size_y = 512;
+#if defined(__ANDROID__)
+  // Set by setNativeWindow() when the underlying ANativeWindow pointer
+  // changes (SurfaceView recreate). resize() must rebuild the swapchain
+  // even at equal dims to drop the stale VkSurfaceKHR.
+  bool _native_window_changed = false;
+#endif
   std::string _window_name;
   uint32_t _swapchain_image_count = 2;
   uint32_t _active_swapchain_image_id = UINT32_MAX;
@@ -146,7 +176,14 @@ private:
 
   VkPresentModeKHR presentMode = VK_PRESENT_MODE_FIFO_KHR;
 
-#if 0
+  PrePresentHook               _prePresentHook;
+  VkSemaphore                  _pre_present_finished_semaphore = VK_NULL_HANDLE;
+  VkCommandPool                _pre_present_cmd_pool = VK_NULL_HANDLE;
+  // size == _swapchain_image_count; one CB pre-allocated per image idx.
+  // vkAcquireNextImageKHR guarantees the previous use is complete, so a
+  // reset + re-record is safe.
+  std::vector<VkCommandBuffer> _pre_present_cmd_buffers;
+
 #if USE_FRAMEWORK_GLFW
   GLFWwindow* _glfw_window = nullptr;
 #elif VK_USE_PLATFORM_WIN32_KHR
@@ -159,7 +196,6 @@ private:
   xcb_screen_t* _xcb_screen = nullptr;
   xcb_window_t _xcb_window = 0;
   xcb_intern_atom_reply_t* _xcb_atom_window_reply = nullptr;
-#endif
 #endif
 
 };

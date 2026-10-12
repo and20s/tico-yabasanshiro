@@ -21,6 +21,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 #include "VIDVulkan.h"
 #include "VIDVulkanCInterface.h"
 #include "Window.h"
+#include <chrono>
 #include <fstream>
 #include <iostream>
 
@@ -30,9 +31,17 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 #include "VdpPipelineFactory.h"
 
 #include "Vdp1Renderer.h"
+#include "Vdp1ComputeRasterizer.h"
+#include "VulkanGpuProfiler.h"
 #include "WindowRenderer.h"
 
 #include "FramebufferRenderer.h"
+
+#include "Vdp2GBuffer.h"
+#include "Vdp2Compositor.h"
+#include "Vdp2SpriteDecoder.h"
+
+#include "Vdp2ColorCalcState.h"
 
 #include "RBGGeneratorVulkan.h"
 #include "Shared.h"
@@ -204,11 +213,17 @@ VIDVulkan::VIDVulkan() {
   pipleLineNBG3 = NULL;
   pipleLineRBG0 = NULL;
   frameCount = 0;
+  commandProfileSamples.fill(VulkanGpuProfiler::InvalidSample);
   pipleLineFactory = NULL;
   layers.reserve(10);
 }
 
-VIDVulkan::~VIDVulkan() {}
+VIDVulkan::~VIDVulkan() {
+  if (vdp1Compute) {
+    delete vdp1Compute;
+    vdp1Compute = nullptr;
+  }
+}
 
 #include <set>
 using std::set;
@@ -240,6 +255,7 @@ int VIDVulkan::init(void) {
   pipleLineNBG3 = NULL;
   pipleLineRBG0 = NULL;
   frameCount = 0;
+  commandProfileSamples.fill(VulkanGpuProfiler::InvalidSample);
   pipleLineFactory = NULL;
   layers.reserve(10);
   frameLimitMode = 0;
@@ -333,6 +349,27 @@ void VIDVulkan::deInit(void) {
     backPiepline = nullptr;
   }
 
+  // issue #22 T-008: tear down the new VDP2 composite resources.
+  for (auto &kv : _gbufferLayerPipelines) {
+    if (kv.second != nullptr) {
+      delete kv.second;
+    }
+  }
+  _gbufferLayerPipelines.clear();
+  _gbufferPipelineRenderPass = VK_NULL_HANDLE;
+  if (vdp2Compositor != nullptr) {
+    delete vdp2Compositor;
+    vdp2Compositor = nullptr;
+  }
+  if (vdp2SpriteDecoder != nullptr) {
+    delete vdp2SpriteDecoder;
+    vdp2SpriteDecoder = nullptr;
+  }
+  if (vdp2GBuffer != nullptr) {
+    delete vdp2GBuffer;
+    vdp2GBuffer = nullptr;
+  }
+
   deleteOfscreenPath();
   freeSubRenderTarget();
 
@@ -408,17 +445,35 @@ int VIDVulkan::isFullscreen(void) { return isFullScreen; }
 int VIDVulkan::Vdp1Reset(void) { return 0; }
 
 void VIDVulkan::Vdp1DrawStart(void) {
-  if (rebuildPipelines == 1) {
-    pipleLineFactory->dicardAllPielines();
+  const bool rebuilding = (rebuildPipelines == 1);
+  if (rebuilding) {
     vdp1->setPolygonMode(polygonMode);
     Vdp1GroundShading::polygonMode = polygonMode;
     rebuildPipelines = 0;
   }
 
   vdp1->drawStart();
+
+  // drawStart() recycles last frame's pipelines into the factory's
+  // garbage cache. After a polygon mode switch they would be handed
+  // back with mismatched topology / shader stages (PATCH_LIST + tess
+  // vs TRIANGLE_LIST), causing an Adreno GPU hang on the next draw.
+  if (rebuilding) {
+    pipleLineFactory->dicardAllPielines();
+  }
 }
 
 void VIDVulkan::Vdp1DrawEnd(void) { vdp1->drawEnd(); }
+
+VkImage VIDVulkan::getVdp1OffscreenImage() const {
+  if (!vdp1) return VK_NULL_HANDLE;
+  return vdp1->getCurrentOffscreenImage();
+}
+
+VkImageView VIDVulkan::getVdp1OffscreenImageView() const {
+  if (!vdp1) return VK_NULL_HANDLE;
+  return vdp1->getCurrentOffscreenImageView();
+}
 
 void VIDVulkan::Vdp1NormalSpriteDraw(u8 *ram, Vdp1 *regs, u8 *back_framebuffer) {
   vdp1->NormalSpriteDraw(ram, regs, back_framebuffer);
@@ -458,6 +513,20 @@ void VIDVulkan::Vdp2DrawStart(void) {
     vkDeviceWaitIdle(_renderer->GetVulkanDevice());
     this->_renderer->getWindow()->cleanupSwapChain();
     rebuildSwapChain = 0;
+
+    // issue #22 (T-010 / RT-002): cleanupSwapChain() recreates the window
+    // render pass. In RES_NATIVE the new VDP2 compositor draws into that pass,
+    // so its cached pipeline (built for the now-destroyed pass) must be
+    // dropped. composite() also re-checks the render-pass handle, but a driver
+    // may recycle the handle value; invalidate explicitly so the next
+    // composite() rebuilds against the fresh pass. Guarded by a null check so
+    // the legacy (new-composite OFF) path is untouched.
+    if (vdp2Compositor != nullptr) {
+      vdp2Compositor->invalidatePipeline();
+    }
+    if (vdp2SpriteDecoder != nullptr) {
+      vdp2SpriteDecoder->invalidatePipeline();
+    }
   }
 
 
@@ -475,18 +544,93 @@ void VIDVulkan::Vdp2DrawStart(void) {
     vdp1->changeResolution(renderWidth, renderHeight);
     vdp1->setVdp2Resolution(vdp2width, vdp2height);
     windowRenderer->changeResolution(vdp2width, vdp2height, _renderer->getWindow()->GetPreTransFlag(), rotate_screen );
-    generateOffscreenPath(vdp2width, vdp2height);
+    {
+      int fbScale = getComputeFbScale();
+      generateOffscreenPath(vdp2width * fbScale, vdp2height * fbScale);
+    }
     if (resolutionMode == RES_NATIVE) {
       freeSubRenderTarget();
     } else {
       freeSubRenderTarget();
       generateSubRenderTarget(renderWidth, renderHeight);
     }
+    // FB has been recreated; in compute mode rebuild Vdp1ComputeRasterizer with the new size.
+    if (polygonMode == COMPUTE_RASTERIZER) {
+      // VDP1 persistent state (localCoord / systemClip / userClip) is
+      // designed to survive across frames via resetState(), but deleting
+      // the rasterizer here would also drop that state, and the first
+      // frame after resize (with no LocalCoord cmd) would shift every
+      // vertex back to the screen top-left origin. Snapshot before delete
+      // and restore after new() to match the graphics path behavior
+      // (where localX/localY are persistent member vars).
+      glm::ivec2 keepLocalCoord(0, 0);
+      glm::ivec2 keepSystemClip(2047, 2047);
+      glm::ivec4 keepUserClip(0, 0, 2047, 2047);
+      if (vdp1Compute) {
+        const auto& st = vdp1Compute->getState();
+        keepLocalCoord = st.localCoord;
+        keepSystemClip = st.systemClip;
+        keepUserClip   = st.userClip;
+        delete vdp1Compute;
+        vdp1Compute = nullptr;
+      }
+      int fbW = vdp1->getFramebufferWidth();
+      int fbH = vdp1->getFramebufferHeight();
+      vdp1Compute = new Vdp1ComputeRasterizer(this, fbW, fbH);
+      vdp1Compute->setLocalCoord(keepLocalCoord.x, keepLocalCoord.y);
+      vdp1Compute->setSystemClip(keepSystemClip.x, keepSystemClip.y);
+      vdp1Compute->setUserClip(keepUserClip.x, keepUserClip.y,
+                               keepUserClip.z, keepUserClip.w);
+    } else if (vdp1Compute) {
+      // Mode just toggled OFF compute. The vkQueueWaitIdle above
+      // guarantees the GPU is idle, so this is the safe point to free
+      // the rasterizer (the JNI-side path no longer does it -- see the
+      // comment in SetSettingValue's VDP_SETTING_POLYGON_MODE handler).
+      delete vdp1Compute;
+      vdp1Compute = nullptr;
+    }
     rebuildFrameBuffer = 0;
+
+    // issue #22 (T-010 / RT-001 / RT-002): a resolution / framebuffer rebuild
+    // recreated the offscreen / subRenderTarget render pass (the pass the new
+    // VDP2 compositor draws into when RES != NATIVE) and changed renderWidth /
+    // renderHeight. Do the GBuffer reallocation HERE, where the queue is
+    // already idle (the vkQueueWaitIdle above), so freeing the old GBuffer
+    // images cannot race in-flight composite reads -- instead of relying on
+    // the lazy resize() that runs mid-frame in Vdp2DrawEnd(). Also drop the
+    // compositor / sprite-decoder cached pipelines so they rebuild against the
+    // fresh render pass (handle recycling defeats the in-composite handle
+    // compare). All guarded by null checks so the legacy path (new composite
+    // never used) is untouched -- no allocation, no side effect when OFF.
+    if (vdp2GBuffer != nullptr) {
+      vdp2GBuffer->resize(renderWidth, renderHeight);
+    }
+    if (vdp2Compositor != nullptr) {
+      vdp2Compositor->invalidatePipeline();
+    }
+    if (vdp2SpriteDecoder != nullptr) {
+      vdp2SpriteDecoder->invalidatePipeline();
+    }
     // vkQueueWaitIdle(_renderer->GetVulkanQueue());
     // vkDeviceWaitIdle(_renderer->GetVulkanDevice());
   }
   // vkQueueWaitIdle(_renderer->GetVulkanQueue());
+  // Host-vs-transfer WAR fix (Adreno COMPUTE_RASTERIZER pattern noise).
+  // Every per-frame VDP2 staging buffer (texture atlas, vertex/index blocks,
+  // CRAM / line / back / window) is HOST_VISIBLE and single-buffered: the CPU
+  // overwrites it in place each frame, and the previous frame's upload command
+  // buffer reads it via vkCmdCopyBuffer*/vkCmdCopyBufferToImage. The in-buffer
+  // pipeline barrier and the composite->upload semaphore only order GPU work;
+  // neither can order this frame's CPU memcpy (which starts right after the
+  // resets below) against the previous frame's still-in-flight transfer reads.
+  // On desktop the transfer drains fast enough to hide it, but on Adreno the
+  // copy is still pending when the next frame's memcpy lands -> garbage staging
+  // -> corrupted VDP2 patterns. updateTextureImage already serializes transfers
+  // 1-deep via copyFence, but it waits AFTER the memcpy; wait it HERE, before
+  // any staging write, so the relocation adds no new stall (the wait existed)
+  // yet closes the host race. Far lighter than the full in-flight cap, which
+  // waits the entire composite+present.
+  tm->waitForCopy();
   tm->reset();
   tm->resetCache();
   vm->reset();
@@ -505,10 +649,14 @@ void VIDVulkan::renderExternal(const std::function<void(
   int ci = getCurrentCommandIndex();
   int fi = _renderer->getWindow()->BeginRender();
 
-//  if (frameCount >= MAX_COMMANDBUFFER_COUNT) {
-//    ErrorCheck(vkWaitForFences(device, 1, &commandFence[ci], VK_TRUE, UINT64_MAX));
-//    ErrorCheck(vkResetFences(device, 1, &commandFence[ci]));
-//  }
+  const auto fenceWaitStart = std::chrono::high_resolution_clock::now();
+  ErrorCheck(vkWaitForFences(device, 1, &commandFence[ci], VK_TRUE, UINT64_MAX));
+  const auto fenceWaitEnd = std::chrono::high_resolution_clock::now();
+  gpuProfiler().recordFenceWait(VulkanGpuProfiler::Zone::ExternalDraw,
+      std::chrono::duration<double, std::milli>(fenceWaitEnd - fenceWaitStart).count());
+  gpuProfiler().collect(commandProfileSamples[ci]);
+  commandProfileSamples[ci] = VulkanGpuProfiler::InvalidSample;
+  ErrorCheck(vkResetFences(device, 1, &commandFence[ci]));
 
   VkCommandBufferBeginInfo command_buffer_begin_info{};
   command_buffer_begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -537,8 +685,10 @@ void VIDVulkan::renderExternal(const std::function<void(
 
   VkCommandBuffer commandBuffer = _command_buffers[ci];
 
-
+  vkResetCommandBuffer(commandBuffer, 0);
   vkBeginCommandBuffer(commandBuffer, &command_buffer_begin_info);
+  const uint32_t profileSample =
+      gpuProfiler().beginSample(commandBuffer, VulkanGpuProfiler::Zone::ExternalDraw, frameCount);
 
   VkImageMemoryBarrier imageBarrier = {};
   imageBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -603,6 +753,7 @@ void VIDVulkan::renderExternal(const std::function<void(
     commandBuffer);
    
   vkCmdEndRenderPass(commandBuffer);
+  gpuProfiler().endSample(commandBuffer, profileSample);
   vkEndCommandBuffer(commandBuffer);
   VkPipelineStageFlags graphicsWaitStageMasks[] = { VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
   VkSemaphore graphicsWaitSemaphores[] = { rbgGenerator->getCompleteSemaphore() };
@@ -629,14 +780,847 @@ void VIDVulkan::renderExternal(const std::function<void(
   submit_info.pCommandBuffers = &commandBuffer;
   submit_info.signalSemaphoreCount = 1;
   submit_info.pSignalSemaphores = &_render_complete_semaphore;
-  ErrorCheck(vkQueueSubmit(_renderer->GetVulkanQueue(), 1, &submit_info, VK_NULL_HANDLE));
+  ErrorCheck(vkQueueSubmit(_renderer->GetVulkanQueue(), 1, &submit_info, commandFence[ci]));
+  commandProfileSamples[ci] = profileSample;
   YuiSwapBuffers();
   frameCount++;
 }
 
 
+// issue #22 (T-007): new per-pixel VDP2 composite path. Stub for now.
+//
+// Scope of T-007 is the runtime toggle and the branch scaffold only; the
+// real per-pixel gather / priority sort / color-calc composite is built in
+// T-008 (Vdp2Compositor) and wired in here. Until then this is a deliberate
+// no-op: the legacy priority loop in Vdp2DrawEnd() is skipped, so only the
+// shared passes that bracket the branch run (back color drawn before the
+// branch, shadow pass after it). That is crash-free and keeps the toggle
+// observable (the screen visibly changes when the new path is selected).
+//
+// T-008/T-010 hand-off: replace the body below with the Vdp2Compositor
+// dispatch. Inputs the compositor will need are already produced earlier in
+// Vdp2DrawEnd() (per-layer pipelines in `layers`, CRAM/line/back samplers,
+// the bound render pass) -- this method is called mid-render-pass on the
+// same command buffer.
+void VIDVulkan::compositeVdp2New(VkCommandBuffer commandBuffer, Vdp2 *regs,
+                                 VkRenderPass targetRenderPass,
+                                 const VkViewport &viewport, const VkRect2D &scissor) {
+  // Lazily create the G-buffer + compositor on first use. The G-buffer is
+  // sized to the current render resolution (full HD when HD scaling is on);
+  // resize() is a no-op when the size is unchanged.
+  if (vdp2GBuffer == nullptr) {
+    vdp2GBuffer = new Vdp2GBuffer(this);
+  }
+  if (vdp2Compositor == nullptr) {
+    vdp2Compositor = new Vdp2Compositor(this);
+    vdp2Compositor->setup();
+  }
+  vdp2GBuffer->resize(renderWidth, renderHeight);
+
+  // T-008 status: the compositor skeleton + basic-pattern selection are wired
+  // here and read every G-buffer slice per-pixel (color + packed attr), pick
+  // the highest-priority opaque layer, else the back screen -- matching the
+  // host-port reference vdp2_color_oracle.h compositeBasic() (UT-005/B01/B02/
+  // E03/E04).
+  //
+  // Population path (T-008 core): the per-layer draws into each G-buffer slice
+  // are emitted by renderLayersToGBuffer(), which is called from Vdp2DrawEnd()
+  // BEFORE the main (offscreen / window) render pass is begun (the G-buffer
+  // uses its own render pass). By the time this compositor runs, the slices
+  // hold each enabled background layer (NBG0-3 / RBG0) decoded with its
+  // priority / ccEnable / ccRatio packed into attr. The sprite slice (kSprite)
+  // is still left at the transparent clear value (VDP1 sprite decode is T-009).
+  //
+  // Back screen color. The legacy setClearColor() path that fed _clear_r/g/b
+  // from BKTAU/BKTAL is #if 0'd out (Vdp2DrawScreens), so _clear_* stays black
+  // and the compositor drew #000000 instead of the real back color (issue #22:
+  // a game whose only opaque layer is priority 0 -- which the priority loop, in
+  // every renderer incl. vidsoft/titan, treats as not displayed -- shows the
+  // back screen, so a black back screen looked like "no background"). Read the
+  // back color straight from VRAM here, mirroring updateBackColor(): RAW RGB
+  // only -- the BKCOEN color offset is applied separately by the compositor via
+  // u_backColorOffset (backColorOffsetRGB below), so adding info.cor here would
+  // double it. Per-line back screen (BKCLMD, BKTAU bit 15): the per-line colors
+  // are packed into row 4 of the lineColor texture by updatePerLineColorCalc()
+  // and the compositor samples that row when backPerLine is set (Space Harrier
+  // horizon gradient); the single color read here is then only the line-0
+  // fallback the shader never uses.
+  u32 bkAddr;
+  if (regs->VRSIZE & 0x8000)
+    bkAddr = (((regs->BKTAU & 0x7) << 16) | regs->BKTAL) * 2;
+  else
+    bkAddr = (((regs->BKTAU & 0x3) << 16) | regs->BKTAL) * 2;
+  int bkDot = T1ReadWord(Vdp2Ram, bkAddr);
+  uint32_t backRGB =
+      (static_cast<uint32_t>((bkDot & 0x1F) << 3) << 16) |
+      (static_cast<uint32_t>(((bkDot & 0x3E0) >> 5) << 3) << 8) |
+      (static_cast<uint32_t>(((bkDot & 0x7C00) >> 10) << 3));
+  int backPerLine = (regs->BKTAU & 0x8000) ? 1 : 0;
+
+  // T-012 normal color calc: read the global CCMD (ratio/add) and CCRTMD (ratio
+  // source) from the VDP2 registers so the compositor blends top<->second the
+  // same way vidsoft's titan does. Per-layer ccEnable / ccRatio are already in
+  // the G-buffer attr (populated by renderLayersToGBuffer via readVdp2ColorCalc-
+  // State).
+  vdp2cc::State cc = readVdp2ColorCalcState(regs);
+  int colorCalcMode = (cc.mode == vdp2cc::CalcMode::Add) ? 1 : 0;
+  int ratioFromSecond = (cc.ratioSource == vdp2cc::RatioSource::Second) ? 1 : 0;
+
+  // T-014 extended color calc: EXCCEN (CCCTL bit 10) is ignored when BOKEN
+  // (gradation, bit 15) is set, per the VDP2 manual (p12_14).
+  int exccEnable =
+      (cc.extendedEnable && (regs->CCCTL & 0x8000) == 0) ? 1 : 0;
+
+  // Hi-res / exclusive monitor modes (HRESO bits 1-2 of TVMD) disable extended
+  // color calc and, in CRAM mode 1/2, enable the SW reference MIXIT_SPECIAL_HIRES_CRAM12
+  // (suppress a palette-format second image at blend time). Mirrors the SW reference's
+  // `if (!(HRes & 0x6)) { ...EXCC... } else if (CRAM_Mode) HIRES_CRAM12`.
+  const bool hiRes = ((regs->TVMD & 0x7) & 0x6) != 0;
+  if (hiRes) {
+    exccEnable = 0;
+  }
+
+  // Color gradation / blur (BOKEN, CCCTL bit 15): active in non-hi-res CRAM mode 0.
+  // Like hi-res it precludes extended color calc (reference special-operand select).
+  const bool gradEnable = !hiRes && (regs->CCCTL & 0x8000) != 0 &&
+                          ((regs->RAMCTL >> 12) & 0x3) == 0;
+  if (gradEnable) {
+    exccEnable = 0;
+  }
+
+  // T-015 LNCL insertion: the line color is inserted into the extended chain
+  // (manual section 12.12 figure 12.3) when extended color calc is on, the line
+  // color screen is enabled (LNCLEN != 0), and the line color color-calc enable
+  // bit (LCCCEN = CCCTL bit 5, 0x20) is set. The per-line line color comes from
+  // the lineColor texture (line color table in row 0), already updated each
+  // frame by updateLineColor(). When inactive the table-12.2 branch stays at
+  // second+third (the T-014 behaviour).
+  int lineColorInserted =
+      (exccEnable && regs->LNCLEN != 0 && (regs->CCCTL & 0x20) != 0) ? 1 : 0;
+
+  // T-015 normal-path LNCL line color screen. When EXCCEN is off the line color
+  // screen still participates: titan/vidsoft (canonical) blends the top opaque
+  // layer with the per-row line color whenever LNCLEN selects that layer
+  // (vidsoft.c:1651 sets info.linescreen from LNCLEN alone, no LCCCEN gate). The
+  // compositor needs to know, per G-buffer SLICE, whether that layer has the
+  // line color inserted -- so map the LNCLEN enable bits (enBG id order) to the
+  // vdp2cc slice order. lineColorAlpha is consumed only by the CCRTMD=second
+  // (Bottom) blend and must use the SAME inverted encoding as the per-layer
+  // ratios (fore_ratio = raw_register ^ 0x1F, hardware-verified: mednafen
+  // ss/vdp2_render.cpp T_MixIt XORs the ratio of WHICHEVER pixel CCRTMD
+  // selects). vidsoft.c:1516 stores the line color ratio RAW ((CCRLB&0x1F)<<1),
+  // which inverts the blend -- CCRLB=6 gave the top layer 6/32 instead of 26/32
+  // and darkened the whole screen (True Pinball title, ~2.5x too dark).
+  int lineScreenMask = 0;
+  if (regs->LNCLEN & 0x01) lineScreenMask |= (1 << vdp2cc::kNBG0);
+  if (regs->LNCLEN & 0x02) lineScreenMask |= (1 << vdp2cc::kNBG1);
+  if (regs->LNCLEN & 0x04) lineScreenMask |= (1 << vdp2cc::kNBG2);
+  if (regs->LNCLEN & 0x08) lineScreenMask |= (1 << vdp2cc::kNBG3);
+  if (regs->LNCLEN & 0x10) lineScreenMask |= (1 << vdp2cc::kRBG0);
+  if (regs->LNCLEN & 0x20) lineScreenMask |= (1 << vdp2cc::kSprite);
+  int lineColorAlpha = ((~regs->CCRLB) & 0x1F) << 1;
+
+  // Color offset (Sega VDP2 manual ch.13): the offset is added to the TOP image
+  // AFTER color calc, gated by the TOP layer's CLOFEN bit (CLOFSL picks A/B). The
+  // new path keeps the G-buffer slices offset-free (renderLayersToGBuffer passes
+  // 0) and applies the offset here, per top slice, so it is a post-composite
+  // top-image operation -- matching the manual and fixing per-line layers (whose
+  // draw-time offset is zeroed). Precompute each slice's signed RGB offset via
+  // readVdp2ColorOffset (0 when that layer's CLOFEN bit is clear). Slice order is
+  // the vdp2cc LayerId order; CLOFEN bit per enBG: N0=0x1 N1=0x2 N2=0x4 N3=0x8
+  // R0=0x10 BK=0x20 SP=0x40.
+  vdp2draw_struct coInfo;
+  int layerColorOffsetRGB[6 * 3] = {0};
+  auto fillSliceOffset = [&](int slice, int mask) {
+    // Per-line color-calc layers carry their color offset per line (already baked
+    // into the slice from the line table by the per-line companion), and the
+    // legacy path zeroes their register offset (info->cor = 0). Applying the
+    // global COxR register offset on top of such a slice double-counts it and, for
+    // a game that leaves a large register offset while the per-line table is
+    // neutral (Albert Odyssey NBG0, ColorOffB +255), whites the layer out. Skip
+    // the register offset for per-line slices to match the legacy result.
+    if (slice >= 0 && slice < 6 && _gbSlicePerLine[slice]) {
+      layerColorOffsetRGB[slice * 3 + 0] = 0;
+      layerColorOffsetRGB[slice * 3 + 1] = 0;
+      layerColorOffsetRGB[slice * 3 + 2] = 0;
+      return;
+    }
+    readVdp2ColorOffset(regs, &coInfo, mask);
+    layerColorOffsetRGB[slice * 3 + 0] = coInfo.cor;
+    layerColorOffsetRGB[slice * 3 + 1] = coInfo.cog;
+    layerColorOffsetRGB[slice * 3 + 2] = coInfo.cob;
+  };
+  fillSliceOffset(vdp2cc::kNBG0, 0x01);
+  fillSliceOffset(vdp2cc::kNBG1, 0x02);
+  fillSliceOffset(vdp2cc::kNBG2, 0x04);
+  fillSliceOffset(vdp2cc::kNBG3, 0x08);
+  fillSliceOffset(vdp2cc::kRBG0, 0x10);
+  fillSliceOffset(vdp2cc::kSprite, 0x40);
+  int backColorOffsetRGB[3] = {0};
+  readVdp2ColorOffset(regs, &coInfo, 0x20);  // BKCOEN
+  backColorOffsetRGB[0] = coInfo.cor;
+  backColorOffsetRGB[1] = coInfo.cog;
+  backColorOffsetRGB[2] = coInfo.cob;
+
+  // CRAM color mode (RAMCTL bits 13:12) and per-slice palette-format mask for
+  // the extended-cc ratio gate (Table 12.2). Palette format = Saturn color
+  // number 0/1/3 (4bpp / 8bpp / 16bpp-CRAM); direct RGB = 2/4 (RGB555 / RGB888).
+  // Slice order is the vdp2cc LayerId order (kNBG3=0..kSprite=5). The color
+  // number fields mirror Vdp2Snapshot decodeLayers (CHCTLA/CHCTLB).
+  int cramMode = (regs->RAMCTL >> 12) & 0x3;
+  // Color number -> palette vs direct-RGB classification. Saturn color numbers:
+  // 0 = 16 color, 1 = 256 color, 2 = 2048 color (all palette/CRAM-indexed),
+  // 3 = 32768 color (RGB 5:5:5), 4 = 16.7M color (RGB). The SW reference uses
+  // PIX_ISRGB = (colornum >= 3) (ss/vdp2_render.cpp), so palette is cn <= 2 and
+  // direct RGB is cn >= 3. The previous test (cn == 0 || 1 || 3) misclassified
+  // cn 2 (2048-color palette) as RGB and cn 3 (32768-color RGB) as palette,
+  // which flipped the Table 12.2 extended-cc ratio for those layers and folded
+  // the third image (2:2:0) where a palette second/third should force 4:0:0
+  // (issue #22, Lunar extended color calc regression).
+  auto isPaletteCN = [](int cn) { return cn <= 2; };
+  int paletteFormatMask = 0;
+  if (isPaletteCN((regs->CHCTLA >> 4) & 0x07)) paletteFormatMask |= (1 << vdp2cc::kNBG0);
+  if (isPaletteCN((regs->CHCTLA >> 12) & 0x03)) paletteFormatMask |= (1 << vdp2cc::kNBG1);
+  if (isPaletteCN((regs->CHCTLB >> 0) & 0x03)) paletteFormatMask |= (1 << vdp2cc::kNBG2);
+  if (isPaletteCN((regs->CHCTLB >> 5) & 0x03)) paletteFormatMask |= (1 << vdp2cc::kNBG3);
+  if (isPaletteCN((regs->CHCTLB >> 12) & 0x07)) paletteFormatMask |= (1 << vdp2cc::kRBG0);
+  // Sprite (kSprite): VDP1 sprite pixels are direct RGB unless palette-coded; the
+  // extended chain rarely picks the sprite as the second image, so leave it RGB.
+
+  int hiresCram12 = (hiRes && cramMode != 0) ? 1 : 0;
+
+  // Gradation blur-source slice from CCCTL bits 14:12 (reference blurremap):
+  // 0=Sprite 1=RBG0 2=NBG0 4=NBG1 5=NBG2 6=NBG3 (3/7 unused).
+  int gradSlice = -1;
+  if (gradEnable) {
+    switch ((regs->CCCTL >> 12) & 0x7) {
+      case 0: gradSlice = vdp2cc::kSprite; break;
+      case 1: gradSlice = vdp2cc::kRBG0; break;
+      case 2: gradSlice = vdp2cc::kNBG0; break;
+      case 4: gradSlice = vdp2cc::kNBG1; break;
+      case 5: gradSlice = vdp2cc::kNBG2; break;
+      case 6: gradSlice = vdp2cc::kNBG3; break;
+      default: gradSlice = -1; break;
+    }
+  }
+
+  // issue #22 landscape fix: the compositor draws a fullscreen triangle in fixed
+  // NDC, so it must apply the same net pre-rotation the legacy priority loop
+  // applies via pre_rotate_mat (Vdp2DrawEnd) -- otherwise the new composite path
+  // renders 90 deg sideways whenever the Android swapchain pre-transform is
+  // non-identity (landscape). The angle is always a multiple of 90 deg, so pass
+  // exact cos/sin instead of trig. Composition matches pre_rotate_mat: start from
+  // rotate_screen (-90), then add the swapchain pre-transform angle.
+  int pretransformFlag = _renderer->getWindow()->GetPreTransFlag();
+  int rotSteps = 0;  // net CCW 90-degree steps (mod 4)
+  if (rotate_screen) rotSteps -= 1;  // glm rotate(-90), matching pre_rotate_mat
+  if (pretransformFlag & VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR) rotSteps += 1;
+  else if (pretransformFlag & VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR) rotSteps += 3;
+  else if (pretransformFlag & VK_SURFACE_TRANSFORM_ROTATE_180_BIT_KHR) rotSteps += 2;
+  rotSteps &= 3;
+  static const float kRotCos[4] = {1.0f, 0.0f, -1.0f, 0.0f};
+  static const float kRotSin[4] = {0.0f, 1.0f, 0.0f, -1.0f};
+
+  // issue #22 color calc window (Sega VDP2 manual ch.12). WCTLD>>8 is the global
+  // color-calc window control byte (same bit layout as a per-layer display
+  // window byte: bit1 W0 enable, bit0 W0 area, bit3 W1 enable, bit2 W1 area,
+  // bit7 AND/OR). When the pixel is outside the cc-window valid area the
+  // compositor skips color calc (vidsoft.c:1079 forces alpha 0x3F). Derived into
+  // winmask / winflag / winmode exactly like the per-layer display window in
+  // renderLayersToGBuffer; the W0/W1 spans already live in s_lineColor rows 2/3.
+  int ccWinMask = 0, ccWinFlag = 0, ccWinMode = -1;
+  {
+    u16 wd = regs->WCTLD >> 8;
+    int bwin0 = (wd >> 1) & 1, logwin0 = (wd >> 0) & 1;
+    int bwin1 = (wd >> 3) & 1, logwin1 = (wd >> 2) & 1;
+    int lmode = (wd >> 7) & 1;
+    int bw1 = bwin1 << 1;
+    int lw1 = logwin1 << 1;
+    int winmask = (bwin0 | bw1);
+    if (winmask != 0) {
+      int winflag = 0;
+      if (lmode == 0) {            // and
+        if (bwin0) winflag = logwin0;
+        if (bwin1) winflag |= lw1;
+      } else {                     // or
+        winflag = winmask;
+        if (bwin0) winflag &= ~logwin0;
+        if (bwin1) winflag &= ~lw1;
+      }
+      ccWinMask = winmask;
+      ccWinFlag = winflag;
+      ccWinMode = lmode;
+    }
+  }
+
+  // issue #22 mosaic (MZCTL): the block SIZE is global (MZSZH bits 8-11, MZSZV
+  // bits 12-15); only the per-layer enable (bits 0-4) differs. The slices are
+  // rendered un-mosaic'd into the G-buffer; the compositor snaps each enabled
+  // slice's sample to the block top-left. Map the MZCTL enable bits to
+  // compositor slice indices (NBG0..NBG3 reversed, RBG0 identity).
+  int mosaicX = ((regs->MZCTL >> 8) & 0xF) + 1;
+  int mosaicY = ((regs->MZCTL >> 12) & 0xF) + 1;
+  int mosaicMask = 0;
+  if (regs->MZCTL & 0x1)  mosaicMask |= (1 << vdp2cc::kNBG0);
+  if (regs->MZCTL & 0x2)  mosaicMask |= (1 << vdp2cc::kNBG1);
+  if (regs->MZCTL & 0x4)  mosaicMask |= (1 << vdp2cc::kNBG2);
+  if (regs->MZCTL & 0x8)  mosaicMask |= (1 << vdp2cc::kNBG3);
+  if (regs->MZCTL & 0x10) mosaicMask |= (1 << vdp2cc::kRBG0);
+  if (mosaicX <= 1 && mosaicY <= 1) mosaicMask = 0;  // no actual mosaic
+
+  vdp2Compositor->composite(commandBuffer, vdp2GBuffer, targetRenderPass,
+                            viewport, scissor, backRGB,
+                            colorCalcMode, ratioFromSecond,
+                            exccEnable, lineColorInserted,
+                            lineColor.imageView, lineColor.sampler,
+                            vdp2height, lineScreenMask, lineColorAlpha,
+                            cramMode, paletteFormatMask, hiresCram12,
+                            (gradEnable && gradSlice >= 0) ? 1 : 0,
+                            gradSlice, vdp2width,
+                            layerColorOffsetRGB, backColorOffsetRGB,
+                            _vdp2DebugViewSlice,
+                            ccWinMask, ccWinFlag, ccWinMode,
+                            mosaicX, mosaicY, mosaicMask,
+                            kRotCos[rotSteps], kRotSin[rotSteps],
+                            backPerLine);
+}
+
+// issue #22 (T-008 population path): return a gbufferOutput pipeline that is a
+// companion to `src` (same prgid / winflg / winflag) but built against the
+// Vdp2GBuffer render pass. The companions are cached in _gbufferLayerPipelines
+// keyed by (prgid << 8 | winflg). When the G-buffer render pass changes (a
+// resolution change reallocates it) every companion is discarded and rebuilt
+// against the new pass.
+VdpPipeline *VIDVulkan::getGBufferLayerPipeline(VdpPipeline *src) {
+  if (src == nullptr) {
+    return nullptr;
+  }
+  return getGBufferLayerPipelineAs(src, src->prgid);
+}
+
+VdpPipeline *VIDVulkan::getGBufferLayerPipelineAs(VdpPipeline *src,
+                                                  YglPipelineId prgid) {
+  if (src == nullptr || vdp2GBuffer == nullptr) {
+    return nullptr;
+  }
+  VkRenderPass gbPass = vdp2GBuffer->getRenderPass();
+  if (gbPass == VK_NULL_HANDLE) {
+    return nullptr;
+  }
+
+  // Drop the whole cache if it was built for a different (now stale) pass.
+  if (_gbufferPipelineRenderPass != gbPass) {
+    for (auto &kv : _gbufferLayerPipelines) {
+      if (kv.second != nullptr) {
+        delete kv.second;
+      }
+    }
+    _gbufferLayerPipelines.clear();
+    _gbufferPipelineRenderPass = gbPass;
+  }
+
+  // Key by (prgid, winflg, layer id). Including the layer id gives each VDP2
+  // layer its OWN companion object even when two layers share a prgid, so a
+  // companion is drawn at most once per frame (one layer per slice). That keeps
+  // each draw within the pipeline's MAX_DS_SIZE round-robin descriptor sets and
+  // avoids one layer's UBO stomping another's before the GPU consumes it. The
+  // requested prgid (not src->prgid) is part of the key so a layer's normal and
+  // per-line companions stay distinct.
+  const uint8_t winflg = src->getWinFlg();
+  const uint32_t key = (static_cast<uint32_t>(prgid) << 16) |
+                       (static_cast<uint32_t>(winflg) << 8) |
+                       (static_cast<uint32_t>(src->id) & 0xFF);
+  auto it = _gbufferLayerPipelines.find(key);
+  if (it != _gbufferLayerPipelines.end()) {
+    return it->second;
+  }
+
+  // Build a new companion. The factory uses its `renderPass` field at creation
+  // time, so point it at the G-buffer pass for this call and restore it after.
+  pipleLineFactory->setRenderPath(gbPass);
+  VdpPipeline *gb =
+      pipleLineFactory->getPipeline(prgid, this, this->tm, this->vm,
+                                    winflg, /*gbufferOutput*/ true);
+  pipleLineFactory->setRenderPath(getRenderPass());
+  _gbufferLayerPipelines[key] = gb;
+  return gb;
+}
+
+// issue #22 (T-008 population path): render each enabled VDP2 background layer
+// into its dedicated G-buffer slice. Called from Vdp2DrawEnd() BEFORE the main
+// render pass begins. Only the normal (non-mosaic, non-per-line) draw path is
+// handled here in the MVP; mosaic / per-line layers are reported in the
+// hand-off and fall back to their transparent clear value (so they simply do
+// not appear via the new path yet -- explicit, not silent).
+void VIDVulkan::renderLayersToGBuffer(VkCommandBuffer commandBuffer, Vdp2 *regs) {
+  // issue #22 debug: reset the per-layer population trace for this frame.
+  gbufferTraceCount = 0;
+  // issue #22: reset the per-slice per-line flags (set below for slices drawn
+  // with the per-line companion; read by compositeVdp2New to skip the register
+  // color offset on those slices).
+  for (int s = 0; s < 6; s++) _gbSlicePerLine[s] = false;
+  if (vdp2GBuffer == nullptr || !vdp2GBuffer->isAllocated()) {
+    return;
+  }
+
+  // Per-layer color-calc state (priority comes from the layer bucket index;
+  // ccEnable / ccRatio come from the decoded register state, indexed by the
+  // compositor LayerIndex). MVP composite is basic-pattern, so cc is packed for
+  // forward use by T-012 / T-014 but does not change the basic selection.
+  vdp2cc::State cc = readVdp2ColorCalcState(regs);
+
+  const int gbW = vdp2GBuffer->getWidth();
+  const int gbH = vdp2GBuffer->getHeight();
+
+  // Same orthographic transform the legacy main loop uses, WITHOUT the
+  // pre-rotate / device-origin: the compositor samples the slices by a [0,1]
+  // UV and writes into the (rotation-aware) main pass, so the slices are stored
+  // in plain Saturn orientation at G-buffer resolution.
+  glm::mat4 model = glm::mat4(1.0f);
+  model = glm::translate(model, glm::vec3(0.0f, 0.0f, -1.0f));
+  glm::mat4 proj =
+      glm::ortho(0.0f, (float)vdp2width, 0.0f, (float)vdp2height, 10.0f, 0.0f);
+  glm::mat4 mvp = model * proj;
+
+  VkViewport vp{};
+  vp.x = 0.0f;
+  vp.y = 0.0f;
+  vp.width = (float)gbW;
+  vp.height = (float)gbH;
+  vp.minDepth = 0.0f;
+  vp.maxDepth = 1.0f;
+
+  VkRect2D sc{};
+  sc.offset.x = 0;
+  sc.offset.y = 0;
+  sc.extent.width = (uint32_t)gbW;
+  sc.extent.height = (uint32_t)gbH;
+
+  VkRect2D renderArea{};
+  renderArea.offset.x = 0;
+  renderArea.offset.y = 0;
+  renderArea.extent.width = (uint32_t)gbW;
+  renderArea.extent.height = (uint32_t)gbH;
+
+  // Clear values: color = transparent black, attr = transparent bit (bit 12)
+  // set so unwritten texels are skipped by the compositor. Surviving (opaque)
+  // fragments overwrite attr with the packed priority and clear the transparent
+  // bit (the layer shader writes only priority / ccEnable / ccRatio).
+  std::array<VkClearValue, 2> clearValues{};
+  clearValues[0].color.float32[0] = 0.0f;
+  clearValues[0].color.float32[1] = 0.0f;
+  clearValues[0].color.float32[2] = 0.0f;
+  clearValues[0].color.float32[3] = 0.0f;
+  clearValues[1].color.uint32[0] = (1u << 12);
+
+  // Map the legacy layer id (enBG: NBG0=0..NBG3=3, RBG0=4, SPRITE=5) to the
+  // compositor slice index (vdp2cc::LayerIndex: NBG3=0..NBG0=3, RBG0=4,
+  // Sprite=5). NBG0..3 are reversed; RBG0 / sprite are identity.
+  auto layerIdToSlice = [](int id) -> int {
+    switch (id) {
+      case NBG0: return vdp2cc::kNBG0;  // 3
+      case NBG1: return vdp2cc::kNBG1;  // 2
+      case NBG2: return vdp2cc::kNBG2;  // 1
+      case NBG3: return vdp2cc::kNBG3;  // 0
+      case RBG0: return vdp2cc::kRBG0;  // 4
+      default:   return -1;             // sprite / unknown: not handled here
+    }
+  };
+
+  // Render each background slice in turn. One render pass per slice (it clears
+  // that slice's color + attr, then draws every layer pipeline mapped to it).
+  // The sprite slice (kSprite) is handled separately below by the VDP1 sprite
+  // decode pass (T-009), so it is skipped in this background loop.
+  for (uint32_t slice = 0; slice < Vdp2GBuffer::kSliceCount; slice++) {
+    if (slice == (uint32_t)vdp2cc::kSprite) {
+      continue;
+    }
+
+    VkRenderPassBeginInfo rpBegin{};
+    rpBegin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    rpBegin.renderPass = vdp2GBuffer->getRenderPass();
+    rpBegin.framebuffer = vdp2GBuffer->getFramebuffer(slice);
+    rpBegin.renderArea = renderArea;
+    rpBegin.clearValueCount = (uint32_t)clearValues.size();
+    rpBegin.pClearValues = clearValues.data();
+    vkCmdBeginRenderPass(commandBuffer, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdSetViewport(commandBuffer, 0, 1, &vp);
+    vkCmdSetScissor(commandBuffer, 0, 1, &sc);
+
+    for (uint32_t i = 0; i < layers.size(); i++) {
+      for (uint32_t j = 0; j < layers[i].size(); j++) {
+        VdpPipeline *prg = layers[i][j];
+        // Only consider the layer that owns this slice (also skips sprite /
+        // unknown ids, which map to -1).
+        if (layerIdToSlice(prg->id) != (int)slice) {
+          continue;
+        }
+
+        // Per-line color calc (Vdp2GeneratePerLineColorCalcuration): the legacy
+        // renderer applies a per-line color OFFSET (and per-line ratio) to any
+        // layer whose lineTexture is set, via a 2-pass offscreen + PER_LINE_ALPHA
+        // blit (VIDVulkan.cpp:1668, gate `lineTexture != NULL &&
+        // specialPriority == 0`). That per-line offset is exactly the per-scanline
+        // darkening/gradient games like LUNA rely on. The new composite path bakes
+        // it into the slice in ONE pass with a per-line-aware CRAM companion
+        // (PG_VDP2_PER_LINE_GBUFFER_CRAM) instead of the plain companion, so the
+        // offset is not dropped (which made NBG0/NBG1 render too bright). Only
+        // CRAM-indexed layers are routed there (the common palette case); a
+        // genuine non-CRAM per-line layer still defers.
+        // No specialPriority gate here: legacy now routes specialPriority == 2
+        // per-line layers (Assault Suit Leynos 2 RBG0) through the per-line
+        // path too, and the companion must bake the same per-line offset or
+        // the compositor's blanket per-slice offset (line 3's value) darkens
+        // the whole layer.
+        const bool hasPerLine = (prg->lineTexture != VK_NULL_HANDLE);
+        const bool isCramDecode =
+            (prg->prgid == PG_VDP2_NOBLEND_CRAM ||
+             prg->prgid == PG_VDP2_NORMAL_CRAM ||
+             prg->prgid == PG_VDP2_NORMAL_CRAM_DSTALPHA ||
+             prg->prgid == PG_VDP2_ADDCOLOR_CRAM ||
+             prg->prgid == PG_VDP2_PER_LINE_ALPHA_CRAM);
+        // issue #108: direct-color (non-CRAM) per-line layers get their own
+        // companion (PG_VDP2_PER_LINE_GBUFFER). The plain-texture prgids are
+        // the ones genPolygon/genPolygonRbg0 emit for such layers
+        // (lineTexture forces PG_VDP2_NOBLEND). Skipping them instead made
+        // the whole layer disappear on every frame the per-line flag was
+        // set -- Sakura Taisen's opening movie (RBG0 32K bitmap, per-line
+        // BGON letterbox mask) flickered at half the frame rate.
+        const bool isDirectDecode =
+            (prg->prgid == PG_VDP2_NOBLEND ||
+             prg->prgid == PG_NORMAL);
+        const bool usePerLineCompanion = hasPerLine && (isCramDecode || isDirectDecode);
+        // Remaining per-line prgids (add-color, line-color-insert, ...) still
+        // have no companion shader.
+        const bool isPerLineDeferred = hasPerLine && !usePerLineCompanion;
+
+        const bool noVertex = (prg->vertexSize <= 0);
+        // issue #22 mosaic: mosaic layers are now rendered un-mosaic'd into the
+        // slice and snapped per-block by the compositor (MZCTL is global), so
+        // they are no longer skipped here.
+        const bool basicSkipped = noVertex || isPerLineDeferred;
+
+        // Line color insertion prgids bake the LNCL fold into the legacy
+        // shader, but the compositor applies the line color screen itself
+        // (T-015 normal path / extended chain), so the G-buffer slice must
+        // stay RAW layer color -- remap the companion to the plain decode or
+        // the fold is applied twice.
+        YglPipelineId companionId = prg->prgid;
+        switch (companionId) {
+        case PG_LINECOLOR_INSERT:
+        case PG_LINECOLOR_INSERT_DESTALPHA:
+          companionId = PG_VDP2_NOBLEND;
+          break;
+        case PG_LINECOLOR_INSERT_CRAM:
+        case PG_LINECOLOR_INSERT_DESTALPHA_CRAM:
+          companionId = PG_VDP2_NOBLEND_CRAM;
+          break;
+        default:
+          break;
+        }
+
+        // Only build the companion for layers that would actually draw (mirrors
+        // the original behaviour: skipped layers never created a companion).
+        VdpPipeline *gb = nullptr;
+        if (!basicSkipped) {
+          gb = usePerLineCompanion
+                   ? getGBufferLayerPipelineAs(prg, isCramDecode
+                                                        ? PG_VDP2_PER_LINE_GBUFFER_CRAM
+                                                        : PG_VDP2_PER_LINE_GBUFFER)
+                   : getGBufferLayerPipelineAs(prg, companionId);
+        }
+        const bool noCompanion = (!basicSkipped && gb == nullptr);
+        const bool drawn = !basicSkipped && !noCompanion;
+
+        // issue #22 debug: record this layer's decision for the F10 bug report.
+        if (gbufferTraceCount < 16) {
+          GBufferLayerTrace &t = gbufferTrace[gbufferTraceCount++];
+          t.id = prg->id;
+          t.priority = (int)i;
+          t.drawn = drawn;
+          t.skipNoVertex = noVertex;
+          t.skipMosaic = false;  // issue #22: mosaic rendered + compositor-snapped
+          t.skipPerLine = isPerLineDeferred;
+          t.skipNoCompanion = noCompanion;
+          t.hasLineTexture = (prg->lineTexture != VK_NULL_HANDLE);
+          t.usedPerLineCompanion = usePerLineCompanion && drawn;
+        }
+
+        if (!drawn) {
+          continue;
+        }
+
+        // issue #22: record that this slice was drawn with the per-line companion
+        // so compositeVdp2New skips the register color offset (the per-line table
+        // already carries the offset for this layer; legacy zeroes info->cor).
+        if (usePerLineCompanion) {
+          _gbSlicePerLine[slice] = true;
+        }
+
+        // The gbuffer companion shares the legacy pipeline's vertex data and
+        // sampler bindings; copy the samplers the layer set up earlier in
+        // Vdp2DrawEnd() and reuse the legacy vertex / index block.
+        gb->vectexBlock = prg->vectexBlock;
+        gb->vertexOffset = prg->vertexOffset;
+        gb->vertexSize = prg->vertexSize;
+        gb->indexOffset = prg->indexOffset;
+        gb->indexSize = prg->indexSize;
+        for (int s = 0; s < 32; s++) {
+          gb->samplers[s] = prg->samplers[s];
+        }
+        // issue #22 (layer display window): point windowSampler (bindIdWindow,
+        // binding 4) at the lineColor texture, whose rows 2/3 hold the per-line
+        // window 0/1 spans (updatePerLineColorCalc). The legacy stencil window
+        // does not exist in the GBuffer pass; the companion shader reads these
+        // spans instead. The prg binding here was the vestigial offscreen window
+        // texture (unused in WINDOW_CLIP_STENCIL mode), so overriding is safe.
+        gb->setSampler(VdpPipeline::bindIdWindow, lineColor.imageView,
+                       lineColor.sampler);
+        // When the layer has a per-line texture, bindIdLine (binding 3, the
+        // s_line / s_linetexture sampler) must be that texture, not the LNCL line
+        // color screen the earlier sampler-binding loop left in
+        // prg->samplers[bindIdLine]. This covers the per-line color-calc
+        // companion (perline[id] offset) AND the special-priority + per-line
+        // color-offset shader (PG_VDP2_NORMAL_CRAM_SPECIAL_PRIORITY_COLOROFFSET),
+        // whose s_linetexture is the per-line color offset. The legacy main pass
+        // rebinds it the same way (VIDVulkan.cpp normal-mode branch:
+        // setSampler(bindIdLine, lineTexture)).
+        if (prg->lineTexture != VK_NULL_HANDLE) {
+          gb->setSampler(VdpPipeline::bindIdLine, prg->lineTexture,
+                         lineColor.sampler);
+        }
+
+        // UBO mirrors the legacy "normal mode" branch (no window, no special
+        // color func). Color offset is intentionally LEFT AT ZERO here: per the
+        // Sega VDP2 manual ch.13 the color offset is applied to the TOP image
+        // AFTER color calc, gated by the top layer's CLOFEN bit -- not baked per
+        // layer. The compositor applies it post-composite from the per-slice
+        // offset it receives (compositeVdp2New). Baking it here would
+        // double-apply it (and wrongly offset non-top / second operands), and it
+        // is zeroed anyway for per-line layers (info->cor = 0), which is exactly
+        // why per-line top layers lost their darkening before this change.
+        UniformBufferObject ubo = {};
+        ubo.mvp = mvp;
+        ubo.emu_height = (float)vdp2height / (float)gbH;
+        ubo.vheight = (float)gbH;
+        ubo.viewport_offset = 0.0f;
+        ubo.u_dir = 0;
+        ubo.color_offset.r = 0.0f;
+        ubo.color_offset.g = 0.0f;
+        ubo.color_offset.b = 0.0f;
+        ubo.color_offset.a = 0;
+        ubo.blendmode = prg->blendmode;
+        ubo.u_specialColorFunc = 0;
+        ubo.specialPriority = prg->specialPriority;
+        // issue #22 mosaic: render this layer un-mosaic'd into the slice (the
+        // compositor applies the per-block snap). Force u_mosaic 1 so a
+        // PG_VDP2_MOSAIC (direct-color) companion does not also snap in its
+        // shader (double mosaic) and never divides by zero on the zero default.
+        ubo.u_mosaic_x = 1;
+        ubo.u_mosaic_y = 1;
+        // issue #22 (layer display window): replicate the legacy stencil window
+        // test as a per-layer winmask / winflag / winmode the gbuffer companion
+        // shader evaluates against the per-line spans. This mirrors
+        // VdpPipeline::createDpethStencil() exactly: bit0 = window 0, bit1 =
+        // window 1; AND mode keeps the fragment where (membership & winmask) ==
+        // winflag, OR mode where it differs. Sprite window (bit2) is excluded
+        // here (bwinsp dropped) because the per-line table cannot express the
+        // per-pixel VDP1 sprite window; such layers simply skip sprite-window
+        // gating in the new path (explicit MVP gap).
+        {
+          int bwin0 = prg->bwin0, logwin0 = prg->logwin0;
+          int bwin1 = prg->bwin1, logwin1 = prg->logwin1;
+          int bw1 = bwin1 << 1;
+          int lw1 = logwin1 << 1;
+          int winmask = (bwin0 | bw1);
+          if (winmask == 0) {
+            ubo.winmode = -1;
+            ubo.winmask = 0;
+            ubo.winflag = 0;
+          } else {
+            int winflag = 0;
+            if (prg->winmode == 0) {  // and
+              if (bwin0) winflag = logwin0;
+              if (bwin1) winflag |= lw1;
+            } else {                  // or
+              winflag = winmask;
+              if (bwin0) winflag &= ~logwin0;
+              if (bwin1) winflag &= ~lw1;
+            }
+            ubo.winmode = prg->winmode;
+            ubo.winmask = winmask;
+            ubo.winflag = winflag;
+          }
+        }
+        // x scale: Saturn x = gl_FragCoord.x * (vdp2width / gbW). The y scale is
+        // already carried by emu_height (vdp2height / gbH); windowHeight mirrors
+        // it for completeness. The gbuffer ortho maps 0..vdp2{width,height} onto
+        // the gbW x gbH viewport, so these recover Saturn screen coords from the
+        // fragment position.
+        ubo.windowWidth = (gbW > 0) ? ((float)vdp2width / (float)gbW) : 1.0f;
+        ubo.windowHeight = (gbH > 0) ? ((float)vdp2height / (float)gbH) : 1.0f;
+        gb->setUBO(&ubo, sizeof(ubo));
+        gb->updateDescriptorSets();
+
+        // Per-layer packed attr via the fragment push constant (priority /
+        // ccEnable / ccRatio / SFCCMD mode / shadowEn). Priority is the layer
+        // bucket index `i` (layers[priority]); cc is indexed by the compositor
+        // LayerIndex.
+        int gbPush[5];
+        gbPush[0] = (int)i;  // priority 0..7
+        const vdp2cc::LayerCalc &lc = cc.perLayer[slice];
+        gbPush[1] = lc.ccEnable ? 1 : 0;
+        gbPush[2] = (int)lc.ratio;
+        // SFCCMD per-layer mode (0 = normal cc on all dots). The companion only
+        // honors the per-texel alpha==0xFF cc suppression when this is != 0, so a
+        // normal cc layer whose ratio register is 0 (alpha decodes to 0xFF on
+        // every opaque dot) is NOT wrongly turned opaque.
+        gbPush[3] = prg->specialcolormode;
+        // issue #22: special color calc (SFCCMD) for RGB-direct color layers.
+        // Palette layers bake the per-dot suppression into the decoded texture
+        // alpha (read back in the CRAM shader branch); RGB-direct layers have no
+        // such bake, so resolve the per-layer effect here. SW reference
+        // MakeNBGRBGPix (ss/vdp2_render.cpp): for direct color,
+        //   mode 1 -> cc enable = the special-color-calc flag (BMSCC for bitmap)
+        //   mode 2 -> cc never enabled (no SFCODE color-number match for direct)
+        //   mode 0/3 -> cc enable unchanged (mode 3 forces it on within a cc
+        //               layer, i.e. same as the already-resolved base enable).
+        // Per-character tile scc (mode 1) is layer-uniform here, so RGB-direct
+        // *tiles* using per-cell scc are an explicit MVP gap (rare; direct color
+        // is almost always a bitmap whose scc is the single BMSCC bit).
+        if (prg->colornumber >= 3 && gbPush[1] != 0) {
+          if (prg->specialcolormode == 1) {
+            gbPush[1] = (prg->specialcolorfunction != 0) ? 1 : 0;
+          } else if (prg->specialcolormode == 2) {
+            gbPush[1] = 0;
+          }
+        }
+        // G4 shadow accept (SHADEN): SDCTL bit per BG layer (NBG0=0..NBG3=3,
+        // RBG0=4); sprites cast shadows but do not accept them.
+        int sdctlBit = -1;
+        switch (slice) {
+          case vdp2cc::kNBG0: sdctlBit = 0; break;
+          case vdp2cc::kNBG1: sdctlBit = 1; break;
+          case vdp2cc::kNBG2: sdctlBit = 2; break;
+          case vdp2cc::kNBG3: sdctlBit = 3; break;
+          case vdp2cc::kRBG0: sdctlBit = 4; break;
+          default: break;
+        }
+        gbPush[4] =
+            (sdctlBit >= 0 && ((regs->SDCTL >> sdctlBit) & 1)) ? 1 : 0;
+        vkCmdPushConstants(commandBuffer, gb->getPipelineLayout(),
+                           VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(int) * 5,
+                           gbPush);
+
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                gb->getPipelineLayout(), 0, 1,
+                                gb->getDescriptorSet(), 0, nullptr);
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                          gb->getGraphicsPipeline());
+
+        VkBuffer vertexBuffers[] = {vm->getVertexBuffer(gb->vectexBlock)};
+        VkDeviceSize offsets[] = {gb->vertexOffset};
+        vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+        vkCmdBindIndexBuffer(commandBuffer, vm->getIndexBuffer(gb->vectexBlock),
+                             gb->indexOffset, VK_INDEX_TYPE_UINT16);
+        vkCmdDrawIndexed(commandBuffer, gb->indexSize, 1, 0, 0, 0);
+      }
+    }
+
+    vkCmdEndRenderPass(commandBuffer);
+  }
+
+  // issue #22 (T-009): populate the sprite slice (kSprite) from the VDP1
+  // framebuffer. The VDP1 fb is already transitioned to shader-read by
+  // Vdp2DrawEnd (vdp1->useImageAsShaderRead) before this function runs. The
+  // sprite decode mirrors the host-port reference vdp2_sprite_decode.h
+  // decodeSprite() (UT-010) and writes color + packed attr into the sprite
+  // slice so the compositor sorts sprites alongside NBG0-3 / RBG0.
+  if (vdp2SpriteDecoder == nullptr) {
+    vdp2SpriteDecoder = new Vdp2SpriteDecoder(this);
+    vdp2SpriteDecoder->setup();
+  }
+
+  Vdp2SpriteDecoder::SpriteParams sp = {};
+  {
+    u8 *prilist = (u8 *)&regs->PRISA;
+    for (int i = 0; i < 8; i++) {
+      sp.priorityTable[i] = prilist[i] & 0x7;
+      sp.spriteRatioTable[i] = (int)cc.spriteRatioTable[i];
+    }
+    // Per-line raster override (perline_alpha_draw & 0x40): PRISA / CCRS* were
+    // rewritten mid-frame, so the line-0 snapshot in `regs` is wrong for part
+    // of the screen (Bio Hazard's title menu sprites sit in priority slot 0,
+    // which is 0 at line 0 and raised to 6 only on the menu scanlines; the
+    // frame-uniform table made the decoder discard them). Pack per-display-line
+    // priority + decoded cc ratio tables exactly like the legacy
+    // FramebufferRenderer::updateVdp2Reg per-line texture (rows 1..16).
+    sp.perLine = ((*Vdp2External.perline_alpha_draw & 0x40) != 0) ? 1 : 0;
+    sp.vdp2Height = vdp2height;
+    if (sp.perLine) {
+      const int line_shift = (vdp2height > 256) ? 1 : 0;
+      for (int ln = 0; ln < vdp2height && ln < 512; ln++) {
+        const Vdp2 &L = Vdp2Lines[ln >> line_shift];
+        const u8 *pl = (const u8 *)&L.PRISA;
+        u32 prio = 0;
+        for (int s = 0; s < 8; s++) {
+          prio |= (u32)(pl[s] & 0x7) << (s * 4);
+        }
+        const std::array<u16, 4> ccrs = {L.CCRSA, L.CCRSB, L.CCRSC, L.CCRSD};
+        const std::array<u8, 8> rt = vdp2cc::decodeSpriteTable(ccrs);
+        sp.lines[ln][0] = prio;
+        sp.lines[ln][1] = (u32)rt[0] | ((u32)rt[1] << 8) |
+                          ((u32)rt[2] << 16) | ((u32)rt[3] << 24);
+        sp.lines[ln][2] = (u32)rt[4] | ((u32)rt[5] << 8) |
+                          ((u32)rt[6] << 16) | ((u32)rt[7] << 24);
+        // Per-line sprite color offset (CLOFEN/CLOFSL bit 6 rastered
+        // mid-frame: Assault Suit Leynos 2 selects offset B (-64) on lines
+        // 0-119 and offset A (-1) below; the frame-uniform line-0 snapshot
+        // darkened every sprite). Pack 9-bit two's-complement R/G/B into .w
+        // with bit 31 as the enable flag; the decode shader adds it and
+        // _gbSlicePerLine[kSprite] below makes the compositor skip its
+        // blanket register offset for the sprite slice.
+        u32 co = 0;
+        if (L.CLOFEN & 0x40) {
+          const int useB = (L.CLOFSL & 0x40) != 0;
+          const u16 rr = useB ? L.COBR : L.COAR;
+          const u16 gg = useB ? L.COBG : L.COAG;
+          const u16 bb = useB ? L.COBB : L.COAB;
+          co = 0x80000000u | (u32)(rr & 0x1FF) | ((u32)(gg & 0x1FF) << 9) |
+               ((u32)(bb & 0x1FF) << 18);
+        }
+        sp.lines[ln][3] = co;
+      }
+      _gbSlicePerLine[vdp2cc::kSprite] = true;
+    }
+    sp.spcccs = (regs->SPCTL >> 12) & 0x3;
+    sp.spccn = (regs->SPCTL >> 8) & 0x7;
+    sp.ccWindowOn = (regs->CCCTL & 0x40) ? 1 : 0;
+    // Sprite window enabled and an "inside" sprite type (matches the legacy
+    // FramebufferRenderer sprite-window gate).
+    sp.spriteWindow = ((regs->SPCTL & 0x10) &&
+                       ((regs->SPCTL & 0xF) >= 2) && ((regs->SPCTL & 0xF) < 8))
+                          ? 1
+                          : 0;
+    sp.colorRamOffset = (regs->CRAOFB & 0x70) << 4;
+    sp.colorMode = 0;  // CRAM image is pre-decoded; mode is informational here.
+  }
+
+  vdp2SpriteDecoder->renderToSlice(commandBuffer, vdp2GBuffer,
+                                   vdp1->getFrameBufferImage(),
+                                   getCramImageView(), getCramSampler(), sp,
+                                   vdp2width, vdp2height);
+}
+
 void VIDVulkan::Vdp2DrawEnd(void) {
   if (_renderer == nullptr)
+    return;
+  // Vdp2VBlankIN calls Vdp2DrawEnd unconditionally, but Vdp2DrawStart is
+  // deferred while the game keeps writing VDP1 RAM (vdp1_clock <= 0 in
+  // Vdp2HBlankOUT). Games that stream to VDP1 RAM right after boot
+  // (e.g. Tomb Raider (USA)) reach here before the first Vdp2DrawStart,
+  // leaving fixVdp2Regs NULL. Match VIDOGLVdp2DrawEnd and skip the frame.
+  if (fixVdp2Regs == NULL)
     return;
   const VkDevice device = _renderer->GetVulkanDevice();
   if (device == VK_NULL_HANDLE)
@@ -646,10 +1630,14 @@ void VIDVulkan::Vdp2DrawEnd(void) {
   int fi = _renderer->getWindow()->BeginRender();
   // LOGD("====== commandBuffer is %d/%d/%d ========", ci,fi,frameCount);
 
-  if (frameCount >= MAX_COMMANDBUFFER_COUNT) {
-    ErrorCheck(vkWaitForFences(device, 1, &commandFence[ci], VK_TRUE, UINT64_MAX));
-    ErrorCheck(vkResetFences(device, 1, &commandFence[ci]));
-  }
+  const auto fenceWaitStart = std::chrono::high_resolution_clock::now();
+  ErrorCheck(vkWaitForFences(device, 1, &commandFence[ci], VK_TRUE, UINT64_MAX));
+  const auto fenceWaitEnd = std::chrono::high_resolution_clock::now();
+  gpuProfiler().recordFenceWait(VulkanGpuProfiler::Zone::Vdp2Draw,
+      std::chrono::duration<double, std::milli>(fenceWaitEnd - fenceWaitStart).count());
+  gpuProfiler().collect(commandProfileSamples[ci]);
+  commandProfileSamples[ci] = VulkanGpuProfiler::InvalidSample;
+  ErrorCheck(vkResetFences(device, 1, &commandFence[ci]));
 
 #if 1
   backPiepline->moveToVertexBuffer(backPiepline->vertices, backPiepline->indices);
@@ -758,6 +1746,8 @@ void VIDVulkan::Vdp2DrawEnd(void) {
   // vkQueueWaitIdle(_renderer->GetVulkanQueue());
   vkResetCommandBuffer(commandBuffer, 0);
   vkBeginCommandBuffer(commandBuffer, &command_buffer_begin_info);
+  const uint32_t profileSample =
+      gpuProfiler().beginSample(commandBuffer, VulkanGpuProfiler::Zone::Vdp2Draw, frameCount);
 
   vdp1->useImageAsShaderRead(commandBuffer);
 
@@ -821,7 +1811,26 @@ void VIDVulkan::Vdp2DrawEnd(void) {
   } else {
 
 	  windowRenderer->setSpriteWindow(((fixVdp2Regs->SPCTL >> 4) & 0x03) == 0x01);
-  
+
+    // issue #22 (T-008 population path): when the new VDP2 composite is
+    // enabled, render every enabled background layer into its G-buffer slice
+    // HERE -- before the main (subRenderTarget / window) render pass below is
+    // begun, because each slice uses the Vdp2GBuffer render pass. The
+    // compositor (compositeVdp2New) reads the slices later, inside the main
+    // pass. The G-buffer + compositor are lazily created (mirrors
+    // compositeVdp2New) and sized to the current render resolution.
+    if (_vdp2NewComposite) {
+      if (vdp2GBuffer == nullptr) {
+        vdp2GBuffer = new Vdp2GBuffer(this);
+      }
+      if (vdp2Compositor == nullptr) {
+        vdp2Compositor = new Vdp2Compositor(this);
+        vdp2Compositor->setup();
+      }
+      vdp2GBuffer->resize(renderWidth, renderHeight);
+      renderLayersToGBuffer(commandBuffer, fixVdp2Regs);
+    }
+
     if (resolutionMode != RES_NATIVE) {
       VkRect2D tmp_render_area{};
       tmp_render_area.offset.x = 0;
@@ -916,7 +1925,60 @@ void VIDVulkan::Vdp2DrawEnd(void) {
 
     model = model * pre_rotate_mat;
 
+    // B20: Step counter for Vdp2DebugUI. Counts every draw the priority
+    // loop and post-loop VDP1 fb pass emit. When _vdp2StepLimit >= 0 we
+    // render exactly the first _vdp2StepLimit draws and stop, so step
+    // replay shows the cumulative composite at step N. Draws counted:
+    //   - VDP2 layer pipelines (one per `vertexSize > 0` pipeline)
+    //   - In-loop VDP1 fb composite (fired when next layer has blendmode)
+    //   - Post-loop VDP1 fb composite (split per priority bucket)
+    //
+    // Semantics:
+    //   limit = 0  -> 0 draws beyond back color (back color only)
+    //   limit = N  -> N draws (back color + first N events)
+    //   limit < 0  -> no limit (normal play / total discovery)
+    int  vdp2DrawCounter = 0;
+    bool vdp2StepLimitReached = false;
+
+    // B20 Phase 7: the VDP1 framebuffer composite is shown only when NOT
+    // isolating a VDP2 layer. Soloing a VDP2 layer (id 0..4) hides the
+    // VDP1 fb so the layer is seen alone; soloing kVdp2IsolateVdp1Fb (or
+    // no isolation) shows the fb.
+    const bool drawVdp1Fb = (_vdp2IsolateLayer < 0 ||
+                             _vdp2IsolateLayer == kVdp2IsolateVdp1Fb);
+
+    // issue #22 (T-007): runtime path split. When the new per-pixel VDP2
+    // composite is enabled, the legacy fixed-function priority loop and the
+    // post-loop VDP1 framebuffer composite below are skipped and the new
+    // composite path runs instead. The new path is a stub for now (it falls
+    // back to the same legacy draws via compositeVdp2New so the screen stays
+    // correct and nothing crashes); Vdp2Compositor (T-008) replaces the stub
+    // body. The back color (drawn above) and the shadow pass (below) are
+    // shared by both paths and stay outside this branch.
+    if (_vdp2NewComposite) {
+      // The active render pass at this point is subRenderTarget.renderPass
+      // (resolutionMode != RES_NATIVE) or the window render pass (RES_NATIVE);
+      // mirror the begin selection above so the compositor pipeline matches.
+      VkRenderPass activeRenderPass =
+          (resolutionMode != RES_NATIVE) ? subRenderTarget.renderPass
+                                         : _renderer->getWindow()->GetVulkanRenderPass();
+      VkViewport vp{};
+      vp.x = viewport.x;
+      vp.y = viewport.y;
+      vp.width = viewport.width;
+      vp.height = viewport.height;
+      vp.minDepth = 0.0f;
+      vp.maxDepth = 1.0f;
+      VkRect2D sc{};
+      sc.offset.x = scissor.offset.x;
+      sc.offset.y = scissor.offset.y;
+      sc.extent.width = scissor.extent.width;
+      sc.extent.height = scissor.extent.height;
+      compositeVdp2New(commandBuffer, fixVdp2Regs, activeRenderPass, vp, sc);
+    } else {
+
     for (uint32_t i = 0; i < layers.size(); i++) {
+      if (vdp2StepLimitReached) break;
 
       glm::mat4 MVP = model * proj;
       ubo.mvp = MVP;
@@ -929,7 +1991,26 @@ void VIDVulkan::Vdp2DrawEnd(void) {
       for (uint32_t j = 0; j < layers[i].size(); j++) {
         if (layers[i][j]->vertexSize > 0) {
 
-          if (layers[i][j]->blendmode != 0 && fbRendered == false) {
+          // B20 Phase 7: Isolate-layer filter. When _vdp2IsolateLayer >= 0,
+          // only emit pipelines whose `id` matches. The in-loop VDP1 fb
+          // composite (below) is still allowed through so VDP1 sprites
+          // remain visible alongside the isolated layer.
+          if (_vdp2IsolateLayer >= 0 && layers[i][j]->id != _vdp2IsolateLayer) {
+            continue;
+          }
+
+          // B20 Phase 5.5: VDP1 framebuffer composite is a distinct step.
+          // When the next VDP2 layer in this bucket has blendmode != 0,
+          // the original code emits an fbRender->draw(from, to) BEFORE
+          // the layer draw. Treat that fb composite as a separate step
+          // so the user sees VDP1 sprites appear at the correct priority
+          // boundary.
+          if (layers[i][j]->blendmode != 0 && fbRendered == false && drawVdp1Fb) {
+            if (_vdp2StepLimit >= 0 && vdp2DrawCounter >= _vdp2StepLimit) {
+              vdp2StepLimitReached = true;
+              break;
+            }
+            ++vdp2DrawCounter;
             to = i;
             if (Vdp1External.disptoggle & 0x01) {
               if (isDestinationAlpha) {
@@ -941,6 +2022,13 @@ void VIDVulkan::Vdp2DrawEnd(void) {
             from = to;
             fbRendered = true;
           }
+
+          // VDP2 layer draw is the next step.
+          if (_vdp2StepLimit >= 0 && vdp2DrawCounter >= _vdp2StepLimit) {
+            vdp2StepLimitReached = true;
+            break;
+          }
+          ++vdp2DrawCounter;
 
           VdpPipeline *prg = layers[i][j];
 
@@ -1020,8 +2108,15 @@ void VIDVulkan::Vdp2DrawEnd(void) {
             offcount++;
           }
 
-          // per line color calculation mode
-          else if (layers[i][j]->lineTexture != VK_NULL_HANDLE && layers[i][j]->specialPriority == 0) {
+          // per line color calculation mode. This also covers specialPriority
+          // == 2 layers (Assault Suit Leynos 2 RBG0: per-line CLOFSL raster
+          // split); the former `specialPriority == 0` gate pushed them to the
+          // normal-mode draw, whose pipeline ignores the per-line texture, so
+          // the whole layer got one blanket color offset from Vdp2Lines[3]
+          // (-64 -> near-black playfield). The per-dot special priority is not
+          // representable in this 2-pass blit either way (the blit quad
+          // carries one z), so routing through it loses nothing.
+          else if (layers[i][j]->lineTexture != VK_NULL_HANDLE) {
            
             UniformBufferObject ubomini = ubo;
             ubomini.winmode = -1;
@@ -1032,7 +2127,15 @@ void VIDVulkan::Vdp2DrawEnd(void) {
 
             ubo.u_tw = offscreenPass.width;
             ubo.u_th = offscreenPass.height;
+            // vheight is the blit quad depth (priority z) consumed by
+            // VdpPipelineBlit's vertex shader (gl_Position.z = u_vheight) --
+            // it MUST stay i/10.0 or the composite quad clips away (z=224 =>
+            // black). The per-line shader separately needs the Saturn line
+            // count to index s_line ([0, vdp2height) texels), which differs
+            // from the offscreen height (u_th) under HD compute scaling, so
+            // pass it through the dedicated u_satLineCount field.
             ubo.vheight = (i / 10.0f);
+            ubo.u_satLineCount = (float)vdp2height;
             ubo.u_specialColorFunc = prg->specialcolormode;
 
             VdpPipeline *p;
@@ -1075,13 +2178,40 @@ void VIDVulkan::Vdp2DrawEnd(void) {
       }
       model = glm::translate(model, glm::vec3(0.0f, 0.0f, 0.1));
     }
-    if (Vdp1External.disptoggle & 0x01) {
-      if (isDestinationAlpha) {
-        fbRender->drawWithDestAlphaMode(fixVdp2Regs, commandBuffer, from, 10, pre_rotate_mat);
-      } else {
-        fbRender->draw(fixVdp2Regs, commandBuffer, from, 10, pre_rotate_mat);
+
+    // B20 Phase 5.5: post-loop VDP1 framebuffer composite is split into
+    // per-priority steps so the user can watch each VDP1 sprite layer
+    // appear one priority at a time. Without this, all remaining VDP1
+    // sprites land in a single monolithic step and the user sees an
+    // all-or-nothing transition.
+    //
+    // For non-debug (no step limit) play, this is now N separate draw
+    // calls instead of one big range. The shader gates by priority so
+    // each call only outputs pixels in [p, p+1); they accumulate via
+    // alpha blending. If this becomes a perf hot spot, gate the split
+    // behind `_vdp2StepLimit >= 0`.
+    if ((Vdp1External.disptoggle & 0x01) && drawVdp1Fb) {
+      for (int p = from; p < 10; p++) {
+        if (vdp2StepLimitReached) break;
+        if (_vdp2StepLimit >= 0 && vdp2DrawCounter >= _vdp2StepLimit) {
+          vdp2StepLimitReached = true;
+          break;
+        }
+        ++vdp2DrawCounter;
+        if (isDestinationAlpha) {
+          fbRender->drawWithDestAlphaMode(fixVdp2Regs, commandBuffer, p, p + 1, pre_rotate_mat);
+        } else {
+          fbRender->draw(fixVdp2Regs, commandBuffer, p, p + 1, pre_rotate_mat);
+        }
       }
     }
+
+    } // end legacy path (issue #22 T-007: _vdp2NewComposite == false)
+
+    // B20: snapshot the full step counter (priority loop + post-loop VDP1
+    // fb passes) so Vdp2DebugUI's _totalDrawCount reflects every draw
+    // the user can step through.
+    _vdp2LastDrawCount = vdp2DrawCounter;
 
     for (int i = 0; i < onFramePipelines.size(); i++) {
       this->pipleLineFactory->garbage(onFramePipelines[i]);
@@ -1188,6 +2318,7 @@ void VIDVulkan::Vdp2DrawEnd(void) {
 
 ENDEND:
 
+  gpuProfiler().endSample(commandBuffer, profileSample);
   vkEndCommandBuffer(commandBuffer);
 
   vector<VkSemaphore> waitSem;
@@ -1220,12 +2351,21 @@ ENDEND:
   submit_info.pWaitDstStageMask = graphicsWaitStageMasks;
   submit_info.commandBufferCount = 1;
   submit_info.pCommandBuffers = &commandBuffer;
-  submit_info.signalSemaphoreCount = 1;
-  submit_info.pSignalSemaphores = &_render_complete_semaphore;
+  // Signal _render_complete_semaphore (present) and, when owed, the VDP2
+  // read-done semaphore the next frame's upload submit waits on so it does not
+  // overwrite composite inputs mid-read on Adreno (vdp2ReadDoneSignalSem /
+  // TextureManager::updateTextureImage). 1:1 guarded, so usually 2 signals.
+  VkSemaphore compositeSignals[2] = { _render_complete_semaphore, VK_NULL_HANDLE };
+  uint32_t compositeSignalCount = 1;
+  VkSemaphore rdSignal = vdp2ReadDoneSignalSem();
+  if (rdSignal != VK_NULL_HANDLE) {
+    compositeSignals[1] = rdSignal;
+    compositeSignalCount = 2;
+  }
+  submit_info.signalSemaphoreCount = compositeSignalCount;
+  submit_info.pSignalSemaphores = compositeSignals;
   ErrorCheck(vkQueueSubmit(_renderer->GetVulkanQueue(), 1, &submit_info, commandFence[ci]));
-
-  // vkQueueWaitIdle(getVulkanQueue());
-  // vkDeviceWaitIdle(device);
+  commandProfileSamples[ci] = profileSample;
 
 #if 0
   if (resolutionMode != RES_NATIVE) {
@@ -1319,6 +2459,20 @@ void VIDVulkan::readVdp2ColorOffset(Vdp2 *regs, vdp2draw_struct *info, int mask)
   }
 }
 
+// VDP2 color-calculation register decode (issue #22, task T-005). Reads the
+// global color-calc registers and produces per-layer color-calc state (enable /
+// ratio / trans flag), the global mode (CCMD) and ratio source (CCRTMD), the
+// sprite ratio table (CCRS*) and the line-color ratio (CCRLB). The decode math
+// lives in Vdp2ColorCalcState.h so the host-port unit tests (UT-001/002/009)
+// and the GLSL compositor (T-008) all share one definition. Call this once per
+// frame from the compositor path, next to readVdp2ColorOffset().
+vdp2cc::State VIDVulkan::readVdp2ColorCalcState(Vdp2 *regs) {
+  std::array<uint16_t, 4> ccrs = {regs->CCRSA, regs->CCRSB, regs->CCRSC,
+                                  regs->CCRSD};
+  return vdp2cc::decodeVdp2ColorCalc(regs->CCCTL, regs->CCRNA, regs->CCRNB,
+                                     regs->CCRR, ccrs, regs->CCRLB);
+}
+
 #define Y_MAX(a, b) ((a) > (b) ? (a) : (b))
 
 void VIDVulkan::updateBackColor() {
@@ -1397,10 +2551,121 @@ void VIDVulkan::updateLineColor(void) {
   }
 }
 
+// issue #22 (per-line color calc state): CCCTL is a per-line register
+// (vdp2.cpp:916 snapshots Vdp2Regs into Vdp2Lines[line] every scanline), so the
+// global CC flags EXCCEN / CCMD / CCRTMD and the LNCL-into-extended-chain gate
+// vary by scan line. The new-composite path runs a single fullscreen compositor
+// that previously read these from the frame-global fixVdp2Regs only, so a band
+// that toggles EXCCEN per line (e.g. Lunar) never took the extended path. Pack
+// the per-line flags into row 1 of the lineColor texture (rows 1-8 are spare;
+// row 0 is the line color table). The compositor samples this row by scan line.
+// R channel byte: bit0 EXCCEN(+!BOKEN), bit1 LNCL-inserted, bit2 CCMD(add),
+// bit3 CCRTMD(ratio-from-second). G/B/A left 0.
+void VIDVulkan::updatePerLineColorCalc(void) {
+  if (lineColor.dynamicBuf == NULL) {
+    return;
+  }
+  int line_shift = (vdp2height > 256) ? 1 : 0;
+  // Row 1 of the 512-wide texture.
+  u32 *row1 = lineColor.dynamicBuf + lineColor.width;
+  for (int line = 0; line < vdp2height && line < lineColor.width; line++) {
+    const Vdp2 &L = Vdp2Lines[line >> line_shift];
+    u32 flags = 0;
+    bool excc = (L.CCCTL & 0x400) != 0 && (L.CCCTL & 0x8000) == 0;
+    if (excc) flags |= 0x01;
+    if (excc && L.LNCLEN != 0 && (L.CCCTL & 0x20) != 0) flags |= 0x02;
+    if (L.CCCTL & 0x100) flags |= 0x04;   // CCMD: add color
+    if (L.CCCTL & 0x200) flags |= 0x08;   // CCRTMD: ratio from second image
+    // Per-line line-color-screen per-layer mask (issue #22, Lunar). LNCLEN is a
+    // per-line register: which layer carries the line color screen can change per
+    // scan line, so the compositor's lineInsert per-layer gate must read it per
+    // line, not from the frame-start fixVdp2Regs. Pack it as a G-channel slice
+    // mask (vdp2cc LayerId order) alongside the R-channel flags. Without this a
+    // band where the top layer gains LNCLEN only on some lines (frame-start
+    // LNCLEN clears its bit) wrongly fell through to the no-line extended path
+    // and folded the priority-second instead of inserting the line color (4:0:0).
+    u32 lncl = 0;
+    if (L.LNCLEN & 0x01) lncl |= (1u << vdp2cc::kNBG0);
+    if (L.LNCLEN & 0x02) lncl |= (1u << vdp2cc::kNBG1);
+    if (L.LNCLEN & 0x04) lncl |= (1u << vdp2cc::kNBG2);
+    if (L.LNCLEN & 0x08) lncl |= (1u << vdp2cc::kNBG3);
+    if (L.LNCLEN & 0x10) lncl |= (1u << vdp2cc::kRBG0);
+    if (L.LNCLEN & 0x20) lncl |= (1u << vdp2cc::kSprite);
+    // little-endian RGBA8 -> R = flags, G = per-line line-screen slice mask.
+    row1[line] = (flags & 0xFFu) | ((lncl & 0xFFu) << 8);
+  }
+
+  // Per-line back screen (BKCLMD, BKTAU bit 15; VDP2 manual section 7.2). The
+  // compositor carries a single u_backColor, so a per-line back screen (e.g.
+  // the Space Harrier horizon gradient) needs the per-line colors on the GPU:
+  // pack the RAW back RGB per Saturn line into row 4 of the lineColor texture
+  // (rows 4-8 were spare). RAW only -- the BKCOEN color offset is applied by
+  // the compositor via u_backColorOffset, mirroring compositeVdp2New's
+  // single-color read. Filled only in per-line mode; the shader gates row-4
+  // reads on u_backPerLine, so stale contents are never sampled otherwise.
+  if (fixVdp2Regs->BKTAU & 0x8000) {
+    u32 bkAddr;
+    if (fixVdp2Regs->VRSIZE & 0x8000)
+      bkAddr = (((fixVdp2Regs->BKTAU & 0x7) << 16) | fixVdp2Regs->BKTAL) * 2;
+    else
+      bkAddr = (((fixVdp2Regs->BKTAU & 0x3) << 16) | fixVdp2Regs->BKTAL) * 2;
+    u32 *row4 = lineColor.dynamicBuf + lineColor.width * 4;
+    u32 last = 0xFF000000u;
+    for (int line = 0; line < lineColor.width; line++) {
+      if (line < vdp2height) {
+        u16 dot = T1ReadWord(Vdp2Ram, bkAddr + 2 * line);
+        u32 r = (u32)((dot & 0x1F) << 3);
+        u32 g = (u32)(((dot >> 5) & 0x1F) << 3);
+        u32 b = (u32)(((dot >> 10) & 0x1F) << 3);
+        last = 0xFF000000u | (b << 16) | (g << 8) | r;
+      }
+      row4[line] = last;  // replicate the last line across the spare tail
+    }
+  }
+
+  // issue #22 (layer display window): pack the per-line window 0 / window 1
+  // horizontal spans into rows 2 and 3 of the same 512-wide texture. The legacy
+  // renderer clips layers with a stencil test (WINDOW_CLIP_STENCIL); the new
+  // composite GBuffer pass has no stencil attachment, so the gbuffer companion
+  // shader instead samples these spans and discards windowed-out fragments. The
+  // span table (generateWindowInfo) already collapses rectangle and line-table
+  // windows to one {WinShowLine, WinHStart, WinHEnd} per Saturn scan line, with
+  // WinHStart/WinHEnd in vdp2width pixel space (HShift applied). Sprite window is
+  // NOT covered here (it is per-pixel from VDP1; handled in sprite decode).
+  // Pack u32 (little-endian RGBA8): R = hStart&0xFF, G = (hStart>>8)&0xFF,
+  // B = hEnd&0xFF, A = ((hEnd>>8)&0x7F) | (WinShowLine ? 0x80 : 0).
+  u32 *row2 = lineColor.dynamicBuf + lineColor.width * 2;  // window 0
+  u32 *row3 = lineColor.dynamicBuf + lineColor.width * 3;  // window 1
+  for (int w = 0; w < 2; w++) {
+    vdp2WindowInfo *info =
+        (windowRenderer != nullptr) ? windowRenderer->getVdp2WindowInfo(w) : NULL;
+    u32 *dst = (w == 0) ? row2 : row3;
+    for (int line = 0; line < lineColor.width; line++) {
+      int show = 1, hStart = 0, hEnd = 1024;  // default: whole line visible
+      if (info != NULL && line < vdp2height) {
+        show = info[line].WinShowLine;
+        hStart = info[line].WinHStart;
+        hEnd = info[line].WinHEnd;
+      }
+      if (hStart < 0) hStart = 0;
+      if (hEnd > 0x7FF) hEnd = 0x7FF;
+      u32 a = ((u32)(hEnd >> 8) & 0x7F) | (show ? 0x80u : 0x00u);
+      dst[line] = ((u32)(hStart & 0xFF)) | (((u32)(hStart >> 8) & 0xFF) << 8) |
+                  (((u32)(hEnd & 0xFF)) << 16) | (a << 24);
+    }
+  }
+}
+
 void VIDVulkan::Vdp2DrawScreens(void) {
   u32 scrAddr;
   int dot;
   vdp2draw_struct info;
+
+  // B20: Vdp2DebugUI hook. Fires before layers[] is cleared so the debug
+  // UI sees the same VRAM/CRAM/regs state the next draw is about to use.
+  if (_preVdp2DrawHook) {
+    _preVdp2DrawHook();
+  }
 
 #if 0
   readVdp2ColorOffset(fixVdp2Regs, &info, 0x20);
@@ -1422,6 +2687,7 @@ void VIDVulkan::Vdp2DrawScreens(void) {
   windowRenderer->generateWindowInfo(fixVdp2Regs, 0);
   windowRenderer->generateWindowInfo(fixVdp2Regs, 1);
   updateLineColor();
+  updatePerLineColorCalc();
   updateBackColor();
   drawNBG3();
   drawNBG2();
@@ -1482,6 +2748,12 @@ void VIDVulkan::Vdp2SetResolution(u16 TVMD) {
     height = 256;
     break;
   default:
+    // VRESO=3 is a reserved value but games do write it during mode
+    // transitions (Sonic Jam). Treat it as 256 like the other video cores
+    // (vidogl/vidsoft/vidgcd); leaving height at 0 rebuilds every offscreen
+    // target with extent.height=0 and crashes inside the Vulkan driver
+    // (NVIDIA and Adreno both fault on the null-sized allocation).
+    height = 256;
     break;
   }
 
@@ -1533,6 +2805,7 @@ void VIDVulkan::SetSettingValue(int type, int value) {
       aspect_rate_mode = (ASPECT_RATE_MODE)value;
       rebuildFrameBuffer = 1; // rebuild frame buffers at the top of frame
     }
+    break;
   case VDP_SETTING_RESOLUTION_MODE:
     if (resolutionMode != value) {
       resolutionMode = value;
@@ -1561,7 +2834,15 @@ void VIDVulkan::SetSettingValue(int type, int value) {
         YuiErrorMsg("This device does not support GPU Tesseration.");
         return;
       }
-      rebuildPipelines = 1; // rebuild frame buffers at the top of frame
+
+      // Vdp1ComputeRasterizer create/destroy happens in Vdp2DrawStart's
+      // rebuildFrameBuffer block (after vkQueueWaitIdle). Doing it here
+      // on the JNI thread would race in-flight compute submissions --
+      // Vdp1ComputeRasterizer's destructor does not drain
+      // Vdp1Renderer::_computeInFlight on its own.
+
+      rebuildPipelines = 1;
+      rebuildFrameBuffer = 1; // compute mode needs offscreenPass resized at the HD multiplier
     }
     polygonMode = (POLYGONMODE)value;
     break;
@@ -1580,6 +2861,14 @@ void VIDVulkan::SetSettingValue(int type, int value) {
         //this->_renderer->getWindow()->cleanupSwapChain();
         rebuildSwapChain = 1; // rebuild frame buffers at the top of frame
     }
+    break;
+  case VDP_SETTING_VDP2_NEW_COMPOSITE:
+    // issue #22 (T-007): toggle the new per-pixel VDP2 composite path.
+    // Non-zero = new path, 0 = legacy fixed-function path (default). The
+    // flag is read each frame in Vdp2DrawEnd(), so switching at runtime
+    // takes effect on the next frame without any resource rebuild.
+    _vdp2NewComposite = (value != 0);
+    break;
   default:
     break;
   }
@@ -1663,6 +2952,12 @@ void VIDVulkan::SetSaturnResolution(int width, int height) {
               originx = (deviceWidth - deviceHeight * wrate) / 2.0f;
               renderWidth = deviceHeight * wrate;
               renderHeight = deviceHeight;
+              if (originx < 0) {
+                originx = 0;
+                originy = (deviceHeight - deviceWidth * hrate) / 2.0f;
+                renderHeight = deviceWidth * hrate;
+                renderWidth = deviceWidth;
+              }
             }
           } else {
 
@@ -1724,12 +3019,12 @@ void VIDVulkan::SetSaturnResolution(int width, int height) {
   }
 }
 
-// VdpPipeline ** pipleLine out �������ꂽ�p�C�v���C���I�u�W�F�N�g
-// vdp2draw_struct * input  in �����p�����[�^
-// CharTexture * output out �������ꂽ�e�N�X�`����� NULL�̏ꍇ,�L���b�V�����W���g��
-// float * colors ���_���Ƃ̐F VDP2�ł͎g��Ȃ�
-// TextureCache * c �L���b�V�����W
-// int cash_flg 1�̏ꍇ c�̃L���b�V�����W���X�V����
+// VdpPipeline ** pipleLine    [out] generated pipeline object
+// vdp2draw_struct * input     [in]  draw parameters
+// CharTexture * output         [out] generated texture info; NULL = use cache index
+// float * colors               per-vertex colors (unused on VDP2)
+// TextureCache * c             cache index
+// int cash_flg                 1 = update c (cache index)
 int VIDVulkan::genPolygon(VdpPipeline **pipleLine, vdp2draw_struct *input, CharTexture *output, float *colors,
                           TextureCache *c, int cash_flg, int isOffset) {
   unsigned int x, y;
@@ -1742,6 +3037,20 @@ int VIDVulkan::genPolygon(VdpPipeline **pipleLine, vdp2draw_struct *input, CharT
   // float * vtxa;
 
   const int CCRTMD = ((fixVdp2Regs->CCCTL >> 9) & 0x01); // hard/vdp2/hon/p12_14.htm#CCRTMD_
+
+  // issue #22: bitmap special priority (SFPRMD mode 1). Tiles get their
+  // per-character priorityOffset in drawPattern(); bitmaps have no tiles, so the
+  // whole image's priority LSB is the per-bitmap BMSPR flag (now in
+  // specialfunction). Compute the same (priority & ~1) | BMSPR offset the tile
+  // path uses, so both the legacy depth sort (vertex z = priorityOffset/2) and
+  // the new compositor's direct-color slice (v_priorityZ) pick it up. CRAM
+  // bitmaps additionally bake it into the texture B channel via
+  // setSpecialPriority; the companion overrides with B, so no double apply.
+  if (input->isbitmap && input->specialprimode == 1) {
+    input->priorityOffset =
+        (int)(((input->priority & 0xFFFFFFFE) | (input->specialfunction & 1)) -
+              input->priority);
+  }
 
   if (input->colornumber >= 3) {
 
@@ -1855,6 +3164,16 @@ int VIDVulkan::genPolygon(VdpPipeline **pipleLine, vdp2draw_struct *input, CharT
   program->interuput_texture = VK_NULL_HANDLE;
   program->lineTexture = (VkImageView)input->lineTexture;
   program->specialcolormode = input->specialcolormode;
+  // issue #22: carry color format + special-cc flag so the new compositor can
+  // resolve RGB-direct special color calc (SFCCMD) per layer (genPolygonRbg0
+  // copies these too; both must stay in sync per the field-copy rule).
+  program->colornumber = input->colornumber;
+  program->specialcolorfunction = input->specialcolorfunction;
+  // B20 Phase 7: carry the VDP2 layer id (NBG0=0..RBG0=4) so the
+  // Vdp2DebugUI isolate filter can match pipelines by layer. Without
+  // this the pipeline keeps a stale id from the factory pool and
+  // isolation matches the wrong (or no) layer.
+  program->id = input->id;
 
   Vertex tmp[4];
 
@@ -2039,6 +3358,20 @@ int VIDVulkan::genPolygonRbg0(VdpPipeline **pipleLine, vdp2draw_struct *input, C
 
   const int CCRTMD = ((fixVdp2Regs->CCCTL >> 9) & 0x01); // hard/vdp2/hon/p12_14.htm#CCRTMD_
 
+  // issue #22: bitmap special priority (SFPRMD mode 1). Tiles get their
+  // per-character priorityOffset in drawPattern(); bitmaps have no tiles, so the
+  // whole image's priority LSB is the per-bitmap BMSPR flag (now in
+  // specialfunction). Compute the same (priority & ~1) | BMSPR offset the tile
+  // path uses, so both the legacy depth sort (vertex z = priorityOffset/2) and
+  // the new compositor's direct-color slice (v_priorityZ) pick it up. CRAM
+  // bitmaps additionally bake it into the texture B channel via
+  // setSpecialPriority; the companion overrides with B, so no double apply.
+  if (input->isbitmap && input->specialprimode == 1) {
+    input->priorityOffset =
+        (int)(((input->priority & 0xFFFFFFFE) | (input->specialfunction & 1)) -
+              input->priority);
+  }
+
   if (input->colornumber >= 3) {
     prg = PG_NORMAL;
     if (input->mosaicxmask != 1 || input->mosaicymask != 1) {
@@ -2087,12 +3420,14 @@ int VIDVulkan::genPolygonRbg0(VdpPipeline **pipleLine, vdp2draw_struct *input, C
         prg = PG_LINECOLOR_INSERT_DESTALPHA_CRAM;
       }
     } else if (input->linescreen == 2) { // per line operation by HBLANK
-      if (input->specialprimode == 2) {
-        prg = PG_VDP2_NORMAL_CRAM_SPECIAL_PRIORITY_COLOROFFSET; // Assault
-                                                                // Leynos 2
-      } else {
-        prg = PG_VDP2_NOBLEND_CRAM;
-      }
+      // Per-line layers render plain into the offscreen target and get the
+      // per-line color offset applied by the PER_LINE_ALPHA blit (Vdp2DrawEnd
+      // 2-pass branch). PG_VDP2_NORMAL_CRAM_SPECIAL_PRIORITY_COLOROFFSET is no
+      // longer selected here: its active location=1 fargDepth output only
+      // matches the offscreen render pass, and drawing it directly to the main
+      // pass corrupted every later layer (sky/HUD lost). specialprimode == 2 layers
+      // (Assault Suit Leynos 2's RBG0) take the same 2-pass route.
+      prg = PG_VDP2_NOBLEND_CRAM;
     } else {
       // if (input->specialprimode == 2) {
       //   prg = PG_VDP2_NORMAL_CRAM_SPECIAL_PRIORITY;
@@ -2150,7 +3485,10 @@ int VIDVulkan::genPolygonRbg0(VdpPipeline **pipleLine, vdp2draw_struct *input, C
   program->lineTexture = (VkImageView)input->lineTexture;
   program->blendmode = input->blendmode;
   program->specialcolormode = input->specialcolormode;
+  program->specialcolorfunction = input->specialcolorfunction;  // issue #22 RGB-direct special cc
   program->specialPriority = input->specialprimode;
+  // B20 Phase 7: carry the VDP2 layer id (RBG0=4) for isolate filtering.
+  program->id = input->id;
 
   program->mosaic[0] = input->mosaicxmask;
   program->mosaic[1] = input->mosaicymask;
@@ -2241,6 +3579,7 @@ void VIDVulkan::drawNBG0() {
   vdp2draw_struct info = {0};
   CharTexture texture;
   TextureCache tmpc;
+  bool isRBG1 = false;
   int char_access = 0;
   int ptn_access = 0;
   info.dst = 0;
@@ -2278,6 +3617,7 @@ void VIDVulkan::drawNBG0() {
 
   if (fixVdp2Regs->BGON & 0x20) {
     // RBG1 mode
+    isRBG1 = true;
     info.enable = fixVdp2Regs->BGON & 0x20;
     if (!info.enable)
       return;
@@ -2355,7 +3695,11 @@ void VIDVulkan::drawNBG0() {
       info.paladdr = (fixVdp2Regs->BMPNA & 0x7) << 4;
       info.flipfunction = 0;
       info.specialcolorfunction = (fixVdp2Regs->BMPNA & 0x10) >> 4;
-      info.specialfunction = 0;
+      // issue #22: bitmap special priority (SFPRMD mode 1). The per-bitmap
+      // BMSPR bit (BMPNA bit 5 for NBG0) is the special-priority flag, same role
+      // as a tile's per-character supplement bit. SW reference T_DrawNBG:
+      // tf.BMSPR = (BMPNA >> 5) & 1.
+      info.specialfunction = (fixVdp2Regs->BMPNA >> 5) & 1;
     } else {
       // Tile Mode
       info.mapwh = 2;
@@ -2492,7 +3836,7 @@ void VIDVulkan::drawNBG0() {
   } else
     info.isverticalscroll = 0;
 
-  if (info.enable == 1) {
+  if (!isRBG1 && info.enable) {
     // NBG0 draw
     if (info.isbitmap) {
       if (info.coordincx != 1.0f || info.coordincy != 1.0f || VDPLINE_SZ(info.islinescroll)) {
@@ -2670,7 +4014,9 @@ void VIDVulkan::drawNBG1() {
     info.charaddr = ((fixVdp2Regs->MPOFN & 0x70) >> 4) * 0x20000;
     info.paladdr = (fixVdp2Regs->BMPNA & 0x700) >> 4;
     info.flipfunction = 0;
-    info.specialfunction = 0;
+    // issue #22: bitmap special priority (SFPRMD mode 1). BMSPR for NBG1 is
+    // BMPNA bit 13 (SW reference tf.BMSPR = (BMPNA >> 13) & 1).
+    info.specialfunction = (fixVdp2Regs->BMPNA >> 13) & 1;
     info.specialcolorfunction = (fixVdp2Regs->BMPNA & 0x1000) >> 4;
   } else {
     info.mapwh = 2;
@@ -3533,7 +4879,9 @@ void VIDVulkan::drawRBG0() {
 
     info->paladdr = (fixVdp2Regs->BMPNB & 0x7) << 4;
     info->flipfunction = 0;
-    info->specialfunction = 0;
+    // issue #22: bitmap special priority (SFPRMD mode 1). RBG0 bitmap uses
+    // BMPNB; BMSPR is bit 5 (same layout as BMPNA's NBG0 fields).
+    info->specialfunction = (fixVdp2Regs->BMPNB >> 5) & 1;
   } else {
     int i;
     // Tile Mode
@@ -3756,7 +5104,16 @@ void VIDVulkan::drawRotation(RBGDrawInfo *rbg, VdpPipeline **pipleLine) {
   if (regs)
     readVdp2ColorOffset(regs, info, info->linecheck_mask);
 
-  if (info->lineTexture != 0 && info->specialprimode == 0) {
+  // Per-line color effects (HBLANK raster): route to the per-line pipelines and
+  // zero the blanket register offset (the per-line table carries it instead).
+  // This must ALSO cover specialprimode == 2: Assault Suit Leynos 2 splits
+  // CLOFSL mid-frame (lines 0-119 -> offset B for the dusk sky, lines 120+ ->
+  // offset A for the ground) while RBG0 uses per-dot special priority. The
+  // `specialprimode == 0` gate added in 05cc58c89 ("Fix SEGA Rally filcker")
+  // made genPolygonRbg0's PG_VDP2_NORMAL_CRAM_SPECIAL_PRIORITY_COLOROFFSET
+  // branch unreachable, so the whole layer got line 3's offset B (-64) and the
+  // playfield rendered near-black.
+  if (info->lineTexture != 0) {
     info->cor = 0;
     info->cog = 0;
     info->cob = 0;
@@ -3946,6 +5303,18 @@ inline void setSpecialPriority(vdp2draw_struct *info, u8 dot, u32 *cramindex) {
         priority |= 1;
       }
     }
+    (*cramindex) |= priority << 16;
+  } else if (info->specialprimode == 1) {
+    // issue #22 (per-character special priority, SFPRMD mode 1): the priority
+    // LSB comes from the character's special function bit (constant across the
+    // character's texels, independent of the dot value). Bake the resulting
+    // per-character priority into the same CRAM-index bits 16-18 (-> texture B
+    // channel) the per-dot path uses, so the GBuffer companion can read it from
+    // txindex.b. This mirrors the legacy per-tile priority computation
+    // ((priority & ~1) | specialfunction). The legacy graphics path is
+    // unaffected: it keeps sorting mode 1 via the per-tile vertex Z offset
+    // (priorityOffset) and never reads B for mode 1.
+    priority = (info->priority & 0xE) | (info->specialfunction & 1);
     (*cramindex) |= priority << 16;
   }
 }
@@ -4498,6 +5867,20 @@ void VIDVulkan::drawRotation_in(RBGDrawInfo *rbg) {
     texture->textdata += texture->w;
     j += vstep;
   }
+}
+
+uint32_t VIDVulkan::getPerLineTexel(int enBGid, int row) const {
+  if (enBGid < 0 || enBGid >= enBGMAX) {
+    return 0;
+  }
+  const u32 *buf = perline[enBGid].dynamicBuf;
+  if (buf == nullptr) {
+    return 0;
+  }
+  // perline buffers are 512 wide (one texel per Saturn scan line).
+  if (row < 0) row = 0;
+  if (row >= 512) row = 511;
+  return buf[row];
 }
 
 void VIDVulkan::genLineinfo(vdp2draw_struct *info) {
@@ -5671,6 +7054,18 @@ void VIDVulkan::drawPattern(vdp2draw_struct *info, CharTexture *texture, int x, 
   tile.colornumber = info->colornumber;
   tile.blendmode = info->blendmode;
   tile.linescreen = info->linescreen;
+  // issue #22: the per-tile `tile` struct must carry the special color calc mode
+  // (SFCCMD) to genPolygon, or the resulting pipeline keeps specialcolormode = 0.
+  // genPolygon copies it into the program, and renderLayersToGBuffer pushes
+  // prg->specialcolormode as the companion's gbSpecialColorCalc. Without it the
+  // companion's per-dot SFCCMD cc-suppression gate (gbSpecialColorCalc != 0) is
+  // never taken, so a tile layer with special color calc (e.g. NBG2 mode 3, which
+  // should be opaque on dots whose CRAM color MSB is clear) stayed color-calc'd
+  // and went translucent in the new composite. The texture alpha bake itself uses
+  // info->specialcolormode directly, so the legacy path was unaffected.
+  tile.specialcolormode = info->specialcolormode;
+  tile.specialcode = info->specialcode;
+  tile.specialcolorfunction = info->specialcolorfunction;
   tile.mosaicxmask = info->mosaicxmask;
   tile.mosaicymask = info->mosaicymask;
   tile.bEnWin0 = info->bEnWin0;
@@ -6054,7 +7449,7 @@ void DynamicTexture::create(VIDVulkan *vulkan, int texWidth, int texHeight) {
   vulkan->createImage(texWidth, texHeight, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL,
                       VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
                       image, memory);
-  printf("DynamicTexture image = %llx\n", image);
+  //printf("DynamicTexture image = %llx\n", image);
   vulkan->transitionImageLayout(image, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED,
                                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
   vulkan->copyBufferToImage(stagingBuffer, image, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
@@ -6226,21 +7621,26 @@ void VIDVulkan::generateOffscreenPath(int width, int height) {
   VkDevice device = getDevice();
   VkPhysicalDevice physicalDevice = getPhysicalDevice();
 
-  deleteOfscreenPath();
-
   int pretransformFlag = _renderer->getWindow()->GetPreTransFlag();
   if (pretransformFlag & VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR ||
         pretransformFlag & VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR) {
 
       if (offscreenPass.height == width && offscreenPass.width == height)
         return;
-      offscreenPass.width = height;
-      offscreenPass.height = width;
 
   } else {
 
       if (offscreenPass.width == width && offscreenPass.height == height)
         return;
+  }
+
+  deleteOfscreenPath();
+
+  if (pretransformFlag & VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR ||
+        pretransformFlag & VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR) {
+      offscreenPass.width = height;
+      offscreenPass.height = width;
+  } else {
       offscreenPass.width = width;
       offscreenPass.height = height;
   }
@@ -6266,7 +7666,7 @@ void VIDVulkan::generateOffscreenPath(int width, int height) {
   VkMemoryRequirements memReqs;
 
   VK_CHECK_RESULT(vkCreateImage(device, &image, nullptr, &offscreenPass.image));
-  printf("offscreenPass.image = %llx\n", offscreenPass.image);
+  //printf("offscreenPass.image = %llx\n", offscreenPass.image);
   vkDebugNameObject(device, VK_OBJECT_TYPE_IMAGE, (uint64_t)offscreenPass.image, "offscreenPass.image");
   vkGetImageMemoryRequirements(device, offscreenPass.image, &memReqs);
   memAlloc.allocationSize = memReqs.size;
@@ -6921,7 +8321,18 @@ void VIDVulkan::generateSubRenderTarget(int width, int height) {
   attchmentDescriptions[1].samples = VK_SAMPLE_COUNT_1_BIT;
   attchmentDescriptions[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
   attchmentDescriptions[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-  attchmentDescriptions[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+  // VDP2 Window uses stencil bits 0/1 (set by VdpPipelineWindow with
+  // compareOp=ALWAYS + passOp=REPLACE; bits 2..7 used by sprite shadow /
+  // priority paths). The previous LOAD here preserved stencil between
+  // frames, so any window-covered pixel from a prior frame kept its bit
+  // set even when the new frame's window vertices no longer covered it
+  // (REPLACE only writes the rasterized region). The result was the
+  // window region monotonically growing as Saturn games adjusted
+  // WPSX/WPEX/WPSY/WPEY mid-game. CLEAR resets stencil at renderpass
+  // begin so each frame's window draws fully define the mask. The
+  // window draw is the first pipeline issued inside the renderpass,
+  // so no earlier stencil writes need preservation.
+  attchmentDescriptions[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
   attchmentDescriptions[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_STORE;
   attchmentDescriptions[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
   attchmentDescriptions[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
@@ -7312,10 +8723,8 @@ void VIDVulkan::getScreenshot(void ** outbuf, int & width, int & height)
   width = renderWidth;
   height = renderHeight;
 
-  if (dstbuf != nullptr) {
-    free(dstbuf);
-  }
-  dstbuf = (unsigned char*)malloc(width*height * 4);
+  // Allocate new buffer for this screenshot (caller will free it)
+  unsigned char* dstbuf = (unsigned char*)malloc(width*height * 4);
 
 
   switch (pretransformFlag) {

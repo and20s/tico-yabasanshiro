@@ -419,6 +419,7 @@ int Vdp2Init(void);
 void Vdp2DeInit(void);
 void Vdp2Reset(void);
 void Vdp2VBlankIN(void);
+void Vdp2HBlankStatusIN(void);
 void Vdp2HBlankIN(void);
 void Vdp2HBlankOUT(void);
 void Vdp2VBlankOUT(void);

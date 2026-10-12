@@ -1,6 +1,10 @@
 #include "filesearchwidget.h"
 #include "filesearchworker.h"
 #include "qprogressindicator.h"
+#include "QtYabause.h"
+#include "YabauseThread.h"
+#include "ui/UIYabause.h"
+#include "widgets/ToastNotification.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QPushButton>
@@ -19,13 +23,20 @@
 #include <QSettings>
 #include <QMessageBox>
 #include <QApplication>
+#include <QTimer>
 
 #include "QGameInfo.h"
 #include "GametableView.h"
 
+extern "C" {
+#include "../yabause.h"
+#include "../memory.h"
+}
+
 FileSearchWidget::FileSearchWidget(QWidget *parent)
     : QWidget(parent)
     , m_selectDirButton(nullptr)
+    , m_refreshButton(nullptr)
     , m_pathLabel(nullptr)
     , m_tableView(nullptr)
     , m_model(nullptr)
@@ -63,7 +74,8 @@ FileSearchWidget::FileSearchWidget(QWidget *parent)
     if (!lastDir.isEmpty() && QDir(lastDir).exists()) {
         m_pathLabel->setText(tr(" %1").arg(lastDir));
         QMetaObject::invokeMethod(m_worker, "search", Qt::QueuedConnection,
-                                Q_ARG(QString, lastDir));
+                                Q_ARG(QString, lastDir),
+                                Q_ARG(bool, false));
     }
 }
 
@@ -85,6 +97,10 @@ void FileSearchWidget::initUI()
     m_selectDirButton = new QPushButton(tr("Select Directory"), this);
     connect(m_selectDirButton, &QPushButton::clicked, this, &FileSearchWidget::selectDirectory);
     topLayout->addWidget(m_selectDirButton);
+
+    m_refreshButton = new QPushButton(tr("Refresh"), this);
+    connect(m_refreshButton, &QPushButton::clicked, this, &FileSearchWidget::refreshDirectory);
+    topLayout->addWidget(m_refreshButton);
 
 
     m_progressIndicator = new QProgressIndicator(this);
@@ -122,6 +138,10 @@ void FileSearchWidget::initUI()
     // ダブルクリックシグナルの接続
     connect(m_tableView, &GameTableView::doubleClicked,
       this, &FileSearchWidget::handleDoubleClick);
+
+    // View bug reports signal forwarding
+    connect(m_tableView, &GameTableView::viewBugReportsRequested,
+      this, &FileSearchWidget::viewBugReportsRequested);
 
     mainLayout->addWidget(m_tableView);
 }
@@ -162,8 +182,27 @@ void FileSearchWidget::selectDirectory()
         //m_model->removeRows(0, m_model->rowCount());
         m_tableView->clear();
         QMetaObject::invokeMethod(m_worker, "search", Qt::QueuedConnection,
-                                Q_ARG(QString, directory));
+                                Q_ARG(QString, directory),
+                                Q_ARG(bool, false));
     }
+}
+
+void FileSearchWidget::refreshDirectory()
+{
+    if (m_isSearching) {
+        return;
+    }
+
+    QString lastDir = getLastDirectory();
+    if (lastDir.isEmpty() || !QDir(lastDir).exists()) {
+        return;
+    }
+
+    // Force a full re-read ignoring the cache, then repopulate the list.
+    m_tableView->clear();
+    QMetaObject::invokeMethod(m_worker, "search", Qt::QueuedConnection,
+                            Q_ARG(QString, lastDir),
+                            Q_ARG(bool, true));
 }
 
 
@@ -180,6 +219,7 @@ void FileSearchWidget::handleSearchStarted()
     m_isSearching = true;
     m_progressIndicator->startAnimation();
     m_selectDirButton->setText(tr("Stop searching"));
+    m_refreshButton->setEnabled(false);
     m_searchEdit->setEnabled(false);
     m_filterColumnCombo->setEnabled(false);
 }
@@ -189,6 +229,7 @@ void FileSearchWidget::handleSearchCompleted(int fileCount)
     m_isSearching = false;
     m_progressIndicator->stopAnimation();
     m_selectDirButton->setText(tr("Select Directory"));
+    m_refreshButton->setEnabled(true);
     m_searchEdit->setEnabled(true);
     m_filterColumnCombo->setEnabled(true);
     m_tableView->sortByColumn(0, Qt::AscendingOrder);
@@ -257,4 +298,112 @@ void FileSearchWidget::setLastDirectory(const QString &path)
 {
   QSettings settings("org.devmiyax", "Yabasanshiro");
     settings.setValue("lastDirectory", path);
-}    
+}
+
+bool FileSearchWidget::launchGameForReproduction(const QString& productNumber,
+                                                 const QString& saveStatePath,
+                                                 const QString& memoryDumpPath)
+{
+    qDebug() << "FileSearchWidget::launchGameForReproduction";
+    qDebug() << "  Product Number:" << productNumber;
+    qDebug() << "  Save State:" << saveStatePath;
+    qDebug() << "  Memory Dump:" << memoryDumpPath;
+
+    if (!m_tableView) {
+        qCritical() << "TableView not initialized";
+        QMessageBox::critical(this, "Error", "Game list not initialized.");
+        return false;
+    }
+
+    // Get model from GameTableView (which is already a QTableView with proxy model)
+    QAbstractItemModel* viewModel = m_tableView->model();
+    if (!viewModel) {
+        qCritical() << "Model not initialized in GameTableView";
+        QMessageBox::critical(this, "Error", "Game list model not initialized.");
+        return false;
+    }
+
+    // Search for game with matching product number in the view's model
+    // Column 2 is COL_PRODUCT_NUMBER in GameTableView
+    QModelIndex foundIndex;
+    for (int row = 0; row < viewModel->rowCount(); ++row) {
+        QModelIndex index = viewModel->index(row, GameTableView::COL_PRODUCT_NUMBER);
+        QString rowProductNumber = viewModel->data(index).toString();
+        qDebug() << "  Checking row" << row << ":" << rowProductNumber;
+        if (rowProductNumber == productNumber) {
+            foundIndex = index;
+            qDebug() << "Found game at row:" << row;
+            break;
+        }
+    }
+
+    if (!foundIndex.isValid()) {
+        qCritical() << "Game not found with product number:" << productNumber;
+        QMessageBox::critical(this, "Game Not Found",
+                            QString("Could not find game with product number: %1\n\n"
+                                    "Please make sure the game is in your game library.").arg(productNumber));
+        return false;
+    }
+
+    // Get full file path using GameTableView's method
+    QString filePath = m_tableView->getFullPath(foundIndex);
+    if (filePath.isEmpty()) {
+        qCritical() << "Could not get file path for game";
+        QMessageBox::critical(this, "Error", "Could not get file path for the game.");
+        return false;
+    }
+
+    qDebug() << "Game file path:" << filePath;
+
+    // 1. Set backup path (memory dump)
+    qDebug() << "Setting backup path:" << memoryDumpPath;
+    extern void YabauseThread_setBackupPath(const char* buf);
+    YabauseThread_setBackupPath(memoryDumpPath.toLocal8Bit().constData());
+
+    // 2. Launch game by emitting fileSelected signal
+    qDebug() << "Emitting fileSelected signal to launch game";
+    emit fileSelected(filePath);
+
+    // 3. Schedule save state load after emulation starts (3 seconds delay)
+    qDebug() << "Scheduling save state load in 3 seconds...";
+    QTimer::singleShot(3000, [saveStatePath]() {
+        qDebug() << "Loading save state:" << saveStatePath;
+
+        // Get main window and thread
+        UIYabause* mainWindow = qobject_cast<UIYabause*>(QtYabause::mainWindow());
+        if (!mainWindow) {
+            qCritical() << "Failed to get main window";
+            QMessageBox::critical(nullptr, "Error", "Failed to get main window");
+            return;
+        }
+
+        YabauseThread* thread = mainWindow->getYabauseThread();
+        if (!thread) {
+            qCritical() << "Failed to get emulation thread";
+            QMessageBox::critical(nullptr, "Error", "Failed to get emulation thread");
+            return;
+        }
+
+        // Lock emulation threazzxczdaascd while loading
+        YabauseLocker locker(thread);
+
+        // Load save state
+        int result = YabLoadState(saveStatePath.toLocal8Bit().constData());
+        if (result != 0) {
+            qCritical() << "Failed to load save state, error code:" << result;
+            QMessageBox::critical(nullptr, "Load Failed",
+                                QString("Failed to load save state.\nError code: %1").arg(result));
+            return;
+        }
+
+        qDebug() << "Save state loaded successfully";
+
+        // Show toast notification instead of modal dialog
+        //UIYabause* mainWindow = qobject_cast<UIYabause*>(QtYabause::mainWindow());
+        if (mainWindow) {
+            ToastNotification::show(mainWindow, "Reproduction Started", 3000);
+        }
+    });
+
+    return true;
+}

@@ -43,11 +43,12 @@
 
 // Macro to check and display Vulkan return results
 #if defined(__ANDROID__)
+#include "../android_debug_log.h"
 
-#define LOGI(...) ((void)__android_log_print(ANDROID_LOG_INFO, "vulkanYaba", __VA_ARGS__))
-#define LOGW(...) ((void)__android_log_print(ANDROID_LOG_WARN, "vulkanYaba", __VA_ARGS__))
-#define LOGD(...) ((void)__android_log_print(ANDROID_LOG_DEBUG, "vulkanYaba", __VA_ARGS__))
-#define LOGE(...) ((void)__android_log_print(ANDROID_LOG_ERROR, "vulkanYaba", __VA_ARGS__))
+#define LOGI(...) VULKAN_LOGI(__VA_ARGS__)
+#define LOGW(...) VULKAN_LOGW(__VA_ARGS__)
+#define LOGD(...) VULKAN_LOGD(__VA_ARGS__)
+#define LOGE(...) VULKAN_LOGE(__VA_ARGS__)
 
 #define VK_CHECK_RESULT(f)																				\
 {																										\

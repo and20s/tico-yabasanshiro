@@ -54,6 +54,9 @@ public:
   const VkQueue GetComputeQueue() const;
   const uint32_t								GetVulkanGraphicsQueueFamilyIndex() const;
   const uint32_t								GetVulkanComputeQueueFamilyIndex() const;
+  bool GraphicsQueueSupportsCompute() const { return _graphics_queue_supports_compute; }
+  bool GraphicsQueueSupportsTimestamp() const { return _graphics_queue_supports_timestamp; }
+  bool SupportsPipelineStatisticsQuery() const { return _supports_pipeline_statistics_query; }
   const VkPhysicalDeviceProperties		&	GetVulkanPhysicalDeviceProperties() const;
   const VkPhysicalDeviceMemoryProperties	&	GetVulkanPhysicalDeviceMemoryProperties() const;
 
@@ -86,6 +89,9 @@ private:
 
   uint32_t	_graphics_family_index = 0;
   uint32_t _compute_family_index = 0;
+  bool _graphics_queue_supports_compute = false;
+  bool _graphics_queue_supports_timestamp = false;
+  bool _supports_pipeline_statistics_query = false;
 
   Window* _window = nullptr;
 

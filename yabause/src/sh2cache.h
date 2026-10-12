@@ -68,6 +68,7 @@ void cache_disable(cache_enty * ca);
 void cache_memory_write_b(cache_enty * ca, u32 addr, u8 val,u32 * cycle );
 void cache_memory_write_w(cache_enty * ca, u32 addr, u16 val,u32 * cycle);
 void cache_memory_write_l(cache_enty * ca, u32 addr, u32 val,u32 * cycle);
+void cache_update_external_write(u32 addr, u32 val, int size);
 u8 cache_memory_read_b(cache_enty * ca, u32 addr,u32 * cycle);
 u16 cache_memory_read_w(cache_enty * ca, u32 addr,u32 * cycle, u32 isInst);
 u32 cache_memory_read_l(cache_enty * ca, u32 addr,u32 * cycle);

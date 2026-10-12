@@ -83,16 +83,16 @@ VkShaderModule ShaderManager::compileShader(uint32_t id, const string & code, in
     std::string hashval = std::to_string(hash_value);
     string file_path = mempath + hashval + ".spv";
 
-    // バイナリファイルを読み込む
+    // Load the binary file.
     std::ifstream file(file_path, std::ios::binary);
     if (file) {
 
-      // ファイルサイズを取得する
+      // Query the file size.
       file.seekg(0, std::ios::end);
       std::size_t file_size = file.tellg();
       file.seekg(0, std::ios::beg);
 
-      // ファイルの内容を読み込む
+      // Read the file contents.
       data.resize(file_size / sizeof(uint32_t));
       file.read(reinterpret_cast<char*>(data.data()), file_size);
       file.close();
@@ -122,10 +122,10 @@ VkShaderModule ShaderManager::compileShader(uint32_t id, const string & code, in
           std::cerr << "Error: Failed to open file." << std::endl;
           throw std::runtime_error("failed to create shader module!");
       }
-      // データを書き込む
+      // Write the payload.
       file.write(reinterpret_cast<char*>(data.data()), data.size() * sizeof(uint32_t));
 
-      // ファイルを閉じる
+      // Close the file.
       file.close();
     }
 //#endif
@@ -220,6 +220,7 @@ VdpPipeline::VdpPipeline(
     int specialPriority;
     int u_specialColorFunc;
     int u_dir;
+    float u_satLineCount;
   };
   )u";
 
@@ -229,10 +230,18 @@ VdpPipeline::VdpPipeline(
   layout(location = 2) in vec4 a_texcoord;
 
   layout(location = 0) out vec4 fragTexCoord;
+  // issue #22 (per-character special priority, SFPRMD mode 1 for direct-color
+  // layers): forward the raw vertex Z (priorityOffset / 2, set by genPolygon) so
+  // the GBuffer companion fragment can recover the per-character priority. The
+  // legacy graphics path consumes this via the depth test; the GBuffer pass has
+  // no depth, so it reads the varying instead. Unused by every fragment shader
+  // that does not declare it (legacy and CRAM paths), hence harmless there.
+  layout(location = 1) flat out float v_priorityZ;
 
   void main() {
     gl_Position = mvp * a_position;
     fragTexCoord = a_texcoord;
+    v_priorityZ = a_position.z;
   }
   )s";
 
@@ -459,7 +468,21 @@ void VdpPipeline::createGraphicsPipeline() {
   vertShaderStageInfo.module = _vertShaderModule;
   vertShaderStageInfo.pName = "main";
 
-  _fragShaderModule = compileShader(fragShaderName, shaderc_fragment_shader);
+  // issue #22 T-004: in GBuffer output mode the fragment shader gains a second
+  // (attr) output. Use a distinct shader-cache key so the rewritten variant is
+  // not confused with the normal single-output shader for the same prgid.
+  if (gbufferOutput) {
+    std::string gbFrag = injectGBufferWindow(injectGBufferAttrOutput(fragShaderName));
+    ShaderManager * sm = ShaderManager::getInstance();
+    uint32_t gbKey = (prgid | (shaderc_fragment_shader << 16)) ^ 0x40000000u;
+    _fragShaderModule = sm->getShader(gbKey);
+    if (_fragShaderModule == 0) {
+      sm->setVulkan(vulkan);
+      _fragShaderModule = sm->compileShader(gbKey, gbFrag, shaderc_fragment_shader);
+    }
+  } else {
+    _fragShaderModule = compileShader(fragShaderName, shaderc_fragment_shader);
+  }
   VkPipelineShaderStageCreateInfo fragShaderStageInfo = {};
   fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
   fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
@@ -573,6 +596,39 @@ void VdpPipeline::createGraphicsPipeline() {
   VkPipelineColorBlendStateCreateInfo colorBlending = {};
   createColorBlending(colorBlending, colorBlendAttachment);
 
+  // issue #22 T-004: GBuffer MRT mode overrides depth/stencil and blend. The
+  // GBuffer render pass has no depth attachment, so depth/stencil testing must
+  // be disabled, and it has two color attachments (color + attr) that both
+  // require an explicit blend state with blendEnable = VK_FALSE.
+  if (gbufferOutput) {
+    depthStencil = {};
+    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencil.depthTestEnable = VK_FALSE;
+    depthStencil.depthWriteEnable = VK_FALSE;
+    depthStencil.depthCompareOp = VK_COMPARE_OP_ALWAYS;
+    depthStencil.depthBoundsTestEnable = VK_FALSE;
+    depthStencil.stencilTestEnable = VK_FALSE;
+    depthStencil.minDepthBounds = 0.0f;
+    depthStencil.maxDepthBounds = 1.0f;
+
+    const VkColorComponentFlags allMask =
+        VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+        VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    for (int i = 0; i < 2; i++) {
+      gbufferBlendAttachments[i] = {};
+      gbufferBlendAttachments[i].colorWriteMask = allMask;
+      gbufferBlendAttachments[i].blendEnable = VK_FALSE;
+      gbufferBlendAttachments[i].srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+      gbufferBlendAttachments[i].dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+      gbufferBlendAttachments[i].colorBlendOp = VK_BLEND_OP_ADD;
+      gbufferBlendAttachments[i].srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+      gbufferBlendAttachments[i].dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+      gbufferBlendAttachments[i].alphaBlendOp = VK_BLEND_OP_ADD;
+    }
+    colorBlending.attachmentCount = 2;
+    colorBlending.pAttachments = gbufferBlendAttachments;
+  }
+
   /*
   VkDynamicState dynamicStates[] = {
     VK_DYNAMIC_STATE_VIEWPORT,
@@ -594,6 +650,21 @@ void VdpPipeline::createGraphicsPipeline() {
   pipelineLayoutInfo.pPushConstantRanges = nullptr; // Optional
   pipelineLayoutInfo.setLayoutCount = 1;
   pipelineLayoutInfo.pSetLayouts = &_descriptorSetLayout;
+
+  // issue #22 T-004: GBuffer mode passes the packed per-layer attr fields via a
+  // fragment-stage push constant (5 ints: priority / ccEnable / ccRatio /
+  // specialColorCalc mode / shadowEn). The 4th int (SFCCMD mode) gates the
+  // per-texel special-color-calc cc suppression so a normal cc layer (mode 0) is
+  // never suppressed (its alpha can hit 0xFF naturally when CCRNA == 0). The 5th
+  // int (G4) carries the per-layer SDCTL shadow-accept bit into attr bit 14.
+  VkPushConstantRange gbPushRange = {};
+  if (gbufferOutput) {
+    gbPushRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    gbPushRange.offset = 0;
+    gbPushRange.size = sizeof(int) * 5;
+    pipelineLayoutInfo.pushConstantRangeCount = 1;
+    pipelineLayoutInfo.pPushConstantRanges = &gbPushRange;
+  }
 
   if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &_pipelineLayout) != VK_SUCCESS) {
     throw std::runtime_error("failed to create pipeline layout!");
@@ -656,6 +727,274 @@ void VdpPipeline::createColorAttachment(VkPipelineColorBlendAttachmentState & co
   color.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
   color.alphaBlendOp = VK_BLEND_OP_ADD;
 
+}
+
+
+std::string VdpPipeline::injectGBufferAttrOutput(const std::string & src) {
+  if (!gbufferOutput) {
+    return src;
+  }
+
+  // Dedicated GBuffer shaders (e.g. PG_VDP2_PER_LINE_GBUFFER_CRAM) already
+  // declare and write their own `outGBufferAttr` at location 1, so leave them
+  // entirely alone.
+  if (src.find("outGBufferAttr") != std::string::npos) {
+    return src;
+  }
+
+  // Helper: drop every whole line that contains `needle`.
+  auto removeLines = [](const std::string &s, const char *needle) {
+    std::string out;
+    size_t pos = 0;
+    while (pos < s.size()) {
+      size_t eol = s.find('\n', pos);
+      if (eol == std::string::npos) eol = s.size();
+      const std::string line = s.substr(pos, eol - pos);
+      if (line.find(needle) == std::string::npos) {
+        out += line;
+        if (eol < s.size()) out += '\n';
+      }
+      pos = eol + 1;
+    }
+    return out;
+  };
+
+  std::string work = src;
+
+  // Detect an ACTIVE (uncommented) `out float fargDepth` declaration. A commented
+  // dead line (e.g. PG_VDP2_NORMAL_CRAM carries `//... out float fargDepth;`)
+  // must NOT trigger the strip below, so the already-verified mode 1/2 path stays
+  // byte-for-byte unchanged.
+  bool hasActiveFargDepth = false;
+  {
+    size_t pos = 0;
+    while (pos < work.size()) {
+      size_t eol = work.find('\n', pos);
+      if (eol == std::string::npos) eol = work.size();
+      std::string line = work.substr(pos, eol - pos);
+      size_t comment = line.find("//");
+      if (comment != std::string::npos) line = line.substr(0, comment);
+      if (line.find("out float fargDepth") != std::string::npos) {
+        hasActiveFargDepth = true;
+        break;
+      }
+      pos = eol + 1;
+    }
+  }
+
+  // issue #22 (per-pixel special priority): legacy special-priority shaders
+  // declare a float depth output at location 1 (`out float fargDepth`) and write
+  // the per-pixel priority to `gl_FragDepth`. The GBuffer pass has no depth
+  // attachment and needs location 1 to be the uint attr, so strip both. The attr
+  // injection below then routes the same per-pixel priority (for CRAM, from
+  // txindex.b) into the slice attr instead -- the layer renders with correct
+  // color + per-pixel priority rather than the previous undefined float->uint
+  // write. (PG_VDP2_NORMAL_CRAM_SPECIAL_PRIORITY_COLOROFFSET / Assault Leynos 2.)
+  if (hasActiveFargDepth) {
+    work = removeLines(work, "fargDepth");
+    work = removeLines(work, "gl_FragDepth");
+  }
+
+  // Any OTHER active (uncommented) location=1 output is unexpected: bail out
+  // defensively rather than collide with it. Ignore // line comments so a dead
+  // declaration (e.g. PG_VDP2_NORMAL_CRAM's commented fargDepth) does not
+  // suppress injection (which once made those layers invisible -- issue #22).
+  {
+    bool hasActiveLocation1 = false;
+    size_t pos = 0;
+    while (pos < work.size()) {
+      size_t eol = work.find('\n', pos);
+      if (eol == std::string::npos) eol = work.size();
+      std::string line = work.substr(pos, eol - pos);
+      size_t comment = line.find("//");
+      if (comment != std::string::npos) line = line.substr(0, comment);
+      if (line.find("location = 1") != std::string::npos) {
+        hasActiveLocation1 = true;
+        break;
+      }
+      pos = eol + 1;
+    }
+    if (hasActiveLocation1) {
+      return src;
+    }
+  }
+
+  // GBuffer attr output (location 1) + a push constant carrying the packed
+  // per-layer attr fields. The fields are repacked in GLSL using the SAME
+  // layout as vdp2_color_oracle.h packAttr(): bits 0..4 priority, bit 5
+  // ccEnable, bits 6..11 ccRatio, bit 12 transparent. We pack from separate
+  // fields (instead of a single pre-packed word) so the host side can stay in
+  // plain ints and the packing definition lives in one place per language.
+  //
+  // The assignment is inserted at the very start of main(): any fragment that
+  // later hits `discard` writes neither attachment, so the attr stays at the
+  // render pass clear value (0 -> transparent). Surviving fragments are opaque,
+  // hence transparent is left 0 here.
+  const std::string decl = R"s(
+  layout(location = 1) out uint outGBufferAttr;
+  layout(push_constant) uniform GBufferAttrPC {
+    int gbPriority;
+    int gbCcEnable;
+    int gbCcRatio;
+    int gbSpecialColorCalc;
+    int gbShadowEn;
+  } gbAttr;
+  uint packGBufferAttrPrio(int prio) {
+    return (uint(prio) & 0x1Fu)
+         | ((gbAttr.gbCcEnable != 0) ? (1u << 5) : 0u)
+         | ((uint(gbAttr.gbCcRatio) & 0x3Fu) << 6)
+         | ((gbAttr.gbShadowEn != 0) ? (1u << 14) : 0u);
+  }
+  uint packGBufferAttr() { return packGBufferAttrPrio(gbAttr.gbPriority); }
+  uint packGBufferAttrFull(int prio, int ccEn, int ccRat) {
+    return (uint(prio) & 0x1Fu)
+         | ((ccEn != 0) ? (1u << 5) : 0u)
+         | ((uint(ccRat) & 0x3Fu) << 6)
+         | ((gbAttr.gbShadowEn != 0) ? (1u << 14) : 0u);   // G4: SDCTL SHADEN
+  }
+  )s";
+
+  // issue #22 (special priority, SFPRMD):
+  // - CRAM (palette) layers: the per-pixel priority is baked into the decoded
+  //   texture's B channel by VIDVulkan::setSpecialPriority -- mode 2 (per-dot)
+  //   packs (priority & 0xE) | specialbit, mode 1 (per-character) packs
+  //   (priority & 0xE) | specialfunction -- into CRAM-index bits 16-18
+  //   (-> txindex.b). Read it back here for both modes (specialPriority != 0).
+  // - Direct-color (RGB) layers: there is no per-dot priority source (the pixel
+  //   IS the color, B is blue), so only mode 1 (per-character) applies; the
+  //   legacy path carries it as a per-tile vertex Z offset (priorityOffset/2,
+  //   genPolygon). The base VDP2 vertex shader forwards a_position.z as the flat
+  //   varying v_priorityZ, so recover the per-character priority as
+  //   gbPriority + round(v_priorityZ * 2). For mode 2 on direct color
+  //   v_priorityZ is 0 (no offset), so this is a no-op -- correct.
+  // The compositor already sorts per-pixel by (attr & 0x1F); detect CRAM by the
+  // s_color palette sampler.
+  const bool isCram = (work.find("s_color") != std::string::npos) &&
+                      (work.find("s_texture") != std::string::npos) &&
+                      (work.find("v_texcoord") != std::string::npos);
+  const std::string declExtra =
+      isCram ? std::string()
+             : std::string("\n  layout(location = 1) flat in float v_priorityZ;\n");
+  const std::string assign =
+      isCram
+          ? std::string(
+                "\n  int _gbPrio = gbAttr.gbPriority;\n"
+                "  if (specialPriority != 0) {\n"
+                "    _gbPrio = int(texelFetch(s_texture, ivec2(int(v_texcoord.x), int(v_texcoord.y)), 0).b * 255.0 + 0.5);\n"
+                "  }\n"
+                // issue #22 special color calc (SFCCMD): the legacy CPU
+                // texture-gen (RotationFetchPixel / cell fetch) bakes the
+                // per-dot color-calc result into the decoded texture's A
+                // channel -- when special color calc mode 1/2/3 SUPPRESSES this
+                // dot's color calc, it writes alpha 0xFF (fully opaque). The
+                // per-layer push-constant ccEnable/ccRatio are layer-wide, so
+                // honoring this per-texel suppression here is what keeps a
+                // special-color layer (e.g. NiGHTS NBG1, mode 2) opaque per dot
+                // instead of going translucent everywhere. The vulkan alpha
+                // byte is an 0..0xFF blend factor (NOT the titan 0..0x3F ratio),
+                // so only the SUPPRESSION (==0xFF) is read per texel; the cc
+                // ratio stays the correctly-scaled push-constant value.
+                //
+                // CRITICAL gate: only honor the alpha==0xFF suppression when this
+                // layer actually uses special color calc (SFCCMD mode != 0). With
+                // a normal cc layer (mode 0) and CCRNA == 0 the decoded alpha is
+                // ((~CCRNA & 0x1F00) >> 5) + 0x7 == 0xFF on EVERY opaque dot, which
+                // is NOT a suppression -- it just means ratio 0 (irrelevant in add
+                // mode). Suppressing cc there wrongly turned an additive top layer
+                // opaque (e.g. NBG1 black over RBG0 stopped revealing RBG0).
+                "  int _gbCcEn = gbAttr.gbCcEnable;\n"
+                "  int _gbCcRat = gbAttr.gbCcRatio;\n"
+                "  if (gbAttr.gbCcEnable != 0 && gbAttr.gbSpecialColorCalc != 0) {\n"
+                "    int _aByte = int(texelFetch(s_texture, ivec2(int(v_texcoord.x), int(v_texcoord.y)), 0).a * 255.0 + 0.5);\n"
+                "    if (_aByte == 255) { _gbCcEn = 0; _gbCcRat = 0x3F; }\n"
+                "  }\n"
+                "  outGBufferAttr = packGBufferAttrFull(_gbPrio, _gbCcEn, _gbCcRat);\n")
+          : std::string(
+                "\n  int _gbPrio = gbAttr.gbPriority;\n"
+                "  if (specialPriority != 0) {\n"
+                "    _gbPrio = gbAttr.gbPriority + int(floor(v_priorityZ * 2.0 + 0.5));\n"
+                "  }\n"
+                "  outGBufferAttr = packGBufferAttrPrio(_gbPrio);\n");
+
+  // Insert the declaration right before "void main". This works regardless of
+  // which subclass shader body is used because every layer fragment shader
+  // declares its color output before main and has a single main entry point.
+  std::string out = work;
+  const std::string mainKey = "void main";
+  size_t mainPos = out.find(mainKey);
+  if (mainPos == std::string::npos) {
+    // No main found: leave the shader untouched (defensive; should not happen
+    // for the layer pipelines this mode is enabled on).
+    return src;
+  }
+  out.insert(mainPos, decl + declExtra);
+
+  // Insert the attr assignment after the opening brace of main().
+  mainPos = out.find(mainKey);
+  size_t bracePos = out.find('{', mainPos);
+  if (bracePos == std::string::npos) {
+    return src;
+  }
+  out.insert(bracePos + 1, assign);
+  return out;
+}
+
+
+// issue #22 (layer display window): inject a per-pixel window discard at the top
+// of main() for GBuffer companion shaders. The legacy renderer clips layers with
+// a stencil test (WINDOW_CLIP_STENCIL); the GBuffer render pass has no stencil
+// attachment, so the window must be evaluated in the fragment shader instead.
+//
+// The per-line window 0 / window 1 horizontal spans live in rows 2 / 3 of the
+// lineColor texture (packed by VIDVulkan::updatePerLineColorCalc), bound here at
+// windowSampler (binding 4). The Saturn scan line / x are recovered from
+// gl_FragCoord using u_emu_height (= vdp2height / gbH, the same scale the per-line
+// color path already uses) and windowWidth (= vdp2width / gbW). winmask / winflag
+// / winmode are per-layer UBO values computed exactly like
+// VdpPipeline::createDpethStencil() so the result matches the legacy stencil
+// test. A winmask of 0 means the layer uses no window, so the test is skipped.
+//
+// Defensive: only inject when the shader declares windowSampler and has a main().
+// Sprite window (membership bit 2) is intentionally not evaluated (per-pixel VDP1
+// data, out of the per-line table); such layers drop sprite-window gating.
+std::string VdpPipeline::injectGBufferWindow(const std::string & src) {
+  if (!gbufferOutput) {
+    return src;
+  }
+  if (src.find("windowSampler") == std::string::npos) {
+    return src;  // shader has no window sampler binding; leave untouched
+  }
+  const std::string mainKey = "void main";
+  size_t mainPos = src.find(mainKey);
+  if (mainPos == std::string::npos) {
+    return src;
+  }
+  size_t bracePos = src.find('{', mainPos);
+  if (bracePos == std::string::npos) {
+    return src;
+  }
+
+  const std::string winCode = R"s(
+  if (winmask != 0) {
+    int _wl = int(gl_FragCoord.y * u_emu_height);
+    int _wx = int(gl_FragCoord.x * windowWidth);
+    uvec4 _w0 = uvec4(texelFetch(windowSampler, ivec2(_wl, 2), 0) * 255.0 + 0.5);
+    uvec4 _w1 = uvec4(texelFetch(windowSampler, ivec2(_wl, 3), 0) * 255.0 + 0.5);
+    int _s0 = int(_w0.r) | (int(_w0.g) << 8);
+    int _e0 = int(_w0.b) | ((int(_w0.a) & 0x7F) << 8);
+    int _s1 = int(_w1.r) | (int(_w1.g) << 8);
+    int _e1 = int(_w1.b) | ((int(_w1.a) & 0x7F) << 8);
+    int _wv = 0;
+    if ((_w0.a & 0x80u) != 0u && _wx >= _s0 && _wx < _e0) _wv |= 1;
+    if ((_w1.a & 0x80u) != 0u && _wx >= _s1 && _wx < _e1) _wv |= 2;
+    if (winmode == 0) { if ((_wv & winmask) != winflag) discard; }
+    else              { if ((_wv & winmask) == winflag) discard; }
+  }
+)s";
+
+  std::string out = src;
+  out.insert(bracePos + 1, winCode);
+  return out;
 }
 
 
@@ -975,6 +1314,62 @@ VdpCramLine::VdpCramLine(VIDVulkan * vulkan, TextureManager * tm, VertexManager 
   prgid = PG_LINECOLOR_INSERT_CRAM;
 }
 
+// Destination-alpha (CCRTMD=1) variants of the line color insertion pipelines.
+// Port of the OpenGL Yglprg_linecol_destalpha_f / _cram_f shaders
+// (yglshaderes.c): the line color screen is folded in at its own ratio
+// (lncol.a = (CCRLB & 0x1F)/32, set by updateLineColor) inside the shader, and
+// the layer's color-calc ratio is written to dst alpha for later
+// destination-alpha consumers. The OpenGL path runs these with GL_BLEND
+// disabled (Ygl_uniformLinecolorInsert), so blending is disabled here too.
+// These pipeline ids previously fell into the factory's default case (a plain
+// alpha-blended pipeline with no line color fold).
+VdpLineColDst::VdpLineColDst(VIDVulkan * vulkan, TextureManager * tm, VertexManager * vm) : VdpLineBase(vulkan, tm, vm) {
+  fragShaderName += R"s(
+        fragColor = (txcol * (1.0-lncol.a)) + (lncol*lncol.a) + u_color_offset;
+        fragColor.a = txcol.a;
+      }else{
+        discard;
+      }
+    }
+  )s";
+  prgid = PG_LINECOLOR_INSERT_DESTALPHA;
+}
+
+void VdpLineColDst::createColorAttachment(VkPipelineColorBlendAttachmentState & color) {
+  color.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+  color.blendEnable = VK_FALSE;
+  color.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+  color.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+  color.colorBlendOp = VK_BLEND_OP_ADD;
+  color.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+  color.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+  color.alphaBlendOp = VK_BLEND_OP_ADD;
+}
+
+VdpCramLineDst::VdpCramLineDst(VIDVulkan * vulkan, TextureManager * tm, VertexManager * vm) : VdpLineBase(vulkan, tm, vm) {
+  fragShaderName += R"s(
+        vec4 txcolc = texelFetch( s_color,  ivec2( ( int(txcol.g*65280.0) | int(txcol.r*255.0)) ,0 )  , 0 );
+        fragColor = (txcolc * (1.0-lncol.a)) + (lncol*lncol.a) + u_color_offset;
+        fragColor.a = txcol.a;
+      }else{
+        discard;
+      }
+    }
+  )s";
+  prgid = PG_LINECOLOR_INSERT_DESTALPHA_CRAM;
+}
+
+void VdpCramLineDst::createColorAttachment(VkPipelineColorBlendAttachmentState & color) {
+  color.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+  color.blendEnable = VK_FALSE;
+  color.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+  color.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+  color.colorBlendOp = VK_BLEND_OP_ADD;
+  color.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+  color.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+  color.alphaBlendOp = VK_BLEND_OP_ADD;
+}
+
 
 void VdpPipeline::initDescriptorSets(const vector<int> & bindid) {
 
@@ -1148,19 +1543,31 @@ VdpPipelinePerLine::VdpPipelinePerLine(VIDVulkan * vulkan, TextureManager * tm, 
     fragFuncCheckWindow
     + R"s(
 
-      int getLinePosInTexture( int dir ){      
+      int getLinePosInTexture( int dir ){
+        // s_line stores one texel per Saturn scanline, valid only in
+        // [0, vdp2height). The fragment's Saturn line must therefore be
+        // scaled by the Saturn screen height, NOT by u_tw/u_th: those equal
+        // the offscreen image size, which the VDP1 compute rasterizer
+        // enlarges by an HD factor (vdp2height * fbScale). Using u_th there
+        // over-indexes s_line and the lower (1 - 1/fbScale) of the screen
+        // reads past the valid range (returns 0 -> alpha 0 -> discard),
+        // blacking out that region. u_satLineCount carries vdp2height exactly
+        // (set by the per-line composite caller); it equals u_th in graphics
+        // mode and stays correct under HD compute scaling. (u_vheight is the
+        // blit quad depth here, not the line count.)
+        float satLines = u_satLineCount;
         switch(dir){
           case 1: // 90
-            return int((1.0 - v_texcoord.x) * u_tw);
+            return int((1.0 - v_texcoord.x) * satLines);
             break;
           case 2: // 270
-            return int(v_texcoord.x * u_tw);
+            return int(v_texcoord.x * satLines);
             break;
           case 3: // 180
-            return int((1.0 - v_texcoord.y) * u_th);
+            return int((1.0 - v_texcoord.y) * satLines);
             break;
           default:
-            return int(u_th * v_texcoord.y);
+            return int(satLines * v_texcoord.y);
             break;
         }
         return 0;
@@ -1172,6 +1579,7 @@ VdpPipelinePerLine::VdpPipelinePerLine(VIDVulkan * vulkan, TextureManager * tm, 
     addr.x = int(u_tw * v_texcoord.x);
     addr.y = int(u_th * v_texcoord.y);
     vec4 txcol = texelFetch( s_texture, addr,0 ) ;
+    fragColor = txcol;
     if(txcol.a > 0.0){
       addr.x = getLinePosInTexture(u_dir);
       addr.y = 0;
@@ -1186,7 +1594,7 @@ VdpPipelinePerLine::VdpPipelinePerLine(VIDVulkan * vulkan, TextureManager * tm, 
       if( txcol.a > 0.0 )
         fragColor = txcol;
       else
-         discard;
+        discard;
     }else{
       discard;
     }
@@ -1395,6 +1803,199 @@ VdpPipelineCramNoblend::VdpPipelineCramNoblend(VIDVulkan * vulkan, TextureManage
   prgid = PG_VDP2_NOBLEND_CRAM;
 }
 
+
+// issue #22 (T-015): G-buffer companion for palette per-line layers. CRAM decode
+// + per-line color offset, with the slice color (location 0) and packed attr
+// (location 1) written explicitly. Used only with gbufferOutput = true; because
+// it already declares an active location=1 output, injectGBufferAttrOutput()
+// leaves it untouched, while the MRT / blend / push-constant setup still applies.
+VdpPipelineCramPerLineGBuffer::VdpPipelineCramPerLineGBuffer(VIDVulkan * vulkan, TextureManager * tm, VertexManager * vm) : VdpPipeline(vulkan, tm, vm) {
+  bindid.clear();
+  bindid.push_back(bindIdTexture);
+  bindid.push_back(bindIdColorRam);
+  bindid.push_back(bindIdLine);
+  bindid.push_back(bindIdWindow);
+
+  fragShaderName = vdp2Uniform + R"S(
+    layout(location = 0) in vec4 v_texcoord;
+    layout(binding = 1) uniform highp sampler2D s_texture;
+    layout(binding = 2) uniform highp sampler2D s_color;
+    layout(binding = 3) uniform highp sampler2D s_line;
+    layout(binding = 4) uniform highp sampler2D windowSampler;
+    layout(location = 0) out vec4 fragColor;
+    layout(location = 1) out uint outGBufferAttr;
+    layout(push_constant) uniform GBufferAttrPC {
+      int gbPriority;
+      int gbCcEnable;
+      int gbCcRatio;
+      int gbSpecialColorCalc;
+      int gbShadowEn;
+    } gbAttr;
+    uint packGBufferAttr() {
+      return (uint(gbAttr.gbPriority) & 0x1Fu)
+           | ((gbAttr.gbCcEnable != 0) ? (1u << 5) : 0u)
+           | ((uint(gbAttr.gbCcRatio) & 0x3Fu) << 6)
+           | ((gbAttr.gbShadowEn != 0) ? (1u << 14) : 0u);
+    }
+  )S" +
+    fragFuncCheckWindow
+    + R"s(
+  void main() {
+    checkWindow();
+    vec4 txindex = texelFetch( s_texture, ivec2(int(v_texcoord.x),int(v_texcoord.y)) ,0 );
+    if(txindex.a == 0.0) { discard; }
+    vec4 txcol = texelFetch( s_color,  ivec2( ( int(txindex.g*65280.0) | int(txindex.r*255.0)) ,0 )  , 0 );
+    txcol = txcol + u_color_offset;
+    // Per-line color offset (Vdp2GeneratePerLineColorCalcuration): the per-line
+    // texture (perline[id], 512x1) stores a 128-centered signed RGB offset per
+    // Saturn scan line on row 0. Recover the scan line from gl_FragCoord.y scaled
+    // by u_emu_height (= vdp2height / gbufferHeight) and decode with (v-0.5)*2,
+    // mirroring VdpPipelinePerLine. If the offset bands appear vertically flipped
+    // the index should become (u_vheight - gl_FragCoord.y) * u_emu_height.
+    int lineIdx = int(gl_FragCoord.y * u_emu_height);
+    vec4 lncol = texelFetch( s_line, ivec2(lineIdx, 0), 0 );
+    txcol.r += (lncol.r - 0.5) * 2.0;
+    txcol.g += (lncol.g - 0.5) * 2.0;
+    txcol.b += (lncol.b - 0.5) * 2.0;
+    fragColor = clamp(txcol, vec4(0.0), vec4(1.0));
+    fragColor.a = txindex.a;
+    // Per-line color calc RATIO. The per-line texel alpha (bits 24-31) is the
+    // titan blend alpha = (ccRatio<<2)+3 on lines where per-line color calc is
+    // enabled (Vdp2Lines[line].CCCTL & bit; info->blendmode = VDP2_CC_RATE), or
+    // 0xFF where it is not. The legacy 2-pass sets the layer's blend alpha from
+    // it (PG_VDP2_PER_LINE_ALPHA: txcol.a = s_line.a, then alpha-blend over the
+    // layer below). Reproduce that in the deferred path by driving the slice attr
+    // cc from the per-line ratio so the compositor blends this (top) layer with
+    // the one below at that ratio. Confirmed via debugger: LUNA NBG0 row 185
+    // blendmode = VDP2_CC_RATE, linebuf[185] = 0x7F808080 (alpha 0x7F ~50%).
+    // issue #22 special priority (SFPRMD): the per-pixel priority is baked into
+    // the decoded texture's B channel (setSpecialPriority on the CPU path, the
+    // RBG generator's cramindex bits 16-18 on the GPU path). Same read as the
+    // injected companion (injectGBufferAttrOutput); without it a special-
+    // priority layer routed through this per-line companion reported the flat
+    // layer priority -- Assault Suit Leynos 2's RBG0 (mode 2, per-dot) lost the
+    // priority-3 tree dots, so sprites could never hide behind them.
+    int _gbPrio = gbAttr.gbPriority;
+    if (specialPriority != 0) {
+      _gbPrio = int(txindex.b * 255.0 + 0.5);
+    }
+    int lineAlpha = int(lncol.a * 255.0 + 0.5);
+    int _gbCcEn = (gbAttr.gbCcEnable != 0) ? 1 : 0;
+    int _gbCcRat = gbAttr.gbCcRatio;
+    if (lineAlpha < 0xFF) {
+      _gbCcEn = 1;
+      _gbCcRat = clamp((lineAlpha - 3) >> 2, 0, 0x3F);
+    }
+    // issue #22 special color calc (SFCCMD): same per-texel suppression as the
+    // injected companion (injectGBufferAttrOutput). A special-color-calc layer
+    // bakes "cc off for this dot" into the decoded texture alpha as 0xFF; the
+    // per-line ratio only applies to dots whose cc stays enabled. Without this
+    // the whole layer blended at the per-line ratio -- Assault Suit Leynos 2's
+    // NBG1 HUD (SFCCMD mode 1: only SF-flagged panel tiles are translucent)
+    // turned semi-transparent everywhere, text included.
+    if (_gbCcEn != 0 && gbAttr.gbSpecialColorCalc != 0) {
+      int _aByte = int(txindex.a * 255.0 + 0.5);
+      if (_aByte == 255) { _gbCcEn = 0; _gbCcRat = 0x3F; }
+    }
+    outGBufferAttr = (uint(_gbPrio) & 0x1Fu)
+                   | ((_gbCcEn != 0) ? (1u << 5) : 0u)
+                   | ((uint(_gbCcRat) & 0x3Fu) << 6)
+                   | ((gbAttr.gbShadowEn != 0) ? (1u << 14) : 0u);
+  }
+  )s";
+
+  prgid = PG_VDP2_PER_LINE_GBUFFER_CRAM;
+}
+
+void VdpPipelineCramPerLineGBuffer::createColorAttachment(VkPipelineColorBlendAttachmentState & color) {
+  color.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+  color.blendEnable = VK_FALSE;
+  color.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+  color.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+  color.colorBlendOp = VK_BLEND_OP_ADD;
+  color.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+  color.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+  color.alphaBlendOp = VK_BLEND_OP_ADD;
+}
+
+// issue #108: direct-color twin of VdpPipelineCramPerLineGBuffer. The layer
+// texture already holds final RGBA (e.g. the RBG generator output or a 32K
+// color bitmap), so no CRAM lookup; per-line color offset and per-line
+// color-calc ratio handling are identical to the CRAM companion.
+VdpPipelinePerLineGBuffer::VdpPipelinePerLineGBuffer(VIDVulkan * vulkan, TextureManager * tm, VertexManager * vm) : VdpPipeline(vulkan, tm, vm) {
+  bindid.clear();
+  bindid.push_back(bindIdTexture);
+  bindid.push_back(bindIdLine);
+  bindid.push_back(bindIdWindow);
+
+  fragShaderName = vdp2Uniform + R"S(
+    layout(location = 0) in vec4 v_texcoord;
+    layout(binding = 1) uniform highp sampler2D s_texture;
+    layout(binding = 3) uniform highp sampler2D s_line;
+    layout(binding = 4) uniform highp sampler2D windowSampler;
+    layout(location = 0) out vec4 fragColor;
+    layout(location = 1) out uint outGBufferAttr;
+    layout(push_constant) uniform GBufferAttrPC {
+      int gbPriority;
+      int gbCcEnable;
+      int gbCcRatio;
+      int gbSpecialColorCalc;
+      int gbShadowEn;
+    } gbAttr;
+    uint packGBufferAttr() {
+      return (uint(gbAttr.gbPriority) & 0x1Fu)
+           | ((gbAttr.gbCcEnable != 0) ? (1u << 5) : 0u)
+           | ((uint(gbAttr.gbCcRatio) & 0x3Fu) << 6)
+           | ((gbAttr.gbShadowEn != 0) ? (1u << 14) : 0u);
+    }
+  )S" +
+    fragFuncCheckWindow
+    + R"s(
+  void main() {
+    checkWindow();
+    vec4 txcol = texelFetch( s_texture, ivec2(int(v_texcoord.x),int(v_texcoord.y)) ,0 );
+    if(txcol.a == 0.0) { discard; }
+    float coverage = txcol.a;
+    txcol = txcol + u_color_offset;
+    // Per-line color offset / ratio: see VdpPipelineCramPerLineGBuffer. The
+    // per-line texel alpha is 0x00 on lines where the layer is disabled
+    // (per-line BGON) -> ratio ~0 hides the line; 0xFF means no per-line
+    // color calc on that line.
+    int lineIdx = int(gl_FragCoord.y * u_emu_height);
+    vec4 lncol = texelFetch( s_line, ivec2(lineIdx, 0), 0 );
+    txcol.r += (lncol.r - 0.5) * 2.0;
+    txcol.g += (lncol.g - 0.5) * 2.0;
+    txcol.b += (lncol.b - 0.5) * 2.0;
+    fragColor = clamp(txcol, vec4(0.0), vec4(1.0));
+    fragColor.a = coverage;
+    int lineAlpha = int(lncol.a * 255.0 + 0.5);
+    if (lineAlpha < 0xFF) {
+      int ratio = (lineAlpha - 3) >> 2;
+      ratio = clamp(ratio, 0, 0x3F);
+      outGBufferAttr = (uint(gbAttr.gbPriority) & 0x1Fu)
+                     | (1u << 5)
+                     | ((uint(ratio) & 0x3Fu) << 6)
+                     | ((gbAttr.gbShadowEn != 0) ? (1u << 14) : 0u);
+    } else {
+      outGBufferAttr = packGBufferAttr();
+    }
+  }
+  )s";
+
+  prgid = PG_VDP2_PER_LINE_GBUFFER;
+}
+
+void VdpPipelinePerLineGBuffer::createColorAttachment(VkPipelineColorBlendAttachmentState & color) {
+  color.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+  color.blendEnable = VK_FALSE;
+  color.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+  color.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+  color.colorBlendOp = VK_BLEND_OP_ADD;
+  color.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+  color.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+  color.alphaBlendOp = VK_BLEND_OP_ADD;
+}
+
 void VdpPipelineCramNoblend::createColorAttachment(VkPipelineColorBlendAttachmentState & color) {
   // Defalut Blend function
   color.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
@@ -1516,10 +2117,16 @@ VdpPipelineBlit::VdpPipelineBlit(VIDVulkan * vulkan, TextureManager * tm, Vertex
     layout(location = 1) in vec4 inColor;
     layout(location = 2) in vec4 a_texcoord;
     layout (location = 0) out vec4 v_texcoord;
+    // issue #22: match the base VDP2 vertex shader's location-1 output so a
+    // non-CRAM GBuffer companion built on this blit vertex shader (none today --
+    // Blit-derived layers are deferred) still links its injected
+    // `flat in v_priorityZ`. Blit quads carry no priority offset, so 0.
+    layout(location = 1) flat out float v_priorityZ;
     void main() {
         v_texcoord  = a_texcoord;
         gl_Position = a_position;
         gl_Position.z = u_vheight;
+        v_priorityZ = 0.0;
     }
 
   )s";
@@ -1718,7 +2325,13 @@ Vdp1GroundShadingClipOutside::Vdp1GroundShadingClipOutside(VIDVulkan * vulkan, T
 Vdp1GroundShading::Vdp1GroundShading(VIDVulkan * vulkan, TextureManager * tm, VertexManager * vm)
   : VdpPipeline(vulkan, tm, vm) {
 
-  if (Vdp1GroundShading::polygonMode == PERSPECTIVE_CORRECTION) {
+  // Use the simple (no-tess) shader for any mode that is NOT GPU_TESSERATION.
+  // PERSPECTIVE_CORRECTION / CPU_TESSERATION / COMPUTE_RASTERIZER all draw a
+  // pre-tessellated quad through this graphics pipeline (compute mode only
+  // hits this pipeline as a fallback when vdp1Compute hasn't been created
+  // yet -- but even then tessellation control/eval/geometry shaders would
+  // produce the wrong topology). Only GPU_TESSERATION needs the tess path.
+  if (Vdp1GroundShading::polygonMode != GPU_TESSERATION) {
       vertexShaderName = R"S(
       layout(binding = 0) uniform UniformBufferObject {
          mat4 u_mvpMatrix;
@@ -1737,7 +2350,7 @@ Vdp1GroundShading::Vdp1GroundShading(VIDVulkan * vulkan, TextureManager * tm, Ve
       layout(location = 1) out  vec4 v_vtxcolor;
 
       void main() {
-         v_vtxcolor  = a_grcolor; 
+         v_vtxcolor  = a_grcolor;
          v_texcoord  = a_texcoord;
          v_texcoord.x  = v_texcoord.x / u_texsize.x;
          v_texcoord.y  = v_texcoord.y / u_texsize.y;
@@ -1749,7 +2362,7 @@ Vdp1GroundShading::Vdp1GroundShading(VIDVulkan * vulkan, TextureManager * tm, Ve
       tessEvaluation = "";
       geometry = "";
   }
-  else /*if(Vdp1GroundShading::polygonMode == GPU_TESSERATION)*/ {
+  else /*GPU_TESSERATION*/ {
     vertexShaderName = R"S(
 
     layout(binding = 0) uniform UniformBufferObject {

@@ -25,56 +25,42 @@ import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import androidx.appcompat.app.AlertDialog
-import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.RecyclerView
-import com.google.firebase.auth.FirebaseAuth
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
-import com.google.firebase.database.DatabaseReference
 import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.database.Transaction
 import com.google.firebase.database.ValueEventListener
-import java.lang.Exception
-import java.util.ArrayList
-import java.util.Collections
 import org.devmiyax.yabasanshiro.R
+import org.uoyabause.android.YabauseApplication
+import org.uoyabause.android.auth.AuthState
+import java.util.Collections
 
 /**
- * A fragment representing a list of Items.
- *
- *
+ * A fragment representing a list of cloud cheat items.
  * Activities containing this fragment MUST implement the [OnListFragmentInteractionListener]
  * interface.
  */
-class CloudCheatItemFragment
-/**
- * Mandatory empty constructor for the fragment manager to instantiate the
- * fragment (e.g. upon screen orientation changes).
- */
-    : Fragment(), CloudCheatItemRecyclerViewAdapter.OnItemClickListener {
-    private var mColumnCount = 1
-    private var mListener: OnListFragmentInteractionListener? = null
-    private var _items: ArrayList<CheatItem?>? = null
-    private var mGameCode: String? = null
-    var database_: DatabaseReference? = null
-    var root_view_: View? = null
-    var listview_: RecyclerView? = null
-    var adapter_: CloudCheatItemRecyclerViewAdapter? = null
+class CloudCheatItemFragment :
+    BaseCheatItemFragment(),
+    CloudCheatItemRecyclerViewAdapter.OnItemClickListener {
+    private var listener: OnListFragmentInteractionListener? = null
+    var adapter: CloudCheatItemRecyclerViewAdapter? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        mColumnCount = requireArguments().getInt(ARG_COLUMN_COUNT)
-        mGameCode = requireArguments().getString(ARG_GAME_ID)
     }
 
     override fun onCreateView(
         inflater: LayoutInflater,
         container: ViewGroup?,
-        savedInstanceState: Bundle?
+        savedInstanceState: Bundle?,
     ): View? {
         val view = inflater.inflate(R.layout.fragment_cloudcheatitem_list, container, false)
-        listview_ = view.findViewById<View>(R.id.list) as RecyclerView
-        root_view_ = view
+        listView = view.findViewById<View>(R.id.list) as RecyclerView
+        rootView = view
+        setupAuthRequired(view, view.findViewById(R.id.list))
         updateCheatList()
         return view
     }
@@ -82,87 +68,76 @@ class CloudCheatItemFragment
     override fun onAttach(context: Context) {
         super.onAttach(context)
         if (context is OnListFragmentInteractionListener) {
-            mListener = context
+            listener = context
         }
     }
 
     override fun onDetach() {
         super.onDetach()
-        mListener = null
+        listener = null
     }
 
-    val tabCheatFragmentInstance: TabCheatFragment?
-        get() {
-            var xFragment: TabCheatFragment? = null
-            for (fragment in requireFragmentManager().fragments) {
-                if (fragment is TabCheatFragment) {
-                    xFragment = fragment
-                    break
-                }
-            }
-            return xFragment
-        }
-
-    /**
-     * This interface must be implemented by activities that contain this
-     * fragment to allow an interaction in this fragment to be communicated
-     * to the activity and potentially other fragments contained in that
-     * activity.
-     *
-     *
-     * See the Android Training lesson [Communicating with Other Fragments](http://developer.android.com/training/basics/fragments/communicating.html) for more information.
-     */
-    internal interface OnListFragmentInteractionListener {
-        // TODO: Update argument type and name
-        fun onListFragmentInteraction(item: CheatItem?)
-    }
-
-    fun updateCheatList() {
-        _items = ArrayList()
-        val baseref = FirebaseDatabase.getInstance().reference
-        val baseurl = "/shared-cheats/$mGameCode"
-        database_ = baseref.child(baseurl)
-        if (database_ == null) {
+    override fun updateCheatList() {
+        if (AuthState.realUser() == null) {
+            showAuthRequired()
             return
         }
-        adapter_ = CloudCheatItemRecyclerViewAdapter(_items, this@CloudCheatItemFragment)
-        listview_!!.adapter = adapter_
-        val DataListener: ValueEventListener = object : ValueEventListener {
-            override fun onDataChange(dataSnapshot: DataSnapshot) {
-                if (dataSnapshot.hasChildren()) {
-                    _items!!.clear()
-                    for (child in dataSnapshot.children) {
-                        try {
-                            val newitem = child.getValue(CheatItem::class.java)
-                            newitem!!.key = child.key!!
-                            val frag = tabCheatFragmentInstance
-                            if (frag != null) {
-                                newitem.enable = frag.isActive(newitem.cheat_code)
+        if (!YabauseApplication.isPro()) {
+            YabauseApplication.checkDonated(requireActivity())
+            return
+        }
+        hideAuthRequired()
+        items = ArrayList()
+        val baseref = FirebaseDatabase.getInstance().reference
+        val baseurl = "/shared-cheats/$gameCode"
+        database = baseref.child(baseurl)
+        if (database == null) {
+            return
+        }
+        adapter = CloudCheatItemRecyclerViewAdapter(items, this@CloudCheatItemFragment)
+        listView!!.adapter = adapter
+        val dataListener: ValueEventListener =
+            object : ValueEventListener {
+                override fun onDataChange(dataSnapshot: DataSnapshot) {
+                    if (dataSnapshot.hasChildren()) {
+                        items!!.clear()
+                        for (child in dataSnapshot.children) {
+                            try {
+                                val newitem = child.getValue(CheatItem::class.java)
+                                newitem!!.key = child.key!!
+                                val frag = tabCheatFragmentInstance
+                                if (frag != null) {
+                                    newitem.enable = frag.isActive(newitem.cheat_code)
+                                }
+                                items!!.add(newitem)
+                            } catch (e: Exception) {
                             }
-                            _items!!.add(newitem)
-                        } catch (e: Exception) {
                         }
+                        items?.let { Collections.reverse(it) }
+                        adapter =
+                            CloudCheatItemRecyclerViewAdapter(items, this@CloudCheatItemFragment)
+                        listView!!.adapter = adapter
+                        listView!!.post {
+                            adapter!!.notifyDataSetChanged()
+                        }
+                    } else {
+                        Log.e(TAG, "Bad Data " + dataSnapshot.key)
                     }
-                    _items?.let { Collections.reverse(it) }
-                    adapter_ =
-                        CloudCheatItemRecyclerViewAdapter(_items, this@CloudCheatItemFragment)
-                    listview_!!.adapter = adapter_
-                    listview_!!.post {
-                        adapter_!!.notifyDataSetChanged()
-                    }
-                } else {
-                    Log.e(TAG, "Bad Data " + dataSnapshot.key)
+                }
+
+                override fun onCancelled(databaseError: DatabaseError) {
+                    Log.e(TAG, "onCancelled " + databaseError.message)
                 }
             }
-
-            override fun onCancelled(databaseError: DatabaseError) {
-                Log.e(TAG, "onCancelled " + databaseError.message)
-            }
-        }
-        database_!!.orderByChild("star_count").addValueEventListener(DataListener)
+        database!!.orderByChild("star_count").addValueEventListener(dataListener)
     }
 
-    override fun onItemClick(position: Int, item: CheatItem?, v: View?, isLikeButton: Boolean) {
+    override fun onItemClick(
+        position: Int,
+        item: CheatItem?,
+        v: View?,
+        isLikeButton: Boolean,
+    ) {
         if (item == null) return
 
         if (isLikeButton) {
@@ -172,73 +147,154 @@ class CloudCheatItemFragment
         }
     }
 
+    override fun onItemDelete(
+        position: Int,
+        item: CheatItem?,
+    ) {
+        if (item == null) return
+        removeCheat(position, item)
+    }
+
     private fun toggleEnable(item: CheatItem) {
-        item.enable = !item.enable
-        val frag = tabCheatFragmentInstance
-        if (frag != null) {
-            if (item.enable) {
-                frag.AddActiveCheat(item.cheat_code)
-            } else {
-                frag.RemoveActiveCheat(item.cheat_code)
-            }
-        }
-        
-        // Switchからの呼び出しの場合はUIを更新しない（無限ループを防ぐため）
-        listview_?.post {
-            adapter_?.notifyDataSetChanged()
+        toggleCheatEnable(item)
+        listView?.post {
+            adapter?.notifyDataSetChanged()
         }
     }
 
     private fun toggleLike(item: CheatItem) {
-        val auth = FirebaseAuth.getInstance()
-        if (auth.currentUser == null) {
-            return
-        }
-        val userId = auth.currentUser!!.uid
-        val likeRef = database_!!.child(item.key).child("like_users").child(userId)
-        val itemRef = database_!!.child(item.key)
+        val userId = AuthState.realUser()?.uid ?: return
+        val likeRef = database!!.child(item.key).child("like_users").child(userId)
+        val itemRef = database!!.child(item.key)
 
         likeRef.get().addOnSuccessListener { dataSnapshot ->
             if (dataSnapshot.exists()) {
                 // Unlike
                 likeRef.removeValue()
-                itemRef.child("star_count").runTransaction(object : Transaction.Handler {
-                    override fun doTransaction(mutableData: com.google.firebase.database.MutableData): Transaction.Result {
-                        val value = (mutableData.value as? Long ?: 0).toInt()
-                        mutableData.value = Math.max(0, value - 1)
-                        return Transaction.success(mutableData)
-                    }
-                    override fun onComplete(error: DatabaseError?, committed: Boolean, currentData: DataSnapshot?) {
-                        listview_?.post {
-                            adapter_?.notifyDataSetChanged()
+                itemRef.child("star_count").runTransaction(
+                    object : Transaction.Handler {
+                        override fun doTransaction(mutableData: com.google.firebase.database.MutableData): Transaction.Result {
+                            val value = (mutableData.value as? Long ?: 0).toInt()
+                            mutableData.value = Math.max(0, value - 1)
+                            return Transaction.success(mutableData)
                         }
-                    }
-                })
+
+                        override fun onComplete(
+                            error: DatabaseError?,
+                            committed: Boolean,
+                            currentData: DataSnapshot?,
+                        ) {
+                            listView?.post {
+                                adapter?.notifyDataSetChanged()
+                            }
+                        }
+                    },
+                )
             } else {
                 // Like
                 likeRef.setValue(true)
-                itemRef.child("star_count").runTransaction(object : Transaction.Handler {
-                    override fun doTransaction(mutableData: com.google.firebase.database.MutableData): Transaction.Result {
-                        val value = (mutableData.value as? Long ?: 0).toInt()
-                        mutableData.value = value + 1
-                        return Transaction.success(mutableData)
-                    }
-                    override fun onComplete(error: DatabaseError?, committed: Boolean, currentData: DataSnapshot?) {
-                        listview_?.post {
-                            adapter_?.notifyDataSetChanged()
+                itemRef.child("star_count").runTransaction(
+                    object : Transaction.Handler {
+                        override fun doTransaction(mutableData: com.google.firebase.database.MutableData): Transaction.Result {
+                            val value = (mutableData.value as? Long ?: 0).toInt()
+                            mutableData.value = value + 1
+                            return Transaction.success(mutableData)
                         }
-                    }
-                })
+
+                        override fun onComplete(
+                            error: DatabaseError?,
+                            committed: Boolean,
+                            currentData: DataSnapshot?,
+                        ) {
+                            listView?.post {
+                                adapter?.notifyDataSetChanged()
+                            }
+                        }
+                    },
+                )
             }
         }
     }
 
+    private fun removeCheat(
+        position: Int,
+        cheatitem: CheatItem,
+    ) {
+        val dialog =
+            MaterialAlertDialogBuilder(requireContext())
+                .setMessage(getString(R.string.are_you_sure_to_delete) + cheatitem.description + "?")
+                .setPositiveButton(
+                    R.string.yes,
+                    DialogInterface.OnClickListener { _, _ ->
+                        if (database == null) {
+                            return@OnClickListener
+                        }
+                        // 共有チートから削除
+                        database!!.child(cheatitem.key).removeValue()
+
+                        // ローカルリストから位置ベースで削除してUIを即座に更新
+                        if (position >= 0 && position < (items?.size ?: 0)) {
+                            items?.removeAt(position)
+                            listView?.post {
+                                adapter?.notifyItemRemoved(position)
+                            }
+                        }
+
+                        // Clear shared_key in own local cheats
+                        val userId = AuthState.realUser()?.uid
+                        if (userId != null) {
+                            val baseref = FirebaseDatabase.getInstance().reference
+                            val localUrl = "/user-posts/$userId/cheat/$gameCode"
+                            val localDb = baseref.child(localUrl)
+                            localDb
+                                .orderByChild("shared_key")
+                                .equalTo(cheatitem.key)
+                                .addListenerForSingleValueEvent(
+                                    object : com.google.firebase.database.ValueEventListener {
+                                        override fun onDataChange(snapshot: com.google.firebase.database.DataSnapshot) {
+                                            for (child in snapshot.children) {
+                                                child.ref.child("shared_key").setValue("")
+                                            }
+                                        }
+
+                                        override fun onCancelled(error: com.google.firebase.database.DatabaseError) {
+                                            Log.e(TAG, "Failed to clear shared_key: ${error.message}")
+                                        }
+                                    },
+                                )
+                        }
+                    },
+                ).setNegativeButton(R.string.no, null)
+                .create()
+
+        // ゲームパッド対応: 破壊的操作なのでCancelボタンにフォーカス
+        dialog.setOnShowListener {
+            val button = dialog.getButton(android.content.DialogInterface.BUTTON_NEGATIVE)
+            button?.post {
+                button.isFocusable = true
+                button.isFocusableInTouchMode = true
+                button.requestFocus()
+            }
+        }
+        dialog.show()
+    }
+
+    override fun moveCursor(direction: Int) {
+        adapter?.moveCursor(direction)
+    }
+
+    override fun selectCurrentItem() {
+        adapter?.selectFocused()
+    }
+
     companion object {
         private const val TAG = "CloudCheatItemFragment"
-        private const val ARG_COLUMN_COUNT = "column-count"
-        private const val ARG_GAME_ID = "game_id"
+
         @JvmStatic
-        fun newInstance(gameid: String?, columnCount: Int): CloudCheatItemFragment {
+        fun newInstance(
+            gameid: String?,
+            columnCount: Int,
+        ): CloudCheatItemFragment {
             val fragment = CloudCheatItemFragment()
             val args = Bundle()
             args.putString(ARG_GAME_ID, gameid)

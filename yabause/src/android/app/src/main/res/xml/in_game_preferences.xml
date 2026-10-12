@@ -5,6 +5,14 @@
     <PreferenceCategory
         app:title="@string/game_setting"
         >
+    <ListPreference
+        app:key="pref_video"
+        app:title="@string/video_core"
+        app:dialogTitle="@string/choose_video_core"
+        app:entries="@array/entries_video_core_list_preference"
+        app:entryValues="@array/entryvalues_video_core_list_preference"
+        app:defaultValue="-1" />
+
     <CheckBoxPreference
         app:key="pref_fps"
         app:title="@string/show_fps"

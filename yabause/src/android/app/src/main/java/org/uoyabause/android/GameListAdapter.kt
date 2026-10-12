@@ -15,8 +15,10 @@
     You should have received a copy of the GNU General Public License
     along with Yabause; if not, write to the Free Software
     Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
-*/
-/*  Copyright 2019 devMiyax(smiyaxdev@gmail.com)
+
+    ============================================================================
+
+    Copyright 2019 devMiyax(smiyaxdev@gmail.com)
 
     This file is part of YabaSanshiro.
 
@@ -38,61 +40,51 @@ package org.uoyabause.android
 
 import android.content.Context
 import android.database.DataSetObserver
-import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ListAdapter
 import android.widget.TextView
 import org.devmiyax.yabasanshiro.R
 
-internal class GameListAdapter(ctx: Context) : ListAdapter {
+internal class GameListAdapter(
+    ctx: Context,
+) : ListAdapter {
     private val storage: YabauseStorage
     private val gamefiles: Array<String?>
     private val context: Context
-    override fun getCount(): Int {
-        return gamefiles.size
-    }
 
-    override fun getItem(position: Int): String? {
-        return gamefiles[position]
-    }
+    override fun getCount(): Int = gamefiles.size
 
-    override fun getItemId(position: Int): Long {
-        return position.toLong()
-    }
+    override fun getItem(position: Int): String? = gamefiles[position]
 
-    override fun getItemViewType(position: Int): Int {
-        return 0
-    }
+    override fun getItemId(position: Int): Long = position.toLong()
 
-    override fun getView(position: Int, convertView: View, parent: ViewGroup): View {
+    override fun getItemViewType(position: Int): Int = 0
+
+    override fun getView(
+        position: Int,
+        convertView: View,
+        parent: ViewGroup,
+    ): View {
         val tv: TextView
         tv = convertView as TextView
         tv.text = gamefiles[position]
         return tv
     }
 
-    override fun getViewTypeCount(): Int {
-        return 1
-    }
+    override fun getViewTypeCount(): Int = 1
 
-    override fun hasStableIds(): Boolean {
-        return false
-    }
+    override fun hasStableIds(): Boolean = false
 
-    override fun isEmpty(): Boolean {
-        return count == 0
-    }
+    override fun isEmpty(): Boolean = count == 0
 
     override fun registerDataSetObserver(observer: DataSetObserver) {}
-    override fun unregisterDataSetObserver(observer: DataSetObserver) {}
-    override fun areAllItemsEnabled(): Boolean {
-        return true
-    }
 
-    override fun isEnabled(position: Int): Boolean {
-        return true
-    }
+    override fun unregisterDataSetObserver(observer: DataSetObserver) {}
+
+    override fun areAllItemsEnabled(): Boolean = true
+
+    override fun isEnabled(position: Int): Boolean = true
 
     init {
         storage = YabauseStorage.storage

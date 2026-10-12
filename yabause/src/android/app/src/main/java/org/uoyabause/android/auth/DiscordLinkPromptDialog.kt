@@ -15,7 +15,6 @@ import org.devmiyax.yabasanshiro.R
  * Dialog to prompt the user to link their Discord account
  */
 class DiscordLinkPromptDialog : DialogFragment() {
-
     /**
      * Interface for handling Discord link prompt actions
      */
@@ -36,12 +35,13 @@ class DiscordLinkPromptDialog : DialogFragment() {
     override fun onCreateView(
         inflater: LayoutInflater,
         container: ViewGroup?,
-        savedInstanceState: Bundle?
-    ): View? {
-        return inflater.inflate(R.layout.dialog_discord_link_prompt, container, false)
-    }
+        savedInstanceState: Bundle?,
+    ): View? = inflater.inflate(R.layout.dialog_discord_link_prompt, container, false)
 
-    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+    override fun onViewCreated(
+        view: View,
+        savedInstanceState: Bundle?,
+    ) {
         super.onViewCreated(view, savedInstanceState)
 
         // Set dialog title and description

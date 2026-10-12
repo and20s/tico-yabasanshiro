@@ -18,79 +18,107 @@
 */
 package org.uoyabause.android.cheat
 
-import android.app.AlertDialog
 import android.content.Context
 import android.content.DialogInterface
-import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.Button
-import android.widget.PopupMenu
 import android.widget.Toast
-import androidx.fragment.app.Fragment
+import androidx.fragment.app.setFragmentResultListener
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.google.firebase.auth.FirebaseAuth
+import com.google.android.material.button.MaterialButton
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
-import com.google.firebase.database.DatabaseReference
 import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.database.ValueEventListener
-import java.util.ArrayList
 import org.devmiyax.yabasanshiro.R
+import org.uoyabause.android.auth.AuthState
 
 /**
- * A fragment representing a list of Items.
- *
- *
+ * A fragment representing a list of local cheat items.
  * Activities containing this fragment MUST implement the [OnListFragmentInteractionListener]
  * interface.
  */
-class LocalCheatItemFragment
-/**
- * Mandatory empty constructor for the fragment manager to instantiate the
- * fragment (e.g. upon screen orientation changes).
- */
-    : Fragment(), LocalCheatItemRecyclerViewAdapter.OnItemClickListener {
-    private var mColumnCount = 1
-    private var mListener: OnListFragmentInteractionListener? = null
-    private var _items: ArrayList<CheatItem?>? = null
-    private var mGameCode: String? = null
-    private var backcode_ = ""
-    var database_: DatabaseReference? = null
-    var root_view_: View? = null
-    var listview_: RecyclerView? = null
-    var adapter_: LocalCheatItemRecyclerViewAdapter? = null
+class LocalCheatItemFragment :
+    BaseCheatItemFragment(),
+    LocalCheatItemRecyclerViewAdapter.OnItemClickListener {
+    private var listener: OnListFragmentInteractionListener? = null
+    private var backcode = ""
+    var adapter: LocalCheatItemRecyclerViewAdapter? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        mColumnCount = requireArguments().getInt(ARG_COLUMN_COUNT)
-        mGameCode = requireArguments().getString(ARG_GAME_ID)
         val cnv = CheatConverter()
         if (cnv.hasOldVersion()) {
             cnv.execute()
+        }
+
+        // Set up fragment result listeners
+        setupFragmentResultListeners()
+    }
+
+    private fun setupFragmentResultListeners() {
+        // Listen for new item results
+        setFragmentResultListener(LocalCheatEditDialog.REQUEST_KEY_NEW) { _, bundle ->
+            val resultCode = bundle.getInt(LocalCheatEditDialog.RESULT_CODE)
+            if (resultCode == LocalCheatEditDialog.APPLY) {
+                if (database == null) {
+                    showErrorMessage()
+                    return@setFragmentResultListener
+                }
+                val key = database!!.push().key
+                val desc = bundle.getString(LocalCheatEditDialog.DESC)
+                val code = bundle.getString(LocalCheatEditDialog.CODE)
+                database!!.child(key!!).child("description").setValue(desc)
+                database!!.child(key).child("cheat_code").setValue(code)
+                adapter!!.notifyDataSetChanged()
+            }
+        }
+
+        // Listen for edit item results
+        setFragmentResultListener(LocalCheatEditDialog.REQUEST_KEY_EDIT) { _, bundle ->
+            val resultCode = bundle.getInt(LocalCheatEditDialog.RESULT_CODE)
+            if (resultCode == LocalCheatEditDialog.APPLY) {
+                if (database == null) {
+                    showErrorMessage()
+                    return@setFragmentResultListener
+                }
+                val frag = tabCheatFragmentInstance
+                frag?.removeActiveCheat(backcode)
+                val key = bundle.getString(LocalCheatEditDialog.KEY)
+                val desc = bundle.getString(LocalCheatEditDialog.DESC)
+                val code = bundle.getString(LocalCheatEditDialog.CODE)
+                database!!.child(key!!).child("description").setValue(desc)
+                database!!.child(key).child("cheat_code").setValue(code)
+                adapter!!.notifyDataSetChanged()
+            }
         }
     }
 
     override fun onCreateView(
         inflater: LayoutInflater,
         container: ViewGroup?,
-        savedInstanceState: Bundle?
+        savedInstanceState: Bundle?,
     ): View? {
         val view = inflater.inflate(R.layout.fragment_localcheatitem_list, container, false)
-        listview_ = view.findViewById<View>(R.id.list) as RecyclerView
+        listView = view.findViewById<View>(R.id.list) as RecyclerView
         val context = view.context
-        listview_!!.layoutManager = LinearLayoutManager(context)
+        listView!!.layoutManager = LinearLayoutManager(context)
+        rootView = view
+        setupAuthRequired(view, view.findViewById(R.id.content_layout))
         updateCheatList()
-        root_view_ = view
-        val add = view.findViewById<View>(R.id.button_add) as Button
+        val add = view.findViewById<View>(R.id.button_add) as MaterialButton
         add.setOnClickListener { _ -> onAddItem() }
         return view
     }
 
+    @Deprecated("Deprecated in Java")
     override fun setUserVisibleHint(isVisibleToUser: Boolean) {
+        @Suppress("DEPRECATION")
         super.setUserVisibleHint(isVisibleToUser)
         if (isVisibleToUser) {
             // updateCheatList();
@@ -101,7 +129,7 @@ class LocalCheatItemFragment
     override fun onAttach(context: Context) {
         super.onAttach(context)
         if (context is OnListFragmentInteractionListener) {
-            mListener = context
+            listener = context
         } else {
 //            throw new RuntimeException(context.toString()
 //                    + " must implement OnListFragmentInteractionListener");
@@ -110,222 +138,170 @@ class LocalCheatItemFragment
 
     override fun onDetach() {
         super.onDetach()
-        mListener = null
-    }
-
-    interface OnListFragmentInteractionListener {
-        fun onListFragmentInteraction(item: CheatItem?)
+        listener = null
     }
 
     fun showErrorMessage() {
-        Toast.makeText(context, "You need to Sign in before use this function", Toast.LENGTH_LONG)
+        Toast
+            .makeText(context, "You need to Sign in before use this function", Toast.LENGTH_LONG)
             .show()
     }
 
-    fun updateCheatList() {
-        val auth = FirebaseAuth.getInstance()
-        if (auth.currentUser == null) {
-            showErrorMessage()
+    override fun updateCheatList() {
+        if (AuthState.realUser() == null) {
+            showAuthRequired()
             return
         }
-        if (listview_ == null) {
+        hideAuthRequired()
+        if (listView == null) {
             return
         }
-        _items = ArrayList()
+        items = ArrayList()
         val baseref = FirebaseDatabase.getInstance().reference
-        val baseurl = "/user-posts/" + auth.currentUser!!.uid + "/cheat/" + mGameCode
-        database_ = baseref.child(baseurl)
-        if (database_ == null) {
+        val baseurl = "/user-posts/" + AuthState.realUser()!!.uid + "/cheat/" + gameCode
+        database = baseref.child(baseurl)
+        if (database == null) {
             showErrorMessage()
             return
         }
-        adapter_ = LocalCheatItemRecyclerViewAdapter(_items, this@LocalCheatItemFragment)
-        listview_!!.adapter = adapter_
-        val DataListener: ValueEventListener = object : ValueEventListener {
-            override fun onDataChange(dataSnapshot: DataSnapshot) {
-                if (dataSnapshot.hasChildren()) {
-                    _items!!.clear()
-                    for (child in dataSnapshot.children) {
-                        val newitem = child.getValue(CheatItem::class.java)
-                        newitem!!.key = child.key!!
-                        val frag = tabCheatFragmentInstance
-                        if (frag != null) {
-                            newitem.enable = frag.isActive(newitem.cheat_code)
+        adapter = LocalCheatItemRecyclerViewAdapter(items, this@LocalCheatItemFragment)
+        listView!!.adapter = adapter
+        val dataListener: ValueEventListener =
+            object : ValueEventListener {
+                override fun onDataChange(dataSnapshot: DataSnapshot) {
+                    if (dataSnapshot.hasChildren()) {
+                        items!!.clear()
+                        for (child in dataSnapshot.children) {
+                            val newitem = child.getValue(CheatItem::class.java)
+                            newitem!!.key = child.key!!
+                            val frag = tabCheatFragmentInstance
+                            if (frag != null) {
+                                newitem.enable = frag.isActive(newitem.cheat_code)
+                            }
+                            items!!.add(newitem)
                         }
-                        _items!!.add(newitem)
+                        adapter =
+                            LocalCheatItemRecyclerViewAdapter(items, this@LocalCheatItemFragment)
+                        listView!!.adapter = adapter
+                    } else {
+                        items!!.clear()
+                        adapter =
+                            LocalCheatItemRecyclerViewAdapter(items, this@LocalCheatItemFragment)
+                        listView!!.adapter = adapter
                     }
-                    adapter_ =
-                        LocalCheatItemRecyclerViewAdapter(_items, this@LocalCheatItemFragment)
-                    listview_!!.adapter = adapter_
-                } else {
-                    Log.e("CheatEditDialog", "Bad Data " + dataSnapshot.key)
+                }
+
+                override fun onCancelled(databaseError: DatabaseError) {
+                    Log.e("CheatEditDialog", "Bad Data " + databaseError.message)
                 }
             }
-
-            override fun onCancelled(databaseError: DatabaseError) {
-                Log.e("CheatEditDialog", "Bad Data " + databaseError.message)
-            }
-        }
-        database_!!.addValueEventListener(DataListener)
+        database!!.addValueEventListener(dataListener)
     }
 
-    val tabCheatFragmentInstance: TabCheatFragment?
-        get() {
-            var xFragment: TabCheatFragment? = null
-            for (fragment in requireFragmentManager().fragments) {
-                if (fragment is TabCheatFragment) {
-                    xFragment = fragment
-                    break
-                }
-            }
-            return xFragment
-        }
+    override fun onItemClick(
+        position: Int,
+        item: CheatItem?,
+        v: View?,
+    ) {
+        val cheatitem = item ?: return
+        val activateText = if (cheatitem.enable) getString(R.string.disable) else getString(R.string.enable)
+        val shareText = if (cheatitem.sharedKey != "") getString(R.string.unsahre) else getString(R.string.share)
+        val options = arrayOf(activateText, getString(R.string.edit), shareText, getString(R.string.delete))
 
-    override fun onItemClick(position: Int, item: CheatItem?, v: View?) {
-        val popup = PopupMenu(activity, v)
-        val inflate = popup.menuInflater
-        inflate.inflate(R.menu.local_cheat, popup.menu)
-        val cheatitem = item
-        val popupMenu = popup.menu
-        val mitem = popupMenu.getItem(0)
-
-        if (cheatitem == null) {
-            return
-        }
-
-        if (cheatitem.enable) {
-            mitem.setTitle(R.string.disable)
-        } else {
-            mitem.setTitle(R.string.enable)
-        }
-        val sitem = popupMenu.getItem(2)
-        if (cheatitem.sharedKey != "") {
-            sitem.setTitle(R.string.unsahre)
-        } else {
-            sitem.setTitle(R.string.share)
-        }
-        popup.setOnMenuItemClickListener(PopupMenu.OnMenuItemClickListener { clickedItem ->
-            when (clickedItem.itemId) {
-                R.id.acp_activate -> {
-                    cheatitem.enable = !cheatitem.enable
-                    val frag = tabCheatFragmentInstance
-                    if (frag != null) {
-                        if (cheatitem.enable) {
-                            frag.AddActiveCheat(cheatitem.cheat_code)
-                        } else {
-                            frag.RemoveActiveCheat(cheatitem.cheat_code)
-                        }
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(cheatitem.description)
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> { // Enable/Disable
+                        toggleCheatEnable(cheatitem)
+                        adapter?.notifyDataSetChanged()
                     }
-                    adapter_!!.notifyDataSetChanged()
+                    1 -> { // Edit
+                        backcode = cheatitem.cheat_code
+                        val newFragment = LocalCheatEditDialog()
+                        newFragment.setEditTarget(cheatitem)
+                        newFragment.setRequestKey(LocalCheatEditDialog.REQUEST_KEY_EDIT)
+                        newFragment.show(parentFragmentManager, "Cheat")
+                    }
+                    2 -> { // Share/Unshare
+                        if (cheatitem.sharedKey != "") unShare(cheatitem) else share(cheatitem)
+                    }
+                    3 -> { // Delete
+                        removeCheat(cheatitem)
+                    }
                 }
-                R.id.acp_edit -> {
-                    backcode_ = cheatitem.cheat_code
-                    val newFragment = LocalCheatEditDialog()
-                    newFragment.setEditTarget(cheatitem)
-                    newFragment.setTargetFragment(this@LocalCheatItemFragment, EDIT_ITEM)
-                    newFragment.show(requireFragmentManager(), "Cheat")
-                }
-                R.id.acp_share -> if (cheatitem.sharedKey != "") {
-                    UnShare(cheatitem)
-                } else {
-                    Share(cheatitem)
-                }
-                R.id.delete -> {
-                    RemoveCheat(cheatitem)
-                    adapter_!!.notifyDataSetChanged()
-                }
-                else -> return@OnMenuItemClickListener false
-            }
-            false
-        })
-        popup.show()
+            }.show()
     }
 
     fun onAddItem() {
         val newFragment = LocalCheatEditDialog()
-        newFragment.setTargetFragment(this, NEW_ITEM)
-        newFragment.show(requireFragmentManager(), "Cheat")
+        newFragment.setRequestKey(LocalCheatEditDialog.REQUEST_KEY_NEW)
+        newFragment.show(parentFragmentManager, "Cheat")
     }
 
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        if (requestCode == NEW_ITEM) {
-            if (resultCode == LocalCheatEditDialog.APPLY) {
-                if (database_ == null) {
-                    showErrorMessage()
-                    return
-                }
-                val key = database_!!.push().key
-                val desc = data!!.getStringExtra(LocalCheatEditDialog.DESC)
-                val code = data.getStringExtra(LocalCheatEditDialog.CODE)
-                database_!!.child(key!!).child("description").setValue(desc)
-                database_!!.child(key).child("cheat_code").setValue(code)
-                adapter_!!.notifyDataSetChanged()
-            }
-        } else if (requestCode == EDIT_ITEM) {
-            if (resultCode == LocalCheatEditDialog.APPLY) {
-                if (database_ == null) {
-                    showErrorMessage()
-                    return
-                }
-                val frag = tabCheatFragmentInstance
-                frag?.RemoveActiveCheat(backcode_)
-                val key = data!!.getStringExtra(LocalCheatEditDialog.KEY)
-                val desc = data.getStringExtra(LocalCheatEditDialog.DESC)
-                val code = data.getStringExtra(LocalCheatEditDialog.CODE)
-                database_!!.child(key!!).child("description").setValue(desc)
-                database_!!.child(key).child("cheat_code").setValue(code)
-                adapter_!!.notifyDataSetChanged()
+    fun removeCheat(cheatitem: CheatItem) {
+        val dialog =
+            MaterialAlertDialogBuilder(requireContext())
+                .setMessage(getString(R.string.are_you_sure_to_delete) + cheatitem.description + "?")
+                .setPositiveButton(
+                    R.string.yes,
+                    DialogInterface.OnClickListener { _, _ ->
+                        if (database == null) {
+                            showErrorMessage()
+                            return@OnClickListener
+                        }
+                        database!!.child(cheatitem.key).removeValue()
+                        if (cheatitem.sharedKey !== "") {
+                            val baseref = FirebaseDatabase.getInstance().reference
+                            val baseurl = "/shared-cheats/$gameCode"
+                            val sharedb = baseref.child(baseurl)
+                            sharedb.child(cheatitem.sharedKey).removeValue()
+                        }
+                    },
+                ).setNegativeButton(R.string.no, null)
+                .create()
+
+        // ゲームパッド対応: 破壊的操作なのでCancelボタンにフォーカス
+        dialog.setOnShowListener {
+            val button = dialog.getButton(android.content.DialogInterface.BUTTON_NEGATIVE)
+            button?.post {
+                button.isFocusable = true
+                button.isFocusableInTouchMode = true
+                button.requestFocus()
             }
         }
+        dialog.show()
     }
 
-    fun RemoveCheat(cheatitem: CheatItem) {
-        AlertDialog.Builder(activity)
-            .setMessage(getString(R.string.are_you_sure_to_delete) + cheatitem.description + "?")
-            .setPositiveButton(R.string.yes, DialogInterface.OnClickListener { _, _ ->
-                if (database_ == null) {
-                    showErrorMessage()
-                    return@OnClickListener
-                }
-                database_!!.child(cheatitem.key).removeValue()
-                if (cheatitem.sharedKey !== "") {
-                    val baseref = FirebaseDatabase.getInstance().reference
-                    val baseurl = "/shared-cheats/$mGameCode"
-                    val sharedb = baseref.child(baseurl)
-                    sharedb.child(cheatitem.sharedKey).removeValue()
-                }
-            })
-            .setNegativeButton(R.string.no, null)
-            .show()
-    }
-
-    fun Remove(index: Int) {
-        if (database_ == null) {
+    fun remove(index: Int) {
+        if (database == null) {
             showErrorMessage()
             return
         }
-        database_!!.child(_items!![index]!!.key).removeValue()
+        database!!.child(items!![index]!!.key).removeValue()
     }
 
-    fun Share(cheatitem: CheatItem) {
-        if (database_ == null) {
+    fun share(cheatitem: CheatItem) {
+        if (database == null) {
             showErrorMessage()
             return
         }
         if (cheatitem.sharedKey != "") {
             return
         }
+        val userId = AuthState.realUser()?.uid ?: return
         val baseref = FirebaseDatabase.getInstance().reference
-        val baseurl = "/shared-cheats/$mGameCode"
+        val baseurl = "/shared-cheats/$gameCode"
         val sharedb = baseref.child(baseurl)
         val key = sharedb.push().key
         sharedb.child(key!!).child("description").setValue(cheatitem.description)
         sharedb.child(key).child("cheat_code").setValue(cheatitem.cheat_code)
-        database_!!.child(cheatitem.key).child("shared_key").setValue(key)
+        sharedb.child(key).child("user_id").setValue(userId)
+        database!!.child(cheatitem.key).child("shared_key").setValue(key)
     }
 
-    fun UnShare(cheatitem: CheatItem) {
-        if (database_ == null) {
+    fun unShare(cheatitem: CheatItem) {
+        if (database == null) {
             showErrorMessage()
             return
         }
@@ -333,17 +309,26 @@ class LocalCheatItemFragment
             return
         }
         val baseref = FirebaseDatabase.getInstance().reference
-        val baseurl = "/shared-cheats/" + mGameCode + "/" + cheatitem.sharedKey
+        val baseurl = "/shared-cheats/" + gameCode + "/" + cheatitem.sharedKey
         val sharedb = baseref.child(baseurl)
         sharedb.removeValue()
-        database_!!.child(cheatitem.key).child("shared_key").setValue("")
+        database!!.child(cheatitem.key).child("shared_key").setValue("")
+    }
+
+    override fun moveCursor(direction: Int) {
+        adapter?.moveCursor(direction)
+    }
+
+    override fun selectCurrentItem() {
+        adapter?.selectFocused()
     }
 
     companion object {
-        private const val ARG_COLUMN_COUNT = "column-count"
-        private const val ARG_GAME_ID = "game_id"
         @JvmStatic
-        fun newInstance(gameid: String?, columnCount: Int): LocalCheatItemFragment {
+        fun newInstance(
+            gameid: String?,
+            columnCount: Int,
+        ): LocalCheatItemFragment {
             val fragment = LocalCheatItemFragment()
             val args = Bundle()
             args.putString(ARG_GAME_ID, gameid)
@@ -351,8 +336,5 @@ class LocalCheatItemFragment
             fragment.arguments = args
             return fragment
         }
-
-        const val NEW_ITEM = 0
-        const val EDIT_ITEM = 1
     }
 }

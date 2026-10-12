@@ -43,6 +43,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 
 #include <stdlib.h>
 #include <ctype.h>
+#include "cs0.h"
 #include "cs2.h"
 #include "debug.h"
 #include "error.h"
@@ -125,6 +126,154 @@ static INLINE void doMPEGReport(u8 status)
 }
 
 //////////////////////////////////////////////////////////////////////////////
+
+// Temporary CD-block command tracing for the timing-model investigation
+// (YABA_DMAC_DEBUG=1): events go into a ring buffer that the SH2 stuck
+// detector dumps (Cs2DumpDbgRing), so the window always ends at the
+// freeze instead of a fixed early cap.
+#define CS2_DBG_RING 256
+static int cs2_dbg_v = -1;
+static struct { char tag[8]; u32 a, b, c; } cs2_dbg_ring[CS2_DBG_RING];
+static u32 cs2_dbg_seq = 0;
+// unfiltered issue/exec bookkeeping (polling commands included)
+static u32 cs2_op_n = 0;
+static u32 cs2_last_issue_cmd = 0xFFFF, cs2_last_issue_n = 0;
+static u32 cs2_last_exec_cmd = 0xFFFF, cs2_last_exec_n = 0;
+
+// CD-block command/seek timing model (Phase 7): align command response
+// and drive seek times with measurements taken against mednafen's cdb
+// (tools/sh2timing S40-S43). Default ON; YABA_CS2_TIMING_MODEL=old
+// reverts to the legacy constants (flat 50 us commands, 13.3-100 ms
+// seeks). Measured on the timing disc:
+//   command CMOK latency: legacy 50.8 us vs mednafen 12.6 us
+//   Play -> first sector: legacy 26.7 ms vs mednafen 123.3 ms
+//   sector pitch at 2x:   6.67 ms on both (no change needed)
+static int cs2_timing_model_v = -1;
+
+static int cs2_timing_model_new(void)
+{
+  if (cs2_timing_model_v < 0)
+  {
+    const char *e = getenv("YABA_CS2_TIMING_MODEL");
+    cs2_timing_model_v = !(e != NULL && strcmp(e, "old") == 0);
+  }
+  return cs2_timing_model_v;
+}
+
+// Report cadence while a seek is in progress (microseconds * 3). A long
+// seek is metered out in slices this size so a periodic status report is
+// emitted roughly once per slice instead of going silent for the whole
+// seek. 50000/3 == ~16.6 ms, i.e. about one report per displayed frame,
+// matching the rate the game's VBlank-driven CD handler polls at.
+#define CS2_SEEK_REPORT_INTERVAL 50000
+
+// Drive seek time in usec. Model from mednafen ss/cdb.cpp (CDB clock =
+// 11.2896 MHz): seek start latency (~23 ms) + 12 sector times (~80 ms)
+// + sub-Q convergence (~13 ms) + 26-28 clocks per FAD of sled travel.
+// S42 measured 123.3 ms for a ~200-FAD seek = 116 ms seek + one 6.67 ms
+// sector pitch until the first CSCT.
+static u32 cs2_seek_time_usec(u32 from_fad, u32 to_fad)
+{
+  u32 delta = (from_fad > to_fad) ? (from_fad - to_fad) : (to_fad - from_fad);
+  if (delta > 400000) delta = 400000;  // bogus FADs (0xFFFFFFFF pause marker etc.)
+  return 116000 + delta * 12 / 5;     // 2.4 us per FAD
+}
+
+// Buffer-full model: report PAUSE (as real hardware does) instead of
+// the legacy SEEK when the play buffer fills, and auto-resume once the
+// game frees space (mednafen cdb.cpp CheckBufPauseResume). Fixes Bio
+// Hazard's title freeze (its recovery path dead-ends on the legacy SEEK
+// report). Defaults to the timing model; YABA_CS2_BUFFULL_RESUME=on/off
+// overrides independently.
+static int cs2_bfull_resume_v = -1;
+
+static int cs2_bfull_resume_enabled(void)
+{
+  if (cs2_bfull_resume_v < 0)
+  {
+    const char *e = getenv("YABA_CS2_BUFFULL_RESUME");
+    if (e != NULL)
+      cs2_bfull_resume_v = (strcmp(e, "on") == 0);
+    else
+      cs2_bfull_resume_v = cs2_timing_model_new();
+  }
+  return cs2_bfull_resume_v;
+}
+
+// YABA_CS2_TRACE=1: additionally print events to stdout in real time
+// (poll commands and healthy sector stores are aggregated into counters
+// so a turbo run stays readable).
+static int cs2_trace_v = -1;
+static u32 cs2_tr_poll = 0, cs2_tr_sect = 0;
+
+static int cs2_trace_on(void)
+{
+  if (cs2_trace_v < 0)
+    cs2_trace_v = (getenv("YABA_CS2_TRACE") != NULL);
+  return cs2_trace_v;
+}
+
+static void cs2_dbg(const char *tag, u32 a, u32 b, u32 c)
+{
+  u32 i;
+  if (cs2_dbg_v < 0)
+    cs2_dbg_v = (getenv("YABA_DMAC_DEBUG") != NULL);
+  if (!cs2_dbg_v && !cs2_trace_on())
+    return;
+  // status/sector-count polling floods the ring; skip those commands
+  if ((tag[0] == 'i' || tag[0] == 'e') && (a == 0x0000 || a == 0x0051))
+  {
+    cs2_tr_poll++;
+    return;
+  }
+  i = cs2_dbg_seq % CS2_DBG_RING;
+  strncpy(cs2_dbg_ring[i].tag, tag, sizeof(cs2_dbg_ring[i].tag) - 1);
+  cs2_dbg_ring[i].tag[sizeof(cs2_dbg_ring[i].tag) - 1] = '\0';
+  cs2_dbg_ring[i].a = a;
+  cs2_dbg_ring[i].b = b;
+  cs2_dbg_ring[i].c = c;
+  cs2_dbg_seq++;
+  if (cs2_trace_on())
+  {
+    // aggregate healthy sector stores; print them near buffer-full
+    if (tag[0] == 's' && tag[1] == 'e' && c > 3)
+    {
+      cs2_tr_sect++;
+      return;
+    }
+    printf("[CS2T %06u f%u] %s %04X %04X %04X (polls=%u sects=%u) st=%02X free=%d\n",
+           cs2_dbg_seq - 1, (unsigned)yabsys.frame_count, tag, a, b, c,
+           cs2_tr_poll, cs2_tr_sect, Cs2Area->status,
+           (int)Cs2Area->blockfreespace);
+    cs2_tr_poll = 0;
+    cs2_tr_sect = 0;
+  }
+}
+
+void Cs2DumpDbgRing(void)
+{
+  static u32 last_dumped = 0;
+  u32 n = cs2_dbg_seq < CS2_DBG_RING ? cs2_dbg_seq : CS2_DBG_RING;
+  u32 s = cs2_dbg_seq - n;
+  u32 k;
+  if (cs2_dbg_seq == last_dumped) {
+    printf("[CS2RING] NO NEW EVENTS since last dump (seq=%u)\n", cs2_dbg_seq);
+    fflush(stdout);
+    return;
+  }
+  last_dumped = cs2_dbg_seq;
+  printf("[CS2RING] seq=%u dumping last %u | last_issue=%02X@%u "
+         "last_exec=%02X@%u execlock=%d cmdtiming=%d\n",
+         cs2_dbg_seq, n, cs2_last_issue_cmd, cs2_last_issue_n,
+         cs2_last_exec_cmd, cs2_last_exec_n,
+         (int)Cs2Area->_command_execlock, (int)Cs2Area->_commandtiming);
+  for (k = 0; k < n; k++) {
+    u32 idx = (s + k) % CS2_DBG_RING;
+    printf("[CS2R %06u] %s %04X %04X %04X\n", s + k, cs2_dbg_ring[idx].tag,
+           cs2_dbg_ring[idx].a, cs2_dbg_ring[idx].b, cs2_dbg_ring[idx].c);
+  }
+  fflush(stdout);
+}
 
 static INLINE void Cs2SetIRQ(u32 irq){
   Cs2Area->reg.HIRQ |= irq;
@@ -323,6 +472,11 @@ void FASTCALL Cs2WriteWord(u32 addr, u16 val) {
                   return;
     case 0x90024:
     case 0x90026: Cs2Area->reg.CR4 = val;
+                  cs2_op_n++;
+                  cs2_last_issue_cmd = Cs2Area->reg.CR1 >> 8;
+                  cs2_last_issue_n = cs2_op_n;
+                  cs2_dbg("issue", Cs2Area->reg.CR1 >> 8, Cs2Area->reg.HIRQ,
+                          (u32)(Cs2Area->_command_execlock > 0));
                   Cs2SetCommandTiming(Cs2Area->reg.CR1 >> 8);
                   return;
     case 0x90028:
@@ -811,6 +965,7 @@ void Cs2Reset(void) {
   Cs2Area->getsectsize = Cs2Area->putsectsize = 2048;
   Cs2Area->isdiskchanged = 1;
   Cs2Area->isbufferfull = 0;
+  Cs2Area->bufferfullpause = 0;
   Cs2Area->isonesectorstored = 0;
   Cs2Area->isaudio = 0;
 
@@ -886,6 +1041,7 @@ void Cs2Reset(void) {
   Cs2Area->_periodiccycles = 0;
   Cs2Area->_commandtiming = 0;
   Cs2Area->_command_execlock = 0;
+  Cs2Area->_seekremaining = 0;
   Cs2Area->nextStatus = 0xFF;
   Cs2SetTiming(0);
 
@@ -1004,6 +1160,27 @@ void Cs2Exec(u32 timing) {
       switch (Cs2Area->status & 0xF) {
          case CDB_STAT_PAUSE:
          {
+             // Buffer-full auto-resume (real CD block behavior): when
+             // play was paused because the sector buffer filled up, the
+             // drive resumes on its own once the game frees space. The
+             // pending resume is cancelled if the game issues an
+             // explicit drive command (Play/Seek) in the meantime.
+             // The end-of-range check mirrors mednafen's
+             // CheckBufPauseResume (!end_met): when buffer-full and
+             // play-end land on the same sector, a stale resume here
+             // would re-animate the finished play and deliver an
+             // out-of-range sector, leaving one unexpected block in the
+             // partition (Dracula X's loader then polls forever for its
+             // read accounting to settle and times out into a full
+             // filesystem re-read).
+             if (Cs2Area->bufferfullpause && !Cs2Area->isbufferfull &&
+                 Cs2Area->FAD < Cs2Area->playendFAD &&
+                 cs2_bfull_resume_enabled()) {
+                Cs2Area->bufferfullpause = 0;
+                Cs2Area->status = CDB_STAT_PLAY;
+                Cs2Area->options = 0x8;
+                cs2_dbg("resume", Cs2Area->FAD & 0xFFFF, 0, 0);
+             }
              break;
          }
          case CDB_STAT_PLAY:
@@ -1027,20 +1204,42 @@ void Cs2Exec(u32 timing) {
                        playpartition->numblocks, 
                        Cs2Area->blockfreespace, Cs2Area->FAD, playpartition->size, Cs2Area->isbufferfull);
 
+                     cs2_dbg("sect", Cs2Area->FAD & 0xFFFF,
+                             playpartition->numblocks,
+                             Cs2Area->blockfreespace);
                      Cs2SetIRQ(CDB_HIRQ_CSCT);
                      Cs2Area->isonesectorstored = 1;
 
 					           if (Cs2Area->isbufferfull) {
 						           CDLOG("BUFFER IS FULL\n");
-						           Cs2Area->status = CDB_STAT_SEEK;
-                       Cs2Area->nextStatus = 0xFF;
-						           Cs2Area->options = 0x00;
+                       cs2_dbg("bfull", Cs2Area->FAD & 0xFFFF, 0, 0);
+                       if (cs2_bfull_resume_enabled()) {
+                          // Real CD block behavior: pause (not seek)
+                          // with an automatic resume when space frees.
+                          // options stays 0 like the legacy branch: the
+                          // report flag nibble is game-visible and Bio's
+                          // driver waits on it after a buffer-full
+                          // teardown (options=0x8 here froze its title).
+                          Cs2Area->status = CDB_STAT_PAUSE;
+                          Cs2Area->nextStatus = 0xFF;
+                          Cs2Area->options = 0x00;
+                          Cs2Area->bufferfullpause = 1;
+                       } else {
+                          // legacy behavior: visible SEEK transition
+                          Cs2Area->status = CDB_STAT_SEEK;
+                          Cs2Area->nextStatus = 0xFF;
+                          Cs2Area->options = 0x00;
+                       }
 					           }
 
                      if (Cs2Area->FAD >= Cs2Area->playendFAD) {
                         // Make sure we don't have to do a repeat
                         if (Cs2Area->repcnt >= Cs2Area->maxrepeat) {
-                           // we're done
+                           // we're done: also drop any pending
+                           // buffer-full auto-resume (the end overrides
+                           // the buffer-full pause set earlier in this
+                           // same pass when both land on one sector)
+                           Cs2Area->bufferfullpause = 0;
                            Cs2Area->status = CDB_STAT_PAUSE;
 						               Cs2Area->options = 0x8;
                            Cs2SetTiming(0);
@@ -1072,7 +1271,9 @@ void Cs2Exec(u32 timing) {
                      if (Cs2Area->FAD >= Cs2Area->playendFAD) {
                         // Make sure we don't have to do a repeat
                         if (Cs2Area->repcnt >= Cs2Area->maxrepeat) {
-                           // we're done
+                           // we're done (see the stored-sector end
+                           // branch: drop any pending auto-resume)
+                           Cs2Area->bufferfullpause = 0;
                            Cs2Area->status = CDB_STAT_PAUSE;
                            Cs2SetTiming(0);
                            Cs2SetIRQ(CDB_HIRQ_PEND);
@@ -1105,9 +1306,28 @@ void Cs2Exec(u32 timing) {
          }
          case CDB_STAT_SEEK:
 		     {
+			     // A long seek is metered out in short report-sized slices
+			     // (_periodictiming) so the CD block keeps issuing periodic
+			     // status reports throughout the seek, the way real hardware
+			     // does across its multi-phase seek. Collapsing the whole
+			     // seek into a single silent _periodictiming window starves
+			     // the game's periodic-response handler and hangs loaders
+			     // that poll during long cross-disc seeks (NHL Powerplay 96).
+			     if (cs2_timing_model_new() && Cs2Area->_seekremaining > 0) {
+				     if (Cs2Area->_seekremaining > Cs2Area->_periodictiming) {
+					     Cs2Area->_seekremaining -= Cs2Area->_periodictiming;
+					     break;  // still seeking; report fires below
+				     }
+				     Cs2Area->_seekremaining = 0;  // seek finishes this slice
+			     }
 			     if (!Cs2Area->isbufferfull){
 				     Cs2Area->status = CDB_STAT_PLAY;
 				     Cs2Area->options = 0x8;
+				     // seek complete: restore the sector delivery pitch (the
+				     // legacy code left the seek time in _periodictiming and
+				     // relied on the first sector read to reset it)
+				     if (cs2_timing_model_new())
+					     Cs2SetTiming(1);
 			     }
            if (Cs2Area->nextStatus != 0xFF) {
              Cs2Area->status = Cs2Area->nextStatus;
@@ -1193,6 +1413,24 @@ void Cs2SetTiming(int mode) {
 //////////////////////////////////////////////////////////////////////////////
 
 void Cs2SetCommandTiming(u8 cmd) {
+  if (cs2_timing_model_new()) {
+    // Measured (S40/S41): mednafen answers GetStatus/GetHWInfo in
+    // ~12.6 us when commands are issued back-to-back; sporadic issues
+    // land on a 500-CDB-clock pickup grid and see up to ~52 us.
+    // A flat 12 us floor DEADLOCKS Bio Hazard's title (its driver
+    // finishes post-issue bookkeeping before the CMOK IRQ may arrive;
+    // verified by A/B on the frozen repro), so keep the proven legacy
+    // 50 us as the flat value until the pickup grid is modeled.
+    // Diagnostic override: YABA_CS2_CMD_USEC.
+    static int cmd_usec = -1;
+    if (cmd_usec < 0) {
+      const char *e = getenv("YABA_CS2_CMD_USEC");
+      cmd_usec = (e != NULL) ? atoi(e) : 50;
+      if (cmd_usec <= 0) cmd_usec = 50;
+    }
+    Cs2Area->_commandtiming = cmd_usec;
+    return;
+  }
   switch(cmd) {
     case 0x02: // Cs2GetToc
       Cs2Area->_commandtiming = 250;
@@ -1207,6 +1445,12 @@ void Cs2SetCommandTiming(u8 cmd) {
 
 void Cs2Execute(void) {
   u16 instruction = Cs2Area->reg.CR1 >> 8;
+
+  cs2_op_n++;
+  cs2_last_exec_cmd = instruction;
+  cs2_last_exec_n = cs2_op_n;
+  cs2_dbg("exec", instruction, Cs2Area->reg.HIRQ,
+          (u32)(Cs2Area->_command_execlock > 0));
 
   //Cs2Area->reg.HIRQ &= ~CDB_HIRQ_CMOK;
 
@@ -1772,6 +2016,9 @@ void Cs2PlayDisc(void) {
   u32 pdepos;
   u32 pdpmode;
 
+  // an explicit play supersedes any pending buffer-full auto-resume
+  Cs2Area->bufferfullpause = 0;
+
   // Get all the arguments
   pdspos = ((Cs2Area->reg.CR1 & 0xFF) << 16) | Cs2Area->reg.CR2;
   pdepos = ((Cs2Area->reg.CR3 & 0xFF) << 16) | Cs2Area->reg.CR4;
@@ -1779,6 +2026,28 @@ void Cs2PlayDisc(void) {
 
 
   CDLOG("[CDB] Command: Play; Start = 0x%06x, End = 0x%06x, Mode = 0x%02x", pdspos, pdepos, pdpmode);
+
+  if (cs2_trace_on())
+    printf("[CS2T PLAY] start=%06X end=%06X mode=%02X fad=%d st=%02X\n",
+           (unsigned)pdspos, (unsigned)pdepos, (unsigned)pdpmode,
+           (int)Cs2Area->FAD, Cs2Area->status);
+
+  // A Play that changes nothing (start, end and play mode all "no change") is a
+  // refresh, not a new read: the drive must keep doing whatever it was doing.
+  // Restarting the seek/play state machine here re-reads from the current FAD and
+  // pushes unwanted sectors into the buffer partition. Tenchi o Kurau II issues
+  // this form while a seek to a voice file is still in flight, then switches to a
+  // CDDA track; the abandoned sectors stayed in partition 0 and its file loader
+  // later drained them as if they were the next stage script (STAGE3 freeze).
+  if (pdspos == 0xFFFFFF && pdepos == 0xFFFFFF && pdpmode == 0xFF &&
+      ((Cs2Area->status & 0xF) == CDB_STAT_SEEK ||
+       (Cs2Area->status & 0xF) == CDB_STAT_PLAY))
+  {
+     CDLOG("[CDB] Play: no-op refresh, drive left as-is");
+     doCDReport(Cs2Area->status);
+     Cs2SetIRQ(CDB_HIRQ_CMOK);
+     return;
+  }
 
   u32 current_fad = Cs2Area->FAD;
   // Convert Start Position to playFAD
@@ -1828,6 +2097,7 @@ void Cs2PlayDisc(void) {
 
   }
 
+  u32 pdnopickup = pdpmode != 0xFF && (pdpmode & 0x80);
   pdpmode &= 0x7F;
 
   // Only update max repeat if bits 0-6 aren't all set
@@ -1860,23 +2130,44 @@ void Cs2PlayDisc(void) {
      CDLOG("cs2\t: playDisc: Unsupported play mode = %02X\n", pdpmode);
 #endif
 
+  // "no pickup change" play while already playing: real hardware keeps
+  // reading without a re-seek (mednafen returns early from StartSeek);
+  // the legacy code restarted the seek state machine, which with real
+  // ~116 ms seek times would put an audible gap into gapless streams.
+  if (cs2_timing_model_new() && pdnopickup &&
+      (Cs2Area->status & 0xF) == CDB_STAT_PLAY) {
+     Cs2Area->playtype = CDB_PLAYTYPE_SECTOR;
+     Cs2Area->cdi->ReadAheadFAD(Cs2Area->FAD);
+     doCDReport(Cs2Area->status);
+     Cs2SetIRQ(CDB_HIRQ_CMOK);
+     return;
+  }
+
   Cs2SetTiming(1);
 
   Cs2Area->_periodiccycles = 0;
 
-  u32 length = 0;
-  // Calculate Seek time
-  length = abs((int)current_fad - (int)Cs2Area->FAD);
-  Cs2Area->_periodictiming = length; // seektime
-  if (Cs2Area->_periodictiming < 40000) {
-    Cs2Area->_periodictiming = 40000;
+  if (cs2_timing_model_new()) {
+    // Meter the seek out in short report-sized slices (see CDB_STAT_SEEK
+    // in Cs2Exec) so periodic status reports keep flowing during the seek.
+    Cs2Area->_seekremaining = cs2_seek_time_usec(current_fad, Cs2Area->FAD) * 3;
+    Cs2Area->_periodictiming = CS2_SEEK_REPORT_INTERVAL;
+    CDLOG("cs2\t:Seek %d -> %d = %d usec\n", (int)current_fad,
+          (int)Cs2Area->FAD, (int)(Cs2Area->_seekremaining / 3));
   }
-  if (Cs2Area->_periodictiming > (u32)SEEK_TIME) {
-     Cs2Area->_periodictiming = (u32)SEEK_TIME;
+  else {
+    u32 length = 0;
+    // Calculate Seek time
+    length = abs((int)current_fad - (int)Cs2Area->FAD);
+    Cs2Area->_periodictiming = length; // seektime
+    if (Cs2Area->_periodictiming < 40000) {
+      Cs2Area->_periodictiming = 40000;
+    }
+    if (Cs2Area->_periodictiming > (u32)SEEK_TIME) {
+       Cs2Area->_periodictiming = (u32)SEEK_TIME;
+    }
+    CDLOG("cs2\t:Seek length = %0d - %d = %d/%d %d\n", (int)current_fad, (int)Cs2Area->FAD, length, SEEK_TIME, Cs2Area->_periodictiming );
   }
-  CDLOG("cs2\t:Seek length = %0d - %d = %d/%d %d\n", (int)current_fad, (int)Cs2Area->FAD, length, SEEK_TIME, Cs2Area->_periodictiming );
-
-  //Cs2Area->_periodictiming = SEEK_TIME;
 
   Cs2Area->status = CDB_STAT_SEEK;      // need to be seek
   Cs2Area->nextStatus = 0xFF;
@@ -1892,6 +2183,9 @@ void Cs2PlayDisc(void) {
 //////////////////////////////////////////////////////////////////////////////
 
 void Cs2SeekDisc(void) {
+
+  // an explicit seek supersedes any pending buffer-full auto-resume
+  Cs2Area->bufferfullpause = 0;
 
 	// Stop
 	if ((Cs2Area->reg.CR1 & 0xFF) == 0x00 && Cs2Area->reg.CR2 == 0x0000){
@@ -1931,7 +2225,15 @@ void Cs2SeekDisc(void) {
 
     Cs2Area->status = CDB_STAT_SEEK;
     Cs2Area->nextStatus = CDB_STAT_PAUSE;
-    Cs2Area->_periodictiming = 1500; // ToDo Calcurate Time
+    if (cs2_timing_model_new()) {
+       Cs2Area->_periodiccycles = 0;
+       // Metered seek (see CDB_STAT_SEEK in Cs2Exec): keep periodic reports
+       // flowing during the seek instead of one silent window.
+       Cs2Area->_seekremaining = cs2_seek_time_usec(Cs2Area->FAD, sdFAD) * 3;
+       Cs2Area->_periodictiming = CS2_SEEK_REPORT_INTERVAL;
+    }
+    else
+       Cs2Area->_periodictiming = 1500; // ToDo Calcurate Time
     for (i = 0; i < 99; i++){
        u32 tfad = Cs2Area->TOC[i] & 0x00FFFFFF;
        if (tfad >= sdFAD){
@@ -1950,11 +2252,17 @@ void Cs2SeekDisc(void) {
      if (Cs2Area->reg.CR2 >> 8)
      {
         // Seek by index
+        u32 seek_from = Cs2Area->FAD;
         Cs2Area->status = CDB_STAT_SEEK;
         Cs2Area->nextStatus = CDB_STAT_PAUSE;
-        Cs2Area->_periodictiming = 1500; // ToDo Calcurate Time
         Cs2SetupDefaultPlayStats((Cs2Area->reg.CR2 >> 8), 1);
         Cs2Area->index = Cs2Area->reg.CR2 & 0xFF;
+        if (cs2_timing_model_new()) {
+           Cs2Area->_periodiccycles = 0;
+           Cs2Area->_periodictiming = cs2_seek_time_usec(seek_from, Cs2Area->FAD) * 3;
+        }
+        else
+           Cs2Area->_periodictiming = 1500; // ToDo Calcurate Time
 
         CDLOG("[CDB] Seek pos = TRACK:%02X FAD:%02X", Cs2Area->track, Cs2Area->FAD );
 
@@ -2351,8 +2659,20 @@ void Cs2ResetSelector(void) {
 
   doCDReport(Cs2Area->status);
   Cs2SetIRQ(CDB_HIRQ_CMOK);
-  Cs2Area->_command_execlock = 450;
+  // mednafen charges 300-400 CDB clocks (~27-35 us) before ESEL; the
+  // legacy 450 us lock also blocked the next command 13x too long.
+  // Diagnostic override: YABA_CS2_ESEL_USEC.
+  {
+    static int esel_usec = -1;
+    if (esel_usec < 0) {
+      const char *e = getenv("YABA_CS2_ESEL_USEC");
+      esel_usec = (e != NULL) ? atoi(e) : 35;
+      if (esel_usec <= 0) esel_usec = 35;
+    }
+    Cs2Area->_command_execlock = cs2_timing_model_new() ? esel_usec : 450;
+  }
   Cs2Area->_delay_irq = CDB_HIRQ_ESEL;
+  cs2_dbg("lock", Cs2Area->_command_execlock, CDB_HIRQ_ESEL, 0);
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -2425,6 +2745,7 @@ void Cs2CalculateActualSize(void) {
 
   Cs2Area->_command_execlock = 30 * casnumsect;
   Cs2Area->_delay_irq = CDB_HIRQ_ESEL;
+  cs2_dbg("lock", 30 * casnumsect, CDB_HIRQ_ESEL, casnumsect);
 
 }
 
@@ -2565,6 +2886,17 @@ void Cs2GetSectorData(void)
       return;
    }
 
+   // Same zero-length guard as getThenDeleteSectorData below: a zero
+   // sector count cannot arm a transfer and is rejected.
+   if (gsdsectnum == 0)
+   {
+      CDLOG("Zero sector count requested\n");
+
+      doCDReport(CDB_STAT_REJECT);
+      Cs2SetIRQ(CDB_HIRQ_CMOK | CDB_HIRQ_EHST);
+      return;
+   }
+
    CalcSectorOffsetNumber(gsdbufno, &gsdsectoffset, &gsdsectnum);
 
    // Setup Data Transfer
@@ -2633,6 +2965,7 @@ void Cs2DeleteSectorData(void)
 
    Cs2Area->_command_execlock = 30 * dsdsectnum;
    Cs2Area->_delay_irq = CDB_HIRQ_EHST;
+   cs2_dbg("lock", 30 * dsdsectnum, CDB_HIRQ_EHST, dsdsectnum);
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -2657,6 +2990,26 @@ void Cs2GetThenDeleteSectorData(void)
    if (Cs2Area->partition[gtdsdbufno].numblocks == 0)
    {
       CDLOG("No sectors available\n");
+
+      doCDReport(CDB_STAT_REJECT);
+      Cs2SetIRQ(CDB_HIRQ_CMOK | CDB_HIRQ_EHST);
+      return;
+   }
+
+   // A zero sector count is not a transfer the CD block can arm, so the
+   // request is rejected rather than set up as a zero-length transfer
+   // (0xFFFF, not 0, is the "rest of the partition" sentinel - see
+   // CalcSectorOffsetNumber). Drivers that poll getSectorNumber and then
+   // immediately ask for that many sectors depend on this: when a sector
+   // lands between the two commands, the count they captured is still 0,
+   // and accepting it made them transfer nothing while believing the
+   // transfer succeeded. Independence Day then programmed the SH2 DMAC
+   // with TCR=0, which the hardware executes as 0x1000000 transfers, and
+   // the runaway fill wiped Work RAM High including the exception vector
+   // table. Rejecting makes the driver retry and pick up the real count.
+   if (gtdsdsectnum == 0)
+   {
+      CDLOG("Zero sector count requested\n");
 
       doCDReport(CDB_STAT_REJECT);
       Cs2SetIRQ(CDB_HIRQ_CMOK | CDB_HIRQ_EHST);
@@ -3290,10 +3643,12 @@ void Cs2AuthenticateDevice(void) {
 
 void Cs2IsDeviceAuthenticated(void) {
   Cs2Area->reg.CR1 = (Cs2Area->status << 8);
-  if (Cs2Area->reg.CR2)
-     Cs2Area->reg.CR2 = Cs2Area->mpgauth;
-  else
-     Cs2Area->reg.CR2 = Cs2Area->satauth;
+  
+  //if (Cs2Area->reg.CR2)
+  //  Cs2Area->reg.CR2 = Cs2Area->mpgauth;
+  //else
+    Cs2Area->reg.CR2 = Cs2Area->satauth;
+
   Cs2Area->reg.CR3 = 0;
   Cs2Area->reg.CR4 = 0;
   Cs2SetIRQ(CDB_HIRQ_CMOK);
@@ -4134,11 +4489,12 @@ u8 Cs2GetIP(int autoregion) {
          tmp[10]='\0';
          sscanf(tmp, "%s", cdip->itemnum);
 		 
-		 // make gameid as u64
-		 cdip->gameid = 0;
-		 for (i = 0; i < 8; i++){
-			 cdip->gameid |= ((u64)cdip->itemnum[i]) << (i * 8);
-		 }
+		     // make gameid as u64
+		     cdip->gameid = 0;
+		     for (i = 0; i < 8; i++){
+			     cdip->gameid |= ((u64)cdip->itemnum[i]) << (i * 8);
+		     }
+
          memcpy(cdip->version, buf+0x2A, 6);
          cdip->version[6]='\0';
          sprintf(cdip->date, "%c%c/%c%c/%c%c%c%c", buf[0x34], buf[0x35], buf[0x36], buf[0x37], buf[0x30], buf[0x31], buf[0x32], buf[0x33]);
@@ -4219,6 +4575,11 @@ u8 Cs2GetIP(int autoregion) {
                default: break;
             }
          }
+
+         // The product code is now known: drop a configured RAM expansion
+         // cart for games that crash with one inserted (real-hardware
+         // incompatibility; e.g. Die Hard Trilogy). Mirrors mednafen's DB.
+         CartApplyGameCompat(cdip->itemnum);
       }
 
       // Free Block

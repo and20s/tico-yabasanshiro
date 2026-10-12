@@ -37,21 +37,21 @@
  -->            
             
     <Button
-        android:onClick="onLoadGame"
+        android:id="@+id/btn_load_game"
         android:text="@string/load_game" />
 
         </TableRow>
         <TableRow>
 
     <Button
-        android:onClick="onSettings"
+        android:id="@+id/btn_settings"
         android:text="@string/setting" />
-        
+
         </TableRow>
         <TableRow>
 
     <Button
-        android:onClick="onDonate"
+        android:id="@+id/btn_donate"
         android:text="@string/donation" />
         
     </TableRow>

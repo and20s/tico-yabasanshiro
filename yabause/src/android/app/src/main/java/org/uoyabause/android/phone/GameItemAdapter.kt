@@ -1,3 +1,5 @@
+@file:OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
+
 /*  Copyright 2019 devMiyax(smiyaxdev@gmail.com)
 
     This file is part of YabaSanshiro.
@@ -16,40 +18,46 @@
     along with YabaSanshiro; if not, write to the Free Software
     Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 */
+
 package org.uoyabause.android.phone
 
 import android.annotation.SuppressLint
-import android.app.Activity
-import android.app.ProgressDialog
-import android.content.res.Configuration
+import android.content.Context
+import android.content.Intent
+import android.content.pm.ShortcutInfo
+import android.content.pm.ShortcutManager
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
+import android.graphics.drawable.Icon
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
-import android.util.TypedValue
 import android.view.ContextMenu
 import android.view.LayoutInflater
 import android.view.MenuInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.Filter
+import android.widget.Filterable
 import android.widget.ImageButton
-import android.widget.Toast
-import java.util.Locale
 import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.widget.PopupMenu
 import androidx.cardview.widget.CardView
-import androidx.recyclerview.widget.GridLayoutManager
-import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.bumptech.glide.Glide
 import com.bumptech.glide.load.engine.GlideException
 import com.bumptech.glide.request.RequestListener
 import com.bumptech.glide.request.RequestOptions
 import com.bumptech.glide.request.RequestOptions.bitmapTransform
-import com.bumptech.glide.request.target.DrawableImageViewTarget
 import com.frybits.harmony.getHarmonySharedPreferences
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.firebase.analytics.FirebaseAnalytics
 import com.google.firebase.auth.FirebaseAuth
 import jp.wasabeef.glide.transformations.BlurTransformation
@@ -65,12 +73,13 @@ import org.uoyabause.android.GameInfo.Companion.sigin
 import org.uoyabause.android.YabauseStorage
 import org.uoyabause.android.phone.GameItemAdapter.GameViewHolder
 import java.io.File
+import java.util.Locale
 import javax.sql.DataSource
 
-
-class GameItemAdapter(private val originalDataSet: MutableList<GameInfo?>?) :
-    RecyclerView.Adapter<GameViewHolder>(), Filterable {
-
+class GameItemAdapter(
+    private val originalDataSet: MutableList<GameInfo?>?,
+) : RecyclerView.Adapter<GameViewHolder>(),
+    Filterable {
     private var dataSet: MutableList<GameInfo?>? = originalDataSet?.toMutableList()
     private var currentSearchQuery: String = ""
 
@@ -112,16 +121,16 @@ class GameItemAdapter(private val originalDataSet: MutableList<GameInfo?>?) :
 
     fun getSelectedPosition(): Int = selectedPosition
 
-    fun getSelectedGame(): GameInfo? {
-        return if (selectedPosition >= 0 && selectedPosition < (dataSet?.size ?: 0)) {
-            dataSet?.get(selectedPosition)
-        } else {
-            null
-        }
+    fun getSelectedGame(): GameInfo? = if (selectedPosition >= 0 && selectedPosition < (dataSet?.size ?: 0)) {
+        dataSet?.get(selectedPosition)
+    } else {
+        null
     }
 
-    class GameViewHolder(var rootview: View) :
-        RecyclerView.ViewHolder(rootview), View.OnCreateContextMenuListener {
+    class GameViewHolder(
+        var rootview: View,
+    ) : RecyclerView.ViewHolder(rootview),
+        View.OnCreateContextMenuListener {
         var textViewName: TextView
         var textViewVersion: TextView
         var imageViewIcon: ImageView
@@ -144,47 +153,47 @@ class GameItemAdapter(private val originalDataSet: MutableList<GameInfo?>?) :
 
             menuButton = rootview.findViewById<View>(R.id.game_card_menu) as ImageButton
 
-
-
             /*
             ViewGroup.LayoutParams lp = imageViewIcon.getLayoutParams();
             lp.width = CARD_WIDTH;
             lp.height = CARD_HEIGHT;
             imageViewIcon.setLayoutParams(lp);
-            */
+             */
         }
 
-       override fun onCreateContextMenu(
-           menu: ContextMenu?,
-           v: View?,
-           menuInfo: ContextMenu.ContextMenuInfo?,
-       ) {
+        override fun onCreateContextMenu(
+            menu: ContextMenu?,
+            v: View?,
+            menuInfo: ContextMenu.ContextMenuInfo?,
+        ) {
         }
-
     }
 
+    override fun getItemViewType(position: Int): Int = viewMode
 
-    override fun getItemViewType(position: Int): Int {
-        return viewMode
-    }
+    override fun onCreateViewHolder(
+        parent: ViewGroup,
+        viewType: Int,
+    ): GameViewHolder {
+        val layoutId =
+            when (viewType) {
+                Companion.VIEW_TYPE_COMPACT -> R.layout.cards_layout_compact
+                Companion.VIEW_TYPE_TEXT_ONLY -> R.layout.cards_layout_text_only
+                Companion.VIEW_TYPE_SLIM -> R.layout.cards_layout_slim
+                else -> R.layout.cards_layout
+            }
 
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): GameViewHolder {
-        val layoutId = when (viewType) {
-            Companion.VIEW_TYPE_COMPACT -> R.layout.cards_layout_compact
-            Companion.VIEW_TYPE_TEXT_ONLY -> R.layout.cards_layout_text_only
-            Companion.VIEW_TYPE_SLIM -> R.layout.cards_layout_slim
-            else -> R.layout.cards_layout
-        }
-
-        val view = LayoutInflater.from(parent.context)
-            .inflate(layoutId, parent, false)
+        val view =
+            LayoutInflater
+                .from(parent.context)
+                .inflate(layoutId, parent, false)
         view.setOnClickListener(GameSelectFragmentPhone.myOnClickListener)
-
 
         // work here if you need to control height of your items
         // keep in mind that parent is RecyclerView in this case
-        //val height = 10;
-        //view.minimumHeight = height
+        // val height = 10;
+        // view.minimumHeight = height
+
 /*
         if (parent?.resources?.configuration?.orientation == Configuration.ORIENTATION_LANDSCAPE) {
             try {
@@ -216,19 +225,33 @@ class GameItemAdapter(private val originalDataSet: MutableList<GameInfo?>?) :
     }
 
     private var mListener: OnItemClickListener? = null
+
     fun setOnItemClickListener(listener: OnItemClickListener?) {
         mListener = listener
     }
 
     interface OnItemClickListener {
-        fun onItemClick(position: Int, item: GameInfo?, v: View?)
+        fun onItemClick(
+            position: Int,
+            item: GameInfo?,
+            v: View?,
+        )
+
         fun onGameRemoved(item: GameInfo?)
-        fun onItemSelected(position: Int, item: GameInfo?)
+
+        fun onItemSelected(
+            position: Int,
+            item: GameInfo?,
+        )
+
         fun onGameStart(item: GameInfo?)
     }
 
     @SuppressLint("NotifyDataSetChanged", "CheckResult")
-    override fun onBindViewHolder(holder: GameViewHolder, position: Int) {
+    override fun onBindViewHolder(
+        holder: GameViewHolder,
+        position: Int,
+    ) {
         val textViewName = holder.textViewName
         val textViewVersion = holder.textViewVersion
         val imageView = holder.imageViewIcon
@@ -246,7 +269,10 @@ class GameItemAdapter(private val originalDataSet: MutableList<GameInfo?>?) :
 
                 // Add cloud icon indicator
                 textViewVersion.setCompoundDrawablesWithIntrinsicBounds(
-                    R.drawable.cloud_upload_48px, 0, 0, 0
+                    R.drawable.cloud_upload_48px,
+                    0,
+                    0,
+                    0,
                 )
                 textViewVersion.compoundDrawablePadding = 8
             } else {
@@ -313,11 +339,13 @@ class GameItemAdapter(private val originalDataSet: MutableList<GameInfo?>?) :
                 if (game.image_url!!.startsWith("http")) {
                     var url = game.image_url
                     if (game.isCloudOnly) {
-                        url += "?"+sigin
+                        url += "?" + sigin
                     }
-                    val glideRequest = Glide.with(imageView)
-                        .load(url)
-                        .error(R.drawable.missing) // エラー時のフォールバック画像を設定
+                    val glideRequest =
+                        Glide
+                            .with(imageView)
+                            .load(url)
+                            .error(R.drawable.missing) // エラー時のフォールバック画像を設定
 
                     // Apply grayscale effect for cloud-only games
                     if (game.isCloudOnly) {
@@ -325,34 +353,42 @@ class GameItemAdapter(private val originalDataSet: MutableList<GameInfo?>?) :
                         glideRequest.apply(RequestOptions.bitmapTransform(BlurTransformation(8)))
                     }
 
-                    glideRequest.listener(object : RequestListener<Drawable> {
-                        override fun onLoadFailed(e: GlideException?, model: Any?,
-                                                  target: com.bumptech.glide.request.target.Target<Drawable>?,
-                                                  isFirstResource: Boolean): Boolean {
-                            var mFirebaseAnalytics = FirebaseAnalytics.getInstance(ctx)
-                            val bundle = Bundle()
-                            bundle.putString(FirebaseAnalytics.Param.ITEM_ID, game.product_number)
-                            bundle.putString(FirebaseAnalytics.Param.ITEM_NAME, game.image_url)
-                            mFirebaseAnalytics.logEvent(
-                                "yab_fail_load_image", bundle
-                            )
-                            // エラー画像はerror()で設定済みなので、ここでは何もしない
-                            return false // Glideにエラー画像の設定を任せる
-                        }
+                    glideRequest
+                        .listener(
+                            object : RequestListener<Drawable> {
+                                override fun onLoadFailed(
+                                    e: GlideException?,
+                                    model: Any?,
+                                    target: com.bumptech.glide.request.target.Target<Drawable>?,
+                                    isFirstResource: Boolean,
+                                ): Boolean {
+                                    var mFirebaseAnalytics = FirebaseAnalytics.getInstance(ctx)
+                                    val bundle = Bundle()
+                                    bundle.putString(FirebaseAnalytics.Param.ITEM_ID, game.product_number)
+                                    bundle.putString(FirebaseAnalytics.Param.ITEM_NAME, game.image_url)
+                                    mFirebaseAnalytics.logEvent(
+                                        "yab_fail_load_image",
+                                        bundle,
+                                    )
+                                    // エラー画像はerror()で設定済みなので、ここでは何もしない
+                                    return false // Glideにエラー画像の設定を任せる
+                                }
 
-                        override fun onResourceReady(
-                            resource: Drawable?,
-                            model: Any?,
-                            target: com.bumptech.glide.request.target.Target<Drawable>?,
-                            dataSource: com.bumptech.glide.load.DataSource?,
-                            isFirstResource: Boolean
-                        ): Boolean {
-                            // Glideが自動的に画像を設定するのでfalseを返す
-                            return false
-                        }
-                    }).into(imageView)
+                                override fun onResourceReady(
+                                    resource: Drawable?,
+                                    model: Any?,
+                                    target: com.bumptech.glide.request.target.Target<Drawable>?,
+                                    dataSource: com.bumptech.glide.load.DataSource?,
+                                    isFirstResource: Boolean,
+                                ): Boolean {
+                                    // Glideが自動的に画像を設定するのでfalseを返す
+                                    return false
+                                }
+                            },
+                        ).into(imageView)
                 } else {
-                    Glide.with(holder.rootview.context)
+                    Glide
+                        .with(holder.rootview.context)
                         .load(game.image_url?.let { File(it) })
                         .into(imageView)
                 }
@@ -361,17 +397,25 @@ class GameItemAdapter(private val originalDataSet: MutableList<GameInfo?>?) :
             // Set click listener (selection only, no game start)
             holder.rootview.setOnClickListener {
                 // 選択状態を更新（ゲーム開始はしない）
-                setSelectedPosition(position)
+                val adapterPosition = holder.bindingAdapterPosition
+                if (adapterPosition != RecyclerView.NO_POSITION) {
+                    setSelectedPosition(adapterPosition)
+                }
             }
         }
 
         // Set menu button click listener
-        holder.menuButton.setOnClickListener(View.OnClickListener {
-            showPopupMenu(
-                holder.menuButton,
-                position
-            )
-        })
+        holder.menuButton.setOnClickListener(
+            View.OnClickListener {
+                val adapterPosition = holder.bindingAdapterPosition
+                if (adapterPosition != RecyclerView.NO_POSITION) {
+                    showPopupMenu(
+                        holder.menuButton,
+                        adapterPosition,
+                    )
+                }
+            },
+        )
     }
 
     /**
@@ -380,7 +424,10 @@ class GameItemAdapter(private val originalDataSet: MutableList<GameInfo?>?) :
      * @param context The context to use for creating the GameBackupManager
      * @return true if the game is already backed up, false otherwise
      */
-    private suspend fun isGameBackedUp(gameInfo: GameInfo, context: android.content.Context): Boolean {
+    private suspend fun isGameBackedUp(
+        gameInfo: GameInfo,
+        context: android.content.Context,
+    ): Boolean {
         // Check if user is signed in
         val auth = FirebaseAuth.getInstance()
         if (auth.currentUser == null) {
@@ -392,23 +439,28 @@ class GameItemAdapter(private val originalDataSet: MutableList<GameInfo?>?) :
             val filePath = gameInfo.file_path
 
             // Calculate hash
-            val hash = if (filePath.startsWith("content://")) {
-                org.uoyabause.android.backup.GameBackupManager(context)
-                    .calculateSHA256(android.net.Uri.parse(filePath))
-            } else {
-                org.uoyabause.android.backup.GameBackupManager(context)
-                    .calculateSHA256(java.io.File(filePath))
-            }
+            val hash =
+                if (filePath.startsWith("content://")) {
+                    org.uoyabause.android.backup
+                        .GameBackupManager(context)
+                        .calculateSHA256(android.net.Uri.parse(filePath))
+                } else {
+                    org.uoyabause.android.backup
+                        .GameBackupManager(context)
+                        .calculateSHA256(java.io.File(filePath))
+                }
 
             // Check if this hash exists in the user's backups
-            val firestore = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+            val firestore = com.google.firebase.firestore.FirebaseFirestore
+                .getInstance()
             val userDocRef = firestore.collection("users").document(auth.currentUser!!.uid)
 
-            val existingBackup = userDocRef
-                .collection("backups")
-                .whereEqualTo("hash", hash)
-                .get()
-                .await()
+            val existingBackup =
+                userDocRef
+                    .collection("backups")
+                    .whereEqualTo("hash", hash)
+                    .get()
+                    .await()
 
             return !existingBackup.isEmpty
         } catch (e: Exception) {
@@ -417,9 +469,32 @@ class GameItemAdapter(private val originalDataSet: MutableList<GameInfo?>?) :
         }
     }
 
+    /**
+     * Checks if the current user is an admin
+     * @param userId The user ID to check
+     * @return true if user is admin, false otherwise
+     */
+    private suspend fun checkIsAdmin(userId: String): Boolean = try {
+        val db = com.google.firebase.firestore.FirebaseFirestore
+            .getInstance()
+        val adminDoc =
+            withContext(Dispatchers.IO) {
+                db
+                    .collection("admins")
+                    .document(userId)
+                    .get()
+                    .await()
+            }
+        adminDoc.exists()
+    } catch (e: Exception) {
+        Log.e("GameItemAdapter", "Error checking admin status", e)
+        false
+    }
+
     fun showPopupMenu(
         view: View,
         position: Int,
+        boxartImageView: ImageView? = null,
     ) { // inflate menu
         val popup = PopupMenu(view.context, view)
         val inflater: MenuInflater = popup.getMenuInflater()
@@ -452,23 +527,24 @@ class GameItemAdapter(private val originalDataSet: MutableList<GameInfo?>?) :
  */
         }
 
-        popup.setOnMenuItemClickListener(PopupMenu.OnMenuItemClickListener {
-            when (it.itemId) {
-                R.id.download_from_cloud -> {
-                    val game_info = dataSet?.get(position)!!
-                    if (game_info.isCloudOnly && game_info.cloudBackupInfo != null) {
-                        // Handle cloud-only game download - just click the item to download
-                        if (null != mListener) {
-                            mListener!!.onItemClick(position, dataSet?.get(position), null)
+        popup.setOnMenuItemClickListener(
+            PopupMenu.OnMenuItemClickListener {
+                when (it.itemId) {
+                    R.id.download_from_cloud -> {
+                        val gameInfo = dataSet?.get(position)!!
+                        if (gameInfo.isCloudOnly && gameInfo.cloudBackupInfo != null) {
+                            // Handle cloud-only game download - just click the item to download
+                            if (null != mListener) {
+                                mListener!!.onItemClick(position, dataSet?.get(position), null)
+                            }
+                            return@OnMenuItemClickListener true
                         }
-                        return@OnMenuItemClickListener true
+                        return@OnMenuItemClickListener false
                     }
-                    return@OnMenuItemClickListener false
-                }
 
 /* Disable cloud backup
                 R.id.backup_to_cloud -> {
-                    val game_info = dataSet?.get(position)!!
+                    val gameInfo = dataSet?.get(position)!!
 
                     // Check if user is signed in
                     val auth = FirebaseAuth.getInstance()
@@ -484,19 +560,19 @@ class GameItemAdapter(private val originalDataSet: MutableList<GameInfo?>?) :
                     // Check if this is a backup or remove operation
                     CoroutineScope(Dispatchers.Main).launch {
                         try {
-                            val isBackedUp = isGameBackedUp(game_info, view.context)
+                            val isBackedUp = isGameBackedUp(gameInfo, view.context)
 
                             if (isBackedUp) {
                                 // This is a remove operation
-                                handleRemoveFromCloud(view, game_info)
+                                handleRemoveFromCloud(view, gameInfo)
                             } else {
                                 // This is a backup operation
-                                handleBackupToCloud(view, game_info)
+                                handleBackupToCloud(view, gameInfo)
                             }
                         } catch (e: Exception) {
                             android.util.Log.e("GameItemAdapter", "Error determining backup status: ${e.message}")
                             // Default to backup operation if we can't determine status
-                            handleBackupToCloud(view, game_info)
+                            handleBackupToCloud(view, gameInfo)
                         }
                     }
 
@@ -504,53 +580,114 @@ class GameItemAdapter(private val originalDataSet: MutableList<GameInfo?>?) :
                 }
 
  */
-                R.id.detail -> {
-                    val game_info = dataSet?.get(position)!!
-                    // Firestoreからproduct_numberを使用してゲームのドキュメントIDを検索
-                    val db = com.google.firebase.firestore.FirebaseFirestore.getInstance()
-                    db.collection("games")
-                        .whereEqualTo("product_number", game_info.product_number)
-                        .get()
-                        .addOnSuccessListener { documents ->
-                            if (!documents.isEmpty) {
-                                // ゲームが見つかった場合、そのドキュメントIDを使用してウェブページを開く
-                                val gameDoc = documents.documents[0]
-                                val gameId = gameDoc.id
-                                val url = "https://www.yabasanshiro.com/games/${gameId}"
-                                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW)
-                                intent.data = android.net.Uri.parse(url)
-                                view.context.startActivity(intent)
-                            } else {
-                                // ゲームが見つからない場合はエラーメッセージを表示
-                                android.widget.Toast.makeText(
+                    R.id.detail -> {
+                        val gameInfo = dataSet?.get(position)!!
+                        // Firestoreからproduct_numberを使用してゲームのドキュメントIDを検索
+                        val db = com.google.firebase.firestore.FirebaseFirestore
+                            .getInstance()
+                        db
+                            .collection("games")
+                            .whereEqualTo("product_number", gameInfo.product_number)
+                            .get()
+                            .addOnSuccessListener { documents ->
+                                if (!documents.isEmpty) {
+                                    // ゲームが見つかった場合、そのドキュメントIDを使用してウェブページを開く
+                                    val gameDoc = documents.documents[0]
+                                    val gameId = gameDoc.id
+                                    val url = "https://www.yabasanshiro.com/games/$gameId"
+                                    val intent = android.content.Intent(android.content.Intent.ACTION_VIEW)
+                                    intent.data = android.net.Uri.parse(url)
+                                    view.context.startActivity(intent)
+                                } else {
+                                    // ゲームが見つからない場合はエラーメッセージを表示
+                                    android.widget.Toast
+                                        .makeText(
+                                            view.context,
+                                            "Game not found in database",
+                                            android.widget.Toast.LENGTH_SHORT,
+                                        ).show()
+                                }
+                            }.addOnFailureListener { e ->
+                                // エラーが発生した場合はエラーメッセージを表示
+                                android.widget.Toast
+                                    .makeText(
+                                        view.context,
+                                        "Error: ${e.message}",
+                                        android.widget.Toast.LENGTH_SHORT,
+                                    ).show()
+                                android.util.Log.e("GameItemAdapter", "Error querying games collection", e)
+                            }
+                    }
+                    R.id.restore_defaults -> {
+                        var gameInfo = dataSet?.get(position)!!
+                        val gamePreference = view.context.getHarmonySharedPreferences(gameInfo.product_number)
+                        gamePreference.edit().clear().apply()
+                    }
+                    R.id.report -> {
+                        val gameInfo = dataSet?.get(position)!!
+                        val reportDialog = org.uoyabause.android.ReportDialog(view.context, gameInfo.product_number)
+                        val fragmentManager = (view.context as androidx.fragment.app.FragmentActivity).supportFragmentManager
+                        reportDialog.show(fragmentManager, "ReportDialog")
+                    }
+                    R.id.reproduce_report -> {
+                        val gameInfo = dataSet?.get(position)!!
+
+                        // Check if user is signed in
+                        val auth = FirebaseAuth.getInstance()
+                        if (auth.currentUser == null) {
+                            Toast
+                                .makeText(
                                     view.context,
-                                    "Game not found in database",
-                                    android.widget.Toast.LENGTH_SHORT
+                                    "Please sign in to access reports",
+                                    Toast.LENGTH_SHORT,
                                 ).show()
+                            return@OnMenuItemClickListener true
+                        }
+
+                        // Check if user is admin
+                        CoroutineScope(Dispatchers.Main).launch {
+                            try {
+                                val isAdmin = checkIsAdmin(auth.currentUser!!.uid)
+
+                                if (isAdmin) {
+                                    // Launch ReportListActivity
+                                    val intent =
+                                        Intent(view.context, org.uoyabause.android.ReportListActivity::class.java).apply {
+                                            putExtra(
+                                                org.uoyabause.android.ReportListActivity.EXTRA_PRODUCT_NUMBER,
+                                                gameInfo.product_number,
+                                            )
+                                            putExtra(org.uoyabause.android.ReportListActivity.EXTRA_GAME_TITLE, gameInfo.game_title)
+                                            putExtra(org.uoyabause.android.ReportListActivity.EXTRA_FILE_PATH, gameInfo.file_path)
+                                            putExtra(org.uoyabause.android.ReportListActivity.EXTRA_ISO_FILE_PATH, gameInfo.iso_file_path)
+                                        }
+                                    view.context.startActivity(intent)
+                                } else {
+                                    Toast
+                                        .makeText(
+                                            view.context,
+                                            "This feature is only available for administrators",
+                                            Toast.LENGTH_LONG,
+                                        ).show()
+                                }
+                            } catch (e: Exception) {
+                                Log.e("GameItemAdapter", "Error checking admin status", e)
+                                Toast
+                                    .makeText(
+                                        view.context,
+                                        "Error: ${e.message}",
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
                             }
                         }
-                        .addOnFailureListener { e ->
-                            // エラーが発生した場合はエラーメッセージを表示
-                            android.widget.Toast.makeText(
-                                view.context,
-                                "Error: ${e.message}",
-                                android.widget.Toast.LENGTH_SHORT
-                            ).show()
-                            android.util.Log.e("GameItemAdapter", "Error querying games collection", e)
-                        }
-                }
-                R.id.restore_defaults -> {
-                    var game_info = dataSet?.get(position)!!
-                    val gamePreference = view.context.getHarmonySharedPreferences(game_info.product_number)
-                    gamePreference.edit().clear().apply()
-                }
-                R.id.report -> {
-                    val game_info = dataSet?.get(position)!!
-                    val reportDialog = org.uoyabause.android.ReportDialog( view.context, game_info.product_number )
-                    val fragmentManager = (view.context as androidx.fragment.app.FragmentActivity).supportFragmentManager
-                    reportDialog.show(fragmentManager, "ReportDialog")
-                }
-                R.id.delete -> {
+                        true
+                    }
+                    R.id.create_shortcut -> {
+                        val gameInfo = dataSet?.get(position)!!
+                        createHomeScreenShortcut(view.context, gameInfo, boxartImageView)
+                        true
+                    }
+                    R.id.delete -> {
 /*
                     val prefs = view.context.getSharedPreferences("private", Context.MODE_PRIVATE)
                     val hasDonated = prefs.getBoolean("donated", false)
@@ -572,36 +709,40 @@ class GameItemAdapter(private val originalDataSet: MutableList<GameInfo?>?) :
 
  */
                         Log.d("textext", "R.id.delete is selected")
-                        AlertDialog.Builder(view.context)
-                                .setTitle(R.string.delete_confirm_title)
-                                .setMessage(R.string.delete_confirm)
-                                .setPositiveButton(R.string.ok) { _, _ ->
+                        AlertDialog
+                            .Builder(view.context)
+                            .setTitle(R.string.delete_confirm_title)
+                            .setMessage(R.string.delete_confirm)
+                            .setPositiveButton(R.string.ok) { _, _ ->
 
+                                var gameInfo = dataSet?.get(position)!!
 
-                                    var game_info = dataSet?.get(position)!!
+                                // Store the game info and position for retry after permission is granted
+                                val gameToDelete = gameInfo
+                                val positionToDelete = position
 
-                                    // Store the game info and position for retry after permission is granted
-                                    val gameToDelete = game_info
-                                    val positionToDelete = position
-
-                                    // Function to perform the actual deletion
-                                    fun performDeletion() {
-                                        GlobalScope.launch(Dispatchers.IO) {
-                                            gameToDelete.removeInstance(null) // No callback needed for retry
-                                            withContext(Dispatchers.Main) {
-                                                dataSet!!.removeAt(positionToDelete)
-                                                mListener?.onGameRemoved(gameToDelete)
-                                                notifyItemRemoved(positionToDelete)
-                                                // Auto-select next game after deletion
-                                                selectNextGameAfterDeletion(positionToDelete)
-                                            }
+                                // Function to perform the actual deletion
+                                fun performDeletion() {
+                                    GlobalScope.launch(Dispatchers.IO) {
+                                        gameToDelete.removeInstance(null) // No callback needed for retry
+                                        withContext(Dispatchers.Main) {
+                                            dataSet!!.removeAt(positionToDelete)
+                                            mListener?.onGameRemoved(gameToDelete)
+                                            notifyItemRemoved(positionToDelete)
+                                            // Auto-select next game after deletion
+                                            selectNextGameAfterDeletion(positionToDelete)
                                         }
                                     }
+                                }
 
-                                    GlobalScope.launch(Dispatchers.IO) {
-                                        // Create permission callback for SAF permission requests
-                                        val permissionCallback = object : org.uoyabause.android.PermissionRequestCallback {
-                                            override fun onPermissionRequired(uri: android.net.Uri, message: String): Boolean {
+                                GlobalScope.launch(Dispatchers.IO) {
+                                    // Create permission callback for SAF permission requests
+                                    val permissionCallback =
+                                        object : org.uoyabause.android.PermissionRequestCallback {
+                                            override fun onPermissionRequired(
+                                                uri: android.net.Uri,
+                                                message: String,
+                                            ): Boolean {
                                                 // Log the permission requirement
                                                 android.util.Log.w("GameItemAdapter", "Permission required for URI: $uri")
                                                 android.util.Log.w("GameItemAdapter", "Message: $message")
@@ -610,27 +751,38 @@ class GameItemAdapter(private val originalDataSet: MutableList<GameInfo?>?) :
                                                 android.os.Handler(android.os.Looper.getMainLooper()).post {
                                                     // Get the fragment instance to request permission
                                                     val activity = view.context as? androidx.appcompat.app.AppCompatActivity
-                                                    val fragment = activity?.supportFragmentManager?.findFragmentByTag("GameSelectFragmentPhone")
-                                                        ?: activity?.supportFragmentManager?.fragments?.find { it is GameSelectFragmentPhone }
+                                                    val fragment =
+                                                        activity?.supportFragmentManager?.findFragmentByTag("GameSelectFragmentPhone")
+                                                            ?: activity?.supportFragmentManager?.fragments?.find {
+                                                                it is GameSelectFragmentPhone
+                                                            }
 
                                                     if (fragment is GameSelectFragmentPhone) {
                                                         fragment.requestWritePermission(uri) { permissionGranted ->
                                                             if (permissionGranted) {
-                                                                android.util.Log.d("GameItemAdapter", "Permission granted, retrying deletion")
+                                                                android.util.Log.d(
+                                                                    "GameItemAdapter",
+                                                                    "Permission granted, retrying deletion",
+                                                                )
                                                                 // Permission granted, retry deletion
                                                                 performDeletion()
                                                             } else {
-                                                                android.util.Log.w("GameItemAdapter", "Permission denied, performing database-only deletion")
+                                                                android.util.Log.w(
+                                                                    "GameItemAdapter",
+                                                                    "Permission denied, performing database-only deletion",
+                                                                )
                                                                 // Permission denied, show message and perform database-only deletion
-                                                                android.widget.Toast.makeText(
-                                                                    view.context,
-                                                                    "File deletion failed due to permission. Removed from game list only.",
-                                                                    android.widget.Toast.LENGTH_LONG
-                                                                ).show()
+                                                                android.widget.Toast
+                                                                    .makeText(
+                                                                        view.context,
+                                                                        "File deletion failed due to permission. Removed from game list only.",
+                                                                        android.widget.Toast.LENGTH_LONG,
+                                                                    ).show()
 
                                                                 // Remove from database only
                                                                 GlobalScope.launch(Dispatchers.IO) {
-                                                                    org.uoyabause.android.YabauseStorage.dao.delete(gameToDelete)
+                                                                    org.uoyabause.android.YabauseStorage.dao
+                                                                        .delete(gameToDelete)
                                                                     withContext(Dispatchers.Main) {
                                                                         dataSet!!.removeAt(positionToDelete)
                                                                         mListener?.onGameRemoved(gameToDelete)
@@ -642,12 +794,16 @@ class GameItemAdapter(private val originalDataSet: MutableList<GameInfo?>?) :
                                                             }
                                                         }
                                                     } else {
-                                                        android.util.Log.e("GameItemAdapter", "Could not find GameSelectFragmentPhone to request permission")
-                                                        android.widget.Toast.makeText(
-                                                            view.context,
-                                                            "Cannot delete file: $message",
-                                                            android.widget.Toast.LENGTH_LONG
-                                                        ).show()
+                                                        android.util.Log.e(
+                                                            "GameItemAdapter",
+                                                            "Could not find GameSelectFragmentPhone to request permission",
+                                                        )
+                                                        android.widget.Toast
+                                                            .makeText(
+                                                                view.context,
+                                                                "Cannot delete file: $message",
+                                                                android.widget.Toast.LENGTH_LONG,
+                                                            ).show()
                                                     }
                                                 }
 
@@ -656,40 +812,38 @@ class GameItemAdapter(private val originalDataSet: MutableList<GameInfo?>?) :
                                             }
                                         }
 
-                                        // Delete file and update UI
-                                        gameToDelete.removeInstance(permissionCallback)
-                                        
-                                        // After deletion, update UI on main thread
-                                        withContext(Dispatchers.Main) {
-                                            dataSet!!.removeAt(positionToDelete)
-                                            mListener?.onGameRemoved(gameToDelete)
-                                            notifyItemRemoved(positionToDelete)
-                                            // Auto-select next game after deletion
-                                            selectNextGameAfterDeletion(positionToDelete)
-                                        }
+                                    // Delete file and update UI
+                                    gameToDelete.removeInstance(permissionCallback)
+
+                                    // After deletion, update UI on main thread
+                                    withContext(Dispatchers.Main) {
+                                        dataSet!!.removeAt(positionToDelete)
+                                        mListener?.onGameRemoved(gameToDelete)
+                                        notifyItemRemoved(positionToDelete)
+                                        // Auto-select next game after deletion
+                                        selectNextGameAfterDeletion(positionToDelete)
                                     }
                                 }
-                                .setNegativeButton(R.string.no) { _, _ ->
-                                }
-                                .show()
+                            }.setNegativeButton(R.string.no) { _, _ ->
+                            }.show()
                     }
-                else -> {
-                    Log.d("textext", "Unknown value (value = $it.itemId)")
+                    else -> {
+                        Log.d("textext", "Unknown value (value = $it.itemId)")
+                    }
                 }
-            }
-            true
-        })
+                true
+            },
+        )
         popup.show()
     }
 
-    override fun getItemCount(): Int {
-        return dataSet!!.size
-    }
+    override fun getItemCount(): Int = dataSet?.size ?: 0
 
     fun removeItem(id: Int) {
         val index = dataSet?.indexOfFirst({ it!!.id == id })
         if (index != null && index != -1) {
             dataSet?.removeAt(index)
+            originalDataSet?.removeAll { it?.id == id }
             notifyItemRemoved(index)
             // Auto-select next game after deletion
             selectNextGameAfterDeletion(index)
@@ -705,12 +859,13 @@ class GameItemAdapter(private val originalDataSet: MutableList<GameInfo?>?) :
         }
 
         // Select the next available game
-        val newPosition = when {
-            // If deleted game was at the end, select the previous game
-            deletedPosition >= dataSet!!.size -> dataSet!!.size - 1
-            // Otherwise, select the game that moved to the deleted position
-            else -> deletedPosition
-        }
+        val newPosition =
+            when {
+                // If deleted game was at the end, select the previous game
+                deletedPosition >= dataSet!!.size -> dataSet!!.size - 1
+                // Otherwise, select the game that moved to the deleted position
+                else -> deletedPosition
+            }
 
         if (newPosition >= 0 && newPosition < dataSet!!.size) {
             selectedPosition = newPosition
@@ -726,13 +881,15 @@ class GameItemAdapter(private val originalDataSet: MutableList<GameInfo?>?) :
                 val query = constraint?.toString()?.lowercase(Locale.getDefault()) ?: ""
                 currentSearchQuery = query
 
-                val filteredList = if (query.isEmpty()) {
-                    originalDataSet?.toMutableList()
-                } else {
-                    originalDataSet?.filter {
-                        it?.game_title?.lowercase(Locale.getDefault())?.contains(query) == true
-                    }?.toMutableList()
-                }
+                val filteredList =
+                    if (query.isEmpty()) {
+                        originalDataSet?.toMutableList()
+                    } else {
+                        originalDataSet
+                            ?.filter {
+                                it?.game_title?.lowercase(Locale.getDefault())?.contains(query) == true
+                            }?.toMutableList()
+                    }
 
                 val results = FilterResults()
                 results.values = filteredList
@@ -740,7 +897,10 @@ class GameItemAdapter(private val originalDataSet: MutableList<GameInfo?>?) :
             }
 
             @Suppress("UNCHECKED_CAST")
-            override fun publishResults(constraint: CharSequence?, results: FilterResults?) {
+            override fun publishResults(
+                constraint: CharSequence?,
+                results: FilterResults?,
+            ) {
                 dataSet = results?.values as? MutableList<GameInfo?>
                 notifyDataSetChanged()
             }
@@ -784,18 +944,67 @@ class GameItemAdapter(private val originalDataSet: MutableList<GameInfo?>?) :
     }
 
     /**
+     * Creates a progress dialog using AlertDialog with custom layout
+     */
+    private fun createProgressDialog(
+        context: Context,
+        message: String,
+    ): Pair<AlertDialog, TextView> {
+        val dialogView =
+            LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(48, 32, 48, 32)
+
+                addView(
+                    ProgressBar(context).apply {
+                        isIndeterminate = true
+                    },
+                )
+
+                addView(
+                    TextView(context).apply {
+                        text = message
+                        setPadding(32, 0, 0, 0)
+                        layoutParams =
+                            LinearLayout
+                                .LayoutParams(
+                                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                                ).apply {
+                                    gravity = android.view.Gravity.CENTER_VERTICAL
+                                }
+                    },
+                )
+            }
+
+        val messageTextView = dialogView.getChildAt(1) as TextView
+
+        val dialog =
+            MaterialAlertDialogBuilder(context)
+                .setView(dialogView)
+                .setCancelable(false)
+                .create()
+
+        return Pair(dialog, messageTextView)
+    }
+
+    /**
      * Handle the "Backup to Cloud" operation
      * @param view The view that triggered the operation
      * @param gameInfo The GameInfo object to backup
      */
-    private fun handleBackupToCloud(view: View, gameInfo: GameInfo) {
+    private fun handleBackupToCloud(
+        view: View,
+        gameInfo: GameInfo,
+    ) {
         // Show legal warning dialog
         val builder = AlertDialog.Builder(view.context)
         builder.setTitle(view.context.getString(R.string.legal_warning_title))
         builder.setMessage(view.context.getString(R.string.legal_warning_message))
         builder.setPositiveButton(view.context.getString(R.string.yes)) { dialog, which ->
             // Start backup process
-            val gameBackupManager = org.uoyabause.android.backup.GameBackupManager(view.context)
+            val gameBackupManager = org.uoyabause.android.backup
+                .GameBackupManager(view.context)
 
             // Launch coroutine to perform backup
             CoroutineScope(Dispatchers.Main).launch {
@@ -808,15 +1017,13 @@ class GameItemAdapter(private val originalDataSet: MutableList<GameInfo?>?) :
                         // Show the replacement dialog
                         org.uoyabause.android.backup.BackupReplaceDialog.show(
                             view.context,
-                            result.backupList
+                            result.backupList,
                         ) { backupToReplace ->
                             // User selected a backup to replace
                             CoroutineScope(Dispatchers.Main).launch {
                                 try {
                                     // Show progress dialog
-                                    val replaceProgressDialog = ProgressDialog(view.context)
-                                    replaceProgressDialog.setMessage("Replacing backup...")
-                                    replaceProgressDialog.setCancelable(false)
+                                    val (replaceProgressDialog, _) = createProgressDialog(view.context, "Replacing backup...")
                                     replaceProgressDialog.show()
 
                                     // Perform replacement
@@ -827,24 +1034,27 @@ class GameItemAdapter(private val originalDataSet: MutableList<GameInfo?>?) :
 
                                     // Show result
                                     if (replaceResult.success) {
-                                        Toast.makeText(
-                                            view.context,
-                                            view.context.getString(R.string.replace_backup_success),
-                                            Toast.LENGTH_SHORT
-                                        ).show()
+                                        Toast
+                                            .makeText(
+                                                view.context,
+                                                view.context.getString(R.string.replace_backup_success),
+                                                Toast.LENGTH_SHORT,
+                                            ).show()
                                     } else {
-                                        Toast.makeText(
-                                            view.context,
-                                            "${view.context.getString(R.string.replace_backup_failed)}: ${replaceResult.message}",
-                                            Toast.LENGTH_LONG
-                                        ).show()
+                                        Toast
+                                            .makeText(
+                                                view.context,
+                                                "${view.context.getString(R.string.replace_backup_failed)}: ${replaceResult.message}",
+                                                Toast.LENGTH_LONG,
+                                            ).show()
                                     }
                                 } catch (e: Exception) {
-                                    Toast.makeText(
-                                        view.context,
-                                        "${view.context.getString(R.string.replace_backup_failed)}: ${e.message}",
-                                        Toast.LENGTH_LONG
-                                    ).show()
+                                    Toast
+                                        .makeText(
+                                            view.context,
+                                            "${view.context.getString(R.string.replace_backup_failed)}: ${e.message}",
+                                            Toast.LENGTH_LONG,
+                                        ).show()
                                 }
                             }
                         }
@@ -852,9 +1062,7 @@ class GameItemAdapter(private val originalDataSet: MutableList<GameInfo?>?) :
                     }
 
                     // Show progress dialog
-                    val progressDialog = ProgressDialog(view.context)
-                    progressDialog.setMessage("Backing up game...")
-                    progressDialog.setCancelable(false)
+                    val (progressDialog, _) = createProgressDialog(view.context, "Backing up game...")
                     progressDialog.show()
 
                     // If we got here, either the backup was successful or there was an error
@@ -865,24 +1073,27 @@ class GameItemAdapter(private val originalDataSet: MutableList<GameInfo?>?) :
 
                     // Show result
                     if (result.success) {
-                        Toast.makeText(
-                            view.context,
-                            view.context.getString(R.string.backup_success),
-                            Toast.LENGTH_SHORT
-                        ).show()
+                        Toast
+                            .makeText(
+                                view.context,
+                                view.context.getString(R.string.backup_success),
+                                Toast.LENGTH_SHORT,
+                            ).show()
                     } else {
-                        Toast.makeText(
-                            view.context,
-                            "${view.context.getString(R.string.backup_failed)}: ${result.message}",
-                            Toast.LENGTH_LONG
-                        ).show()
+                        Toast
+                            .makeText(
+                                view.context,
+                                "${view.context.getString(R.string.backup_failed)}: ${result.message}",
+                                Toast.LENGTH_LONG,
+                            ).show()
                     }
                 } catch (e: Exception) {
-                    Toast.makeText(
-                        view.context,
-                        "${view.context.getString(R.string.backup_failed)}: ${e.message}",
-                        Toast.LENGTH_LONG
-                    ).show()
+                    Toast
+                        .makeText(
+                            view.context,
+                            "${view.context.getString(R.string.backup_failed)}: ${e.message}",
+                            Toast.LENGTH_LONG,
+                        ).show()
                 }
             }
         }
@@ -897,7 +1108,10 @@ class GameItemAdapter(private val originalDataSet: MutableList<GameInfo?>?) :
      * @param view The view that triggered the operation
      * @param gameInfo The GameInfo object to remove from cloud
      */
-    private fun handleRemoveFromCloud(view: View, gameInfo: GameInfo) {
+    private fun handleRemoveFromCloud(
+        view: View,
+        gameInfo: GameInfo,
+    ) {
         // Show confirmation dialog
         val builder = AlertDialog.Builder(view.context)
         builder.setTitle(view.context.getString(R.string.remove_from_cloud))
@@ -907,13 +1121,12 @@ class GameItemAdapter(private val originalDataSet: MutableList<GameInfo?>?) :
             CoroutineScope(Dispatchers.Main).launch {
                 try {
                     // Show progress dialog
-                    val progressDialog = ProgressDialog(view.context)
-                    progressDialog.setMessage("Removing game from cloud...")
-                    progressDialog.setCancelable(false)
+                    val (progressDialog, _) = createProgressDialog(view.context, "Removing game from cloud...")
                     progressDialog.show()
 
                     // First get the list of backed up games
-                    val gameBackupManager = org.uoyabause.android.backup.GameBackupManager(view.context)
+                    val gameBackupManager = org.uoyabause.android.backup
+                        .GameBackupManager(view.context)
                     val backedUpGames = gameBackupManager.getBackedUpGames()
 
                     // Find the matching backup by product number
@@ -928,35 +1141,39 @@ class GameItemAdapter(private val originalDataSet: MutableList<GameInfo?>?) :
 
                         // Show result
                         if (result.success) {
-                            Toast.makeText(
-                                view.context,
-                                view.context.getString(R.string.remove_success),
-                                Toast.LENGTH_SHORT
-                            ).show()
+                            Toast
+                                .makeText(
+                                    view.context,
+                                    view.context.getString(R.string.remove_success),
+                                    Toast.LENGTH_SHORT,
+                                ).show()
                         } else {
-                            Toast.makeText(
-                                view.context,
-                                "${view.context.getString(R.string.remove_failed)}: ${result.message}",
-                                Toast.LENGTH_LONG
-                            ).show()
+                            Toast
+                                .makeText(
+                                    view.context,
+                                    "${view.context.getString(R.string.remove_failed)}: ${result.message}",
+                                    Toast.LENGTH_LONG,
+                                ).show()
                         }
                     } else {
                         // Dismiss progress dialog
                         progressDialog.dismiss()
 
                         // Show error
-                        Toast.makeText(
-                            view.context,
-                            "${view.context.getString(R.string.remove_failed)}: Backup not found",
-                            Toast.LENGTH_LONG
-                        ).show()
+                        Toast
+                            .makeText(
+                                view.context,
+                                "${view.context.getString(R.string.remove_failed)}: Backup not found",
+                                Toast.LENGTH_LONG,
+                            ).show()
                     }
                 } catch (e: Exception) {
-                    Toast.makeText(
-                        view.context,
-                        "${view.context.getString(R.string.remove_failed)}: ${e.message}",
-                        Toast.LENGTH_LONG
-                    ).show()
+                    Toast
+                        .makeText(
+                            view.context,
+                            "${view.context.getString(R.string.remove_failed)}: ${e.message}",
+                            Toast.LENGTH_LONG,
+                        ).show()
                 }
             }
         }
@@ -964,6 +1181,147 @@ class GameItemAdapter(private val originalDataSet: MutableList<GameInfo?>?) :
             dialog.dismiss()
         }
         builder.show()
+    }
+
+    private fun loadBitmapFromUrl(
+        context: Context,
+        gameInfo: GameInfo,
+    ): Bitmap? {
+        val imageUrl =
+            if (!gameInfo.image_url.isNullOrEmpty()) {
+                if (gameInfo.image_url!!.startsWith("http")) {
+                    // For cloud games or HTTP URLs, add signature if needed
+                    if (gameInfo.isCloudOnly) {
+                        gameInfo.image_url + "?" + sigin
+                    } else {
+                        gameInfo.image_url
+                    }
+                } else {
+                    // Local file path
+                    gameInfo.image_url
+                }
+            } else {
+                null
+            }
+
+        return if (imageUrl != null) {
+            val glideRequest =
+                if (imageUrl.startsWith("http")) {
+                    Glide.with(context).asBitmap().load(imageUrl)
+                } else {
+                    Glide.with(context).asBitmap().load(File(imageUrl))
+                }
+            glideRequest.submit(512, 512).get()
+        } else {
+            null
+        }
+    }
+
+    private fun createHomeScreenShortcut(
+        context: Context,
+        gameInfo: GameInfo,
+        boxartImageView: ImageView? = null,
+    ) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val shortcutManager = context.getSystemService(ShortcutManager::class.java)
+
+            if (shortcutManager != null && shortcutManager.isRequestPinShortcutSupported) {
+                // Create intent to launch the game directly
+                val intent =
+                    Intent(context, org.uoyabause.android.Yabause::class.java).apply {
+                        action = Intent.ACTION_VIEW
+                        // Check if file path contains content:// URI
+                        if (gameInfo.file_path.contains("content://")) {
+                            putExtra("org.uoyabause.android.FileNameUri", gameInfo.file_path)
+                            putExtra("org.uoyabause.android.FileDir", gameInfo.iso_file_path)
+                        } else {
+                            putExtra("org.uoyabause.android.FileNameEx", gameInfo.file_path)
+                        }
+                        putExtra("org.uoyabause.android.gamecode", gameInfo.product_number)
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                    }
+
+                // Load boxart as icon - first try to get from ImageView, then fallback to loading
+                val iconBitmap: Bitmap? =
+                    try {
+                        // First, try to get the bitmap from the boxart ImageView if it's provided
+                        if (boxartImageView != null && boxartImageView.drawable != null) {
+                            when (val drawable = boxartImageView.drawable) {
+                                is BitmapDrawable -> {
+                                    // If it's already a BitmapDrawable, get the bitmap
+                                    val originalBitmap = drawable.bitmap
+                                    // Scale up if needed for better icon quality
+                                    if (originalBitmap.width < 512 || originalBitmap.height < 512) {
+                                        Bitmap.createScaledBitmap(originalBitmap, 512, 512, true)
+                                    } else {
+                                        originalBitmap
+                                    }
+                                }
+                                else -> {
+                                    // For other drawable types, draw to a bitmap
+                                    val drawable = boxartImageView.drawable
+                                    val bitmap = Bitmap.createBitmap(512, 512, Bitmap.Config.ARGB_8888)
+                                    val canvas = Canvas(bitmap)
+                                    drawable.setBounds(0, 0, 512, 512)
+                                    drawable.draw(canvas)
+                                    bitmap
+                                }
+                            }
+                        } else {
+                            // Fallback to loading from URL if ImageView is not available
+                            loadBitmapFromUrl(context, gameInfo)
+                        }
+                    } catch (e: Exception) {
+                        Log.e("GameItemAdapter", "Failed to load boxart for shortcut", e)
+                        null
+                    }
+
+                val shortcutInfo =
+                    ShortcutInfo
+                        .Builder(context, "game_${gameInfo.product_number}")
+                        .setShortLabel(gameInfo.game_title ?: "Saturn Game")
+                        .setLongLabel(gameInfo.game_title ?: "Saturn Game")
+                        .setIntent(intent)
+                        .apply {
+                            if (iconBitmap != null) {
+                                // Use adaptive icon for better display on Android 8.0+
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                    setIcon(Icon.createWithAdaptiveBitmap(iconBitmap))
+                                } else {
+                                    setIcon(Icon.createWithBitmap(iconBitmap))
+                                }
+                            } else {
+                                // Use default app icon if boxart is not available
+                                setIcon(Icon.createWithResource(context, org.devmiyax.yabasanshiro.R.mipmap.ic_launcher))
+                            }
+                        }.build()
+
+                // Request to pin the shortcut
+                shortcutManager.requestPinShortcut(shortcutInfo, null)
+
+                Toast
+                    .makeText(
+                        context,
+                        context.getString(org.devmiyax.yabasanshiro.R.string.shortcut_created),
+                        Toast.LENGTH_SHORT,
+                    ).show()
+            } else {
+                Toast
+                    .makeText(
+                        context,
+                        context.getString(org.devmiyax.yabasanshiro.R.string.shortcut_not_supported),
+                        Toast.LENGTH_SHORT,
+                    ).show()
+            }
+        } else {
+            // API 24-25: Shortcuts not supported via ShortcutManager
+            Toast
+                .makeText(
+                    context,
+                    context.getString(org.devmiyax.yabasanshiro.R.string.shortcut_not_supported),
+                    Toast.LENGTH_SHORT,
+                ).show()
+        }
     }
 
     companion object {

@@ -18,35 +18,76 @@
     along with YabaSanshiro; if not, write to the Free Software
     Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 -->
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
-
-    android:name="org.uoyabause.android.cheat.LocalCheatItemFragment"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:layout_marginLeft="16dp"
-    android:layout_marginRight="16dp"
-    android:orientation="vertical"
-    app:layoutManager="LinearLayoutManager"
-    tools:context="org.uoyabause.android.cheat.LocalCheatItemFragment"
-    tools:listitem="@layout/fragment_localcheatitem">
+    android:background="?attr/colorSurface"
+    android:defaultFocusHighlightEnabled="false"
+    android:focusable="false"
+    tools:context="org.uoyabause.android.cheat.LocalCheatItemFragment">
 
-    <Button
-        android:id="@+id/button_add"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_margin="8dp"
-        android:layout_weight="0.05"
-        android:text="Add" />
-
-    <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/list"
+    <LinearLayout
+        android:id="@+id/content_layout"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:layout_weight="0.95"
-        android:orientation="vertical">
+        android:layout_marginHorizontal="@dimen/spacing_m"
+        android:orientation="vertical"
+        android:defaultFocusHighlightEnabled="false"
+        android:focusable="false">
 
-    </androidx.recyclerview.widget.RecyclerView>
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/button_add"
+            style="@style/Widget.Material3.Button.TonalButton"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/min_touch_target"
+            android:layout_margin="@dimen/margin_small"
+            android:focusable="true"
+            android:text="@string/add_new_code" />
 
-</LinearLayout>
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/list"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:background="?attr/colorSurface"
+            android:defaultFocusHighlightEnabled="false"
+            android:orientation="vertical" />
+
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/layout_auth_required"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <ImageView
+            android:layout_width="96dp"
+            android:layout_height="96dp"
+            android:alpha="0.38"
+            android:src="@drawable/ic_lock_24"
+            app:tint="?attr/colorOnSurfaceVariant" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/spacing_m"
+            android:text="@string/please_sign_in_to_continue"
+            android:textColor="?attr/colorOnSurfaceVariant"
+            android:textAppearance="?attr/textAppearanceBodyLarge" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_sign_in"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/spacing_m"
+            android:focusable="true"
+            android:text="@string/sign_in" />
+
+    </LinearLayout>
+
+</FrameLayout>

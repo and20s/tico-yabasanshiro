@@ -44,10 +44,12 @@
     <string-array name="entries_polygon_generation_type" translatable="false">
         <item>@string/poly_triangle</item>
         <item>@string/poly_gpu_tess</item>
+        <item>@string/poly_compute_rasterizer</item>
     </string-array>
     <string-array name="entryvalues_polygon_generation_type" translatable="false">
         <item>0</item>
         <item>2</item>
+        <item>3</item>
     </string-array>
 
     <string-array name="entries_sound_engine_list_preference" translatable="false">
@@ -158,5 +160,46 @@
         <item>1</item>
     </string-array>
 
+    <string-array name="entries_cartridge_list_preference">
+        <item>None</item>
+        <item>Pro Action Replay</item>
+        <item>4 Mbit Backup Ram</item>
+        <item>8 Mbit Backup Ram</item>
+        <item>16 Mbit Backup Ram</item>
+        <item>32 Mbit Backup Ram</item>
+        <item>8 Mbit Dram</item>
+        <item>32 Mbit Dram</item>
+        <item>Netlink</item>
+        <item>16 Mbit ROM</item>
+    </string-array>
+
+    <string-array name="entryvalues_cartridge_list_preference" translatable="false">
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
+        <item>3</item>
+        <item>4</item>
+        <item>5</item>
+        <item>6</item>
+        <item>7</item>
+        <item>8</item>
+        <item>9</item>
+    </string-array>
+
+    <!-- Placeholder for video core preference (dynamically populated in code) -->
+    <string-array name="entries_video_core_list_preference">
+        <item>Loading...</item>
+    </string-array>
+    <string-array name="entryvalues_video_core_list_preference" translatable="false">
+        <item>-1</item>
+    </string-array>
+
+    <!-- Placeholder for input device preference (dynamically populated in code) -->
+    <string-array name="entries_input_device_list_preference">
+        <item>Loading...</item>
+    </string-array>
+    <string-array name="entryvalues_input_device_list_preference" translatable="false">
+        <item>65535</item>
+    </string-array>
 
 </resources>

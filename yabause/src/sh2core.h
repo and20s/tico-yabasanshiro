@@ -55,7 +55,6 @@ extern "C" {
 #undef MACH
 #endif
 
-// #define DMPHISTORY
 #define MAX_DMPHISTORY (512)
 
 // UBC Flags
@@ -510,11 +509,16 @@ typedef struct {
 
 typedef struct {
   u32 addr;
+  int regIndex;       // Register index for conditional breakpoint (-1 = no condition, 0-15 = R0-R15, 16 = SR, etc.)
+  u32 regValue;       // Value to compare against
+  int hasCondition;   // 0 = no condition, 1 = has register condition
 } codebreakpoint_struct;
 
 typedef struct {
   u32 addr;
   u32 flags;
+  u32 value;      // Value to match (for conditional breakpoints)
+  int checkValue; // 0 = no value check, 1 = break only when value matches
   readbytefunc oldreadbyte;
   readwordfunc oldreadword;
   readlongfunc oldreadlong;
@@ -613,17 +617,33 @@ typedef struct SH2_struct {
     int maxNum;
   } trackInfLoop;
 
-#ifdef DMPHISTORY
+  // Instruction history ring buffer. Recording is gated by history_enabled
+  // at runtime (debug interpreter only). Always compiled in.
+  u32 history_enabled;
   u32 pchistory[MAX_DMPHISTORY];
   sh2regs_struct regshistory[MAX_DMPHISTORY];
   u32 pchistory_index;
-#endif
+
+  // When set, SH2DebugInterpreterExec consumes its cycle budget without
+  // executing instructions, freezing this CPU precisely at the current PC.
+  // Set by the MCP debug server on breakpoint hit; cleared on resume/step.
+  u32 debugHaltRequest;
 
   Dmac dma_ch0;
   Dmac dma_ch1;
   u32 pre_cycle;
   u32 inputCaptureCount;
   void *ext;
+
+  // IF/MA contention approximation state (cycle-cost accuracy Phase 2).
+  // Transient timing state; deliberately not serialized in save states.
+  u32 tm_last_mem;
+  u32 tm_ifslot;
+
+  // On-chip divider latency state (cycle-cost accuracy Phase 6).
+  // Transient timing state; deliberately not serialized in save states.
+  u32 div_start;
+  u32 div_latency;
 
 } SH2_struct;
 
@@ -673,6 +693,7 @@ extern SH2_struct *CurrentSH2;
 extern SH2Interface_struct *SH2Core;
 
 int SH2Init(int coreid);
+int SH2ChangeCore(int coreid);
 void SH2DeInit(void);
 void SH2Reset(SH2_struct *context);
 void SH2PowerOn(SH2_struct *context);
@@ -697,6 +718,7 @@ void SH2SetBreakpointCallBack(SH2_struct *context,
                               void (*func)(void *, u32, void *),
                               void *userdata);
 int SH2AddCodeBreakpoint(SH2_struct *context, u32 addr);
+int SH2AddCodeBreakpointEx(SH2_struct *context, u32 addr, int regIndex, u32 regValue);
 int SH2DelCodeBreakpoint(SH2_struct *context, u32 addr);
 codebreakpoint_struct *SH2GetBreakpointList(SH2_struct *context);
 void SH2ClearCodeBreakpoints(SH2_struct *context);
@@ -707,7 +729,8 @@ void SH2HandleBreakpoints(SH2_struct *context);
 
 static void SH2BreakNow(SH2_struct *context) { context->bp.breaknow = 1; }
 
-int SH2AddMemoryBreakpoint(SH2_struct *context, u32 addr, u32 flags);
+int SH2AddMemoryBreakpoint(SH2_struct *context, u32 addr, u32 flags, u32 value,
+                           int checkValue);
 int SH2DelMemoryBreakpoint(SH2_struct *context, u32 addr);
 memorybreakpoint_struct *SH2GetMemoryBreakpointList(SH2_struct *context);
 void SH2ClearMemoryBreakpoints(SH2_struct *context);
@@ -752,8 +775,6 @@ void FASTCALL SH2OnFrame(SH2_struct *context);
 
 void SH2RemoveInterrupt(SH2_struct *context, u8 vector, u8 level);
 void SH2HandleInterrupts(SH2_struct *context);
-
-void FASTCALL SH2OnFrame(SH2_struct *context);
 
 #ifdef __cplusplus
 }

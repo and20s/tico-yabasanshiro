@@ -15,7 +15,7 @@
 
     You should have received a copy of the GNU General Public License
     along with Yabause; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
+    Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 */
 /*
         Copyright 2019 devMiyax(smiyaxdev@gmail.com)
@@ -40,8 +40,10 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 #ifndef SH2INT_H
 #define SH2INT_H
 
-#define SH2CORE_INTERPRETER             0
-#define SH2CORE_DEBUGINTERPRETER        1
+#include "sh2core.h"
+
+#define SH2CORE_INTERPRETER 0
+#define SH2CORE_DEBUGINTERPRETER 1
 
 #define INSTRUCTION_A(x) ((x & 0xF000) >> 12)
 #define INSTRUCTION_B(x) ((x & 0x0F00) >> 8)
@@ -65,7 +67,8 @@ u32 SH2InterpreterGetMACH(SH2_struct *context);
 u32 SH2InterpreterGetMACL(SH2_struct *context);
 u32 SH2InterpreterGetPR(SH2_struct *context);
 u32 SH2InterpreterGetPC(SH2_struct *context);
-void SH2InterpreterSetRegisters(SH2_struct *context, const sh2regs_struct *regs);
+void SH2InterpreterSetRegisters(SH2_struct *context,
+                                const sh2regs_struct *regs);
 void SH2InterpreterSetGPR(SH2_struct *context, int num, u32 value);
 void SH2InterpreterSetSR(SH2_struct *context, u32 value);
 void SH2InterpreterSetGBR(SH2_struct *context, u32 value);
@@ -78,16 +81,17 @@ void SH2InterpreterSendInterrupt(SH2_struct *context, u8 level, u8 vector);
 void SH2InterpreterRemoveInterrupt(SH2_struct *context, u8 level, u8 vector);
 int SH2InterpreterGetInterrupts(SH2_struct *context,
                                 interrupt_struct interrupts[MAX_INTERRUPTS]);
-void SH2InterpreterSetInterrupts(SH2_struct *context, int num_interrupts,
-                                 const interrupt_struct interrupts[MAX_INTERRUPTS]);
+void SH2InterpreterSetInterrupts(
+    SH2_struct *context, int num_interrupts,
+    const interrupt_struct interrupts[MAX_INTERRUPTS]);
 
 extern SH2Interface_struct SH2Interpreter;
 extern SH2Interface_struct SH2DebugInterpreter;
 
-typedef u32 (FASTCALL *fetchfunc)(u32);
+typedef u32(FASTCALL *fetchfunc)(u32);
 extern fetchfunc fetchlist[0x100];
 
-typedef void (FASTCALL *opcodefunc)(SH2_struct *);
+typedef void(FASTCALL *opcodefunc)(SH2_struct *);
 extern opcodefunc opcodes[0x10000];
 
 #endif

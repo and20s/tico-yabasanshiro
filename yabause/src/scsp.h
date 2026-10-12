@@ -180,14 +180,93 @@ void scsp_debug_instrument_get_data(int i, u32 * sa, int * is_muted);
 void scsp_debug_instrument_set_mute(u32 sa, int mute);
 void scsp_debug_instrument_clear();
 void scsp_debug_get_envelope(int chan, int * env, int * state);
+void scsp_debug_get_tl(int chan, int * tl, int * dldisdl, int * imxl, int * efsdl );
 void scsp_debug_set_mode(int mode);
 void scsp_set_use_new(int which);
 void new_scsp_exec(s32 cycles);
+int scsp_debug_get_mvol();
+
+// Extended debug API for SCSP debugging (Issue #73)
+#define SCSP_ENV_ATTACK   0
+#define SCSP_ENV_DECAY1   1
+#define SCSP_ENV_DECAY2   2
+#define SCSP_ENV_RELEASE  3
+
+typedef struct {
+   // Key state
+   u8 key_on;           // kx: key execute
+   u8 key_bit;          // kb: key bit
+   u8 is_active;        // calculated: slot is producing sound
+
+   // Source settings
+   u8 source_bit_ctrl;  // sbctl
+   u8 source_select;    // ssctl: 0=external DRAM, 1=noise, 2=zero
+   u8 loop_ctrl;        // lpctl: 0=none, 1=normal, 2=reverse, 3=alternating
+   u8 pcm_8bit;         // pcm8b: 1=8bit, 0=16bit
+
+   // Address
+   u32 start_addr;      // sa: sample start address
+   u16 loop_start;      // lsa: loop start address
+   u16 loop_end;        // lea: loop end address
+   u32 current_addr;    // current address pointer
+
+   // Envelope (ADSR)
+   u8 attack_rate;      // ar
+   u8 decay1_rate;      // d1r
+   u8 decay2_rate;      // d2r
+   u8 release_rate;     // rr
+   u8 decay_level;      // dl
+   u8 key_rate_scale;   // krs
+   u8 envelope_state;   // current state: ATTACK/DECAY1/DECAY2/RELEASE
+   u16 envelope_level;  // current attenuation (0=max vol, 0x3FF=silent)
+
+   // Pitch
+   u8 octave;           // oct
+   u16 frequency_num;   // fns
+   s32 phase_value;     // current waveform phase
+
+   // LFO
+   u8 lfo_frequency;    // lfof
+   u8 pitch_lfo_wave;   // plfows
+   u8 pitch_lfo_shift;  // plfos
+   u8 amp_lfo_wave;     // alfows
+   u8 amp_lfo_shift;    // alfos
+   u32 lfo_position;    // current LFO position
+
+   // Level
+   u16 total_level;     // tl
+   u8 direct_level;     // disdl
+   u8 direct_pan;       // dipan
+   u8 effect_level;     // efsdl
+   u8 effect_pan;       // efpan
+
+   // Modulation
+   u8 mod_level;        // mdl
+   u8 mod_x_select;     // mdxsl
+   u8 mod_y_select;     // mdysl
+
+   // Output
+   s16 current_output;  // current sample output
+   u8 is_muted;         // mute flag
+} ScspSlotDebugInfo;
+
+// Get comprehensive slot state
+void scsp_debug_get_slot_state(int slot, ScspSlotDebugInfo *info);
+
+// Check if slot is currently active (producing sound)
+int scsp_debug_is_slot_active(int slot);
+
+// Get output levels for slot (for level meters)
+void scsp_debug_get_output_level(int slot, s16 *level_l, s16 *level_r);
+
+// Get sample buffer for waveform display (returns actual sample count)
+int scsp_debug_get_sample_buffer(int slot, s16 *buffer, int max_samples);
 
 void ScspLockThread();
 void ScspUnLockThread();
 void setM68kCounter(u64 counter);
 void setM68kDoneCounter(u64 counter);
+void ScspCommitSh2SoundRamWrites(void);
 
 extern int use_new_scsp;
 

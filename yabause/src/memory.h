@@ -376,6 +376,23 @@ extern "C" {
   void FASTCALL MappedMemoryWriteWordNocache(u32 addr, u16 val, u32 * cycle);
   void FASTCALL MappedMemoryWriteLongNocache(u32 addr, u32 val, u32 * cycle);
 
+  // Read/write cost models (cycle-cost accuracy Phase 1). See memory.c.
+  int sh2_write_cost_new(void);
+  u32 getMemWriteClock(u32 addr, int size);
+  int sh2_read_cost_new(void);
+  u32 getMemReadClock(u32 addr, int size);
+  int sh2_ma_model_new(void);
+  // Slave bus-access penalty (Phase 3). See memory.c.
+  int sh2_slave_bus_model_new(void);
+  u32 sh2_slave_bus_penalty(void);
+  u32 sh2_slave_refill_penalty(void);
+  // On-chip DMAC bus contention (Phase 3c). See memory.c.
+  int sh2_dmac_model_new(void);
+  int sh2_dmac_ucost_legacy(void);
+  u32 sh2_dmac_bus_penalty(void);
+  void sh2_dmac_transfer_begin(void);
+  void sh2_dmac_transfer_end(void);
+
   extern u8 *HighWram;
   extern u8 *LowWram;
   extern u8 *BiosRom;
@@ -445,6 +462,7 @@ extern "C" {
 // Mapped mewmory
 void * YabMemMap(char * filename, u32 size );
 void YabFreeMap(void * p);
+int YabFlushMemMap(void* mappedPtr);
 int ExtendBackupFile(FILE *fp, u32 size );
 void FormatBackupRamFile(FILE *fp, u32 size);
 void FormatBackupRam(void *mem, u32 size);

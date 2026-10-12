@@ -39,10 +39,13 @@ using std::atomic;
 atomic<u64> m68k_counter(0);
 atomic<u64> m68k_counter_done(0);
 
+
 std::mutex m68k_mtx_;
 std::condition_variable m68k_cond_;
 
-const u64 MAX_SCSP_COUNTER = (u64)(44100 * 256 / 60) << SCSP_FRACTIONAL_BITS;
+// MAX_SCSP_COUNTER is currently unused (syncM68K code is commented out)
+// but keep it correct for PAL: 44100 * 256 / fps where fps = 50(PAL) or 60(NTSC)
+const u64 MAX_SCSP_COUNTER = (u64)(44100 * 256 / 50) << SCSP_FRACTIONAL_BITS;
 
 extern "C" {
   void SyncCPUtoSCSP();

@@ -14,6 +14,9 @@ class LeaderBoardViewModel {
         }
     }
 
+    // Current leaderboard info
+    private(set) var currentLeaderboardInfo: LeaderBoardRepository.LeaderboardInfo?
+    
     // Current leaderboard ID
     private(set) var currentLeaderboardId: String? {
         didSet {
@@ -21,7 +24,9 @@ class LeaderBoardViewModel {
                 // Get top score for this leaderboard and save it
                 Task {
                     do {
-                        topScore = try await repository.getTopScore(leaderboardId: leaderboardId)
+                        // Find current leaderboard info
+                        currentLeaderboardInfo = leaderboards?.first { $0.id == leaderboardId }
+                        topScore = try await repository.getTopScore(leaderboardId: leaderboardId, leaderboardInfo: currentLeaderboardInfo)
                         print("Set top score for leaderboard \(leaderboardId): \(topScore)")
 
                         // Get user position and load page
@@ -179,7 +184,8 @@ class LeaderBoardViewModel {
                     leaderboardId: leaderboardId,
                     pageNumber: 0,
                     userId: userId,
-                    topScore: topScore
+                    topScore: topScore,
+                    leaderboardInfo: currentLeaderboardInfo
                 )
 
                 // Save results on the main thread
@@ -239,7 +245,8 @@ class LeaderBoardViewModel {
                 leaderboardId: leaderboardId,
                 pageNumber: 0,
                 userId: nil,
-                topScore: topScore
+                topScore: topScore,
+                leaderboardInfo: currentLeaderboardInfo
             )
 
             await MainActor.run {
@@ -288,7 +295,8 @@ class LeaderBoardViewModel {
                     leaderboardId: leaderboardId,
                     lastVisible: lastDoc,
                     lastRank: lastRank,
-                    topScore: topScore
+                    topScore: topScore,
+                    leaderboardInfo: currentLeaderboardInfo
                 )
 
                 await MainActor.run {
@@ -354,7 +362,8 @@ class LeaderBoardViewModel {
                     leaderboardId: leaderboardId,
                     firstVisible: firstDoc,
                     firstRank: firstRank,
-                    topScore: topScore
+                    topScore: topScore,
+                    leaderboardInfo: currentLeaderboardInfo
                 )
 
                 await MainActor.run {
@@ -403,5 +412,22 @@ class LeaderBoardViewModel {
 
     func resetScrollFlag() {
         scrollToMyRank = false
+    }
+    
+    // MARK: - Score Formatting Methods
+    
+    func formatScore(_ score: Int64) -> String {
+        let scoreType = currentLeaderboardInfo?.scoreType ?? .value
+        return repository.formatScore(score, scoreType: scoreType)
+    }
+    
+    func formatDiffScore(_ diff: Int64) -> String {
+        let scoreType = currentLeaderboardInfo?.scoreType ?? .value
+        return repository.formatDiffScore(diff, scoreType: scoreType)
+    }
+    
+    func getColumnName() -> String {
+        let scoreType = currentLeaderboardInfo?.scoreType ?? .value
+        return repository.getColumnName(scoreType: scoreType)
     }
 }

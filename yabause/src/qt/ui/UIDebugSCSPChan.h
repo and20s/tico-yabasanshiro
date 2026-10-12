@@ -24,25 +24,35 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 #include <QCheckBox>
 #include <QLabel>
 
+extern "C" {
+#include "scsp.h"
+}
+
 #ifdef HAVE_QT_MULTIMEDIA
 #include <QAudioOutput>
 #endif
+
+// Issue #73: Extended SCSP Channel Debug
+#define SCSP_DEBUG_CHANNEL_COUNT 32
+
+// Forward declaration
+class SCSPMeterWidget;
 
 class UIDebugSCSPChan : public QDialog
 {
    Q_OBJECT
 private:
-   QCheckBox *checkbox[24];
+   QCheckBox *checkbox[SCSP_DEBUG_CHANNEL_COUNT];
    QTimer *timer;
-   QColor envelope_colors[4];
+
+   // Meter widget for graphical display
+   SCSPMeterWidget *meterWidget;
+
 public:
    UIDebugSCSPChan(QWidget* parent = 0);
    ~UIDebugSCSPChan();
 
-protected:
-   virtual void paintEvent(QPaintEvent *event);
-
-   protected slots:
+protected slots:
    void update_window();
 };
 

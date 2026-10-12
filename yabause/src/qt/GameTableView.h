@@ -30,10 +30,14 @@ public:
     void filterFiles(const QString& text, int currentIndex);
     void updateFilterColumn(int column);
 
+signals:
+    void viewBugReportsRequested(const QString& productNumber, const QString& gameTitle);
+
 protected:
     void scrollContentsBy(int dx, int dy) override;
     void resizeEvent(QResizeEvent *event) override;
     void showEvent(QShowEvent *event) override;
+    void contextMenuEvent(QContextMenuEvent *event) override;
         
 private slots:
     void loadVisibleImages();

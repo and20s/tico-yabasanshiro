@@ -7,11 +7,17 @@ import Foundation
 import FirebaseFirestore
 import FirebaseAuth
 
+// C function declaration from YabaInterface.mm
+// Note: RetroAchievements functions are declared in RetroAchievementsManager.swift
+@_silgen_name("GetGamePath")
+func GetGamePath() -> UnsafePointer<CChar>?
 
 var scurrentGamePath: UnsafeMutablePointer<Int8>? = nil
 
 protocol GameViewControllerDelegate : AnyObject {
     func didTapMenuButton()
+    func didPresentModal(_ viewController: UIViewController)
+    func didDismissModal()
 }
 
 @objcMembers
@@ -48,6 +54,9 @@ class GameViewController: MGLKViewController,MGLKViewControllerDelegate,Draggabl
     private var isAnalogMode: Bool = false
     private var isOnScreenControlHidden: Bool = false
     private var isAnalogAsDpad: Bool = false
+    
+    // Track previous resize_screen parameters to avoid unnecessary calls
+    private var lastResizeParams: (left: Int32, bottom: Int32, width: Int32, height: Int32)?
 
     // MARK: - IBOutlets
     @IBOutlet weak var leftPanel: UIImageView!
@@ -98,6 +107,9 @@ class GameViewController: MGLKViewController,MGLKViewControllerDelegate,Draggabl
         }else{
             analogPad.isHidden = !isAnalogMode
         }
+
+        // Sync to new YabausePadView if active
+        syncAnalogModeToYabausePad(to)
     }
 
     lazy var saturnKeyToViewMappings: [SaturnKey: UIView] = {
@@ -122,6 +134,9 @@ class GameViewController: MGLKViewController,MGLKViewControllerDelegate,Draggabl
         self.delegate = self
         loadSettings()
 
+        // Initialize RetroAchievements system
+        initializeRetroAchievements()
+
         // productNumberがセットされていればdetectGameを呼ぶ
         if let productNumber = self.productNumber {
             self.detectGame(productNumber: productNumber)
@@ -143,6 +158,8 @@ class GameViewController: MGLKViewController,MGLKViewControllerDelegate,Draggabl
         scurrentGamePath = UnsafeMutablePointer<Int8>.allocate(capacity: bufferSize)
         strncpy(scurrentGamePath, cString, bufferSize)
         currentGamePath = UnsafePointer<CChar>(scurrentGamePath)
+        // Load RetroAchievements data - wait for login status
+        self.loadGameForRetroAchievementsWhenReady()
         YabauseManager.shared.updateCheatCode(nil)
         view.isMultipleTouchEnabled = true
         command = 0
@@ -228,6 +245,13 @@ class GameViewController: MGLKViewController,MGLKViewControllerDelegate,Draggabl
         NotificationCenter.default.addObserver(self, selector: #selector(didEnterBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(didBecomeActive), name: UIApplication.didBecomeActiveNotification, object: nil)
         analogPad.delegate = self
+
+        // Setup new YabausePad
+        // TODO: Add toggle in Settings to switch between classic and new pad
+        setupYabausePadView()
+
+        // Sync analog mode state to YabausePadView (loadSettings was called before pad was created)
+        syncAnalogModeToYabausePad(isAnalogMode)
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -242,6 +266,7 @@ class GameViewController: MGLKViewController,MGLKViewControllerDelegate,Draggabl
         }
 
         becomeFirstResponder()
+        
     }
 
     // MARK: - Setup Methods
@@ -303,6 +328,9 @@ class GameViewController: MGLKViewController,MGLKViewControllerDelegate,Draggabl
 
     func mglkViewControllerUpdate(_ controller: MGLKViewController) {
         emulateOneFrame()
+        
+        // Process RetroAchievements frame (Step 7 of rcheevos integration)
+        RetroAchievementsBridge.processFrame()
     }
 
     // MGLKViewDelegate メソッド
@@ -317,19 +345,25 @@ class GameViewController: MGLKViewController,MGLKViewControllerDelegate,Draggabl
         let newFrame = self.view.frame
         let safeArea = self.view.safeAreaInsets
 
-        /*
-        objc_sync_enter(_objectForLock)
-        defer {
-            objc_sync_exit(_objectForLock)
+        // Calculate new parameters
+        let newLeft = Int32(Float(safeArea.left * scale))
+        let newBottom = Int32(Float(safeArea.bottom * scale))
+        let newWidth = Int32(Float((newFrame.width - safeArea.right - safeArea.left) * scale))
+        let newHeight = Int32(Float((newFrame.height - safeArea.top - safeArea.bottom) * scale))
+        
+        // Only call resize_screen if parameters have changed
+        if lastResizeParams == nil || 
+           lastResizeParams!.left != newLeft ||
+           lastResizeParams!.bottom != newBottom ||
+           lastResizeParams!.width != newWidth ||
+           lastResizeParams!.height != newHeight {
+            
+            resize_screen(newLeft, newBottom, newWidth, newHeight)
+            
+            // Update the stored parameters
+            lastResizeParams = (left: newLeft, bottom: newBottom, width: newWidth, height: newHeight)
         }
-        */
 
-        resize_screen(
-            Int32(Float(safeArea.left * scale)),
-            Int32(Float(safeArea.bottom * scale)),
-            Int32(Float((newFrame.width - safeArea.right - safeArea.left) * scale)),
-            Int32(Float((newFrame.height - safeArea.top - safeArea.bottom) * scale))
-        )
     }
 
     // MARK: - Emulation Methods
@@ -1118,8 +1152,20 @@ class GameViewController: MGLKViewController,MGLKViewControllerDelegate,Draggabl
         if(hasControllerConnected()){
             startKeyRemapping()
         }else{
-            toggleControllerEditMode()
+            presentPadSettingsViewController()
         }
+    }
+
+    func presentPadSettingsViewController() {
+        let configuration = PadConfiguration.load() ?? .default
+        let padSettingsVC = PadSettingsViewController(configuration: configuration) { [weak self] newConfig in
+            // Update the pad view with new configuration
+            self?.yabausePadView?.updateConfiguration(newConfig)
+        }
+        let navController = UINavigationController(rootViewController: padSettingsVC)
+        navController.modalPresentationStyle = UIModalPresentationStyle.fullScreen
+        present(navController, animated: true)
+        gdelegate?.didPresentModal(navController)
     }
 
     func presentFileSelectViewController() {
@@ -1145,6 +1191,28 @@ class GameViewController: MGLKViewController,MGLKViewControllerDelegate,Draggabl
                     strncpy(scurrentGamePath, cString, bufferSize)
                     currentGamePath = UnsafePointer<CChar>(scurrentGamePath)
                     YabauseManager.shared.updateCheatCode(nil)
+                    
+                    // Notify RetroAchievements about media change and load new game file
+                    if let raManager = RetroAchievementsManager.shared {
+                        // First change the media
+                        raManager.changeMedia(path: data) { success, error in
+                            if success {
+                                NSLog("RetroAchievements: Media change successful")
+                                
+                                // Then load the new game file
+                                raManager.loadGameFromFile(path: data) { loadSuccess, loadError in
+                                    if loadSuccess {
+                                        NSLog("RetroAchievements: New game file loaded successfully")
+                                    } else {
+                                        NSLog("RetroAchievements: Failed to load new game file - \(loadError ?? "Unknown error")")
+                                    }
+                                }
+                            } else {
+                                NSLog("RetroAchievements: Media change failed - \(error ?? "Unknown error")")
+                            }
+                        }
+                    }
+                    
                     self.command = MSG_CLOSE_TRAY
                 }
 
@@ -1156,6 +1224,9 @@ class GameViewController: MGLKViewController,MGLKViewControllerDelegate,Draggabl
         let navController = UINavigationController(rootViewController: fsVC)
         navController.modalPresentationStyle = .pageSheet
         present(navController, animated: true, completion: nil)
+        
+        // Notify delegate that modal was presented
+        gdelegate?.didPresentModal(navController)
 
     }
 
@@ -1168,6 +1239,9 @@ class GameViewController: MGLKViewController,MGLKViewControllerDelegate,Draggabl
         let navController = UINavigationController(rootViewController: bfVC)
         navController.modalPresentationStyle = .pageSheet
         present(navController, animated: true, completion: nil)
+        
+        // Notify delegate that modal was presented
+        gdelegate?.didPresentModal(navController)
     }
 
     func presentCheatViewController() {
@@ -1178,6 +1252,9 @@ class GameViewController: MGLKViewController,MGLKViewControllerDelegate,Draggabl
         let navController = UINavigationController(rootViewController: tabCheatVC)
         navController.modalPresentationStyle = .pageSheet
         present(navController, animated: true, completion: nil)
+        
+        // Notify delegate that modal was presented
+        gdelegate?.didPresentModal(navController)
     }
 
     func presentLeaderBoardViewController() {
@@ -1187,6 +1264,9 @@ class GameViewController: MGLKViewController,MGLKViewControllerDelegate,Draggabl
         let navController = UINavigationController(rootViewController: leaderBoardVC)
         navController.modalPresentationStyle = .pageSheet
         present(navController, animated: true, completion: nil)
+        
+        // Notify delegate that modal was presented
+        gdelegate?.didPresentModal(navController)
     }
 
     // MARK: - LeaderBoardControllerDelegate
@@ -1227,11 +1307,132 @@ class GameViewController: MGLKViewController,MGLKViewControllerDelegate,Draggabl
         case "MK-81800", "GS-9170": // Sonic R
             currentGame = SonicR(gameCode: productNumber)
             currentGame?.setUiEvent(self)
+            currentGame?.initGameId(productNumber)
             print("Detected game: Sonic R")
+        case "GS-9047", "MK-81207", "GS-9116", "MK-81215": // Sega Rally
+            currentGame = SegaRally(gameCode: productNumber)
+            currentGame?.setUiEvent(self)
+            currentGame?.initGameId(productNumber)
+            print("Detected game: Sega Rally")
         default:
-            currentGame = nil
-            print("Unknown game code: \(productNumber)")
+            // Create OtherGame instance for RetroAchievements support
+            // This ensures Firebase leaderboard submission works for all games
+            currentGame = OtherGame(gameCode: productNumber)
+            currentGame?.setUiEvent(self)
+            print("Created OtherGame instance for RetroAchievements support: \(productNumber)")
         }
+        
+        // Notify RetroAchievements manager about the current game
+        RetroAchievementsManager.shared?.setCurrentGame(currentGame)
+    }
+
+    // MARK: - RetroAchievements Integration
+
+    private func initializeRetroAchievements() {
+        // Initialize RetroAchievements Manager
+        RetroAchievementsManager.initialize()
+        
+        // Initialize native layer
+        YabauseRA_Initialize()
+        
+        // Setup notification system
+        RetroAchievementsNotificationView.setViewController(self)
+        
+        print("RetroAchievements system initialized")
+        
+        // Auto-login is now handled in AppDelegate at app startup
+    }
+    
+    private func loadGameForRetroAchievementsWhenReady() {
+        // Check login status with retry mechanism
+        var retryCount = 0
+        let maxRetries = 10
+        let retryInterval: TimeInterval = 0.5
+        
+        func checkLoginAndLoad() {
+            guard let manager = RetroAchievementsManager.shared else {
+                if retryCount < maxRetries {
+                    retryCount += 1
+                    DispatchQueue.main.asyncAfter(deadline: .now() + retryInterval) {
+                        checkLoginAndLoad()
+                    }
+                } else {
+                    print("RetroAchievements: Manager not initialized after \(maxRetries) retries")
+                }
+                return
+            }
+            
+            // Check if user is logged in
+            if manager.isUserLoggedIn {
+                // User is logged in, load the game
+                self.loadGameForRetroAchievements()
+            } else if retryCount < maxRetries {
+                // Not logged in yet, retry
+                retryCount += 1
+                print("RetroAchievements: Waiting for login status... (attempt \(retryCount)/\(maxRetries))")
+                DispatchQueue.main.asyncAfter(deadline: .now() + retryInterval) {
+                    checkLoginAndLoad()
+                }
+            } else {
+                print("RetroAchievements: User not logged in after \(maxRetries) retries, skipping game load")
+            }
+        }
+        
+        // Start checking
+        checkLoginAndLoad()
+    }
+    
+    private func loadGameForRetroAchievements() {
+        guard let manager = RetroAchievementsManager.shared else { 
+            print("RetroAchievements: Manager not initialized")
+            return 
+        }
+        
+        // Check if user is logged in
+        guard manager.isUserLoggedIn else {
+            print("RetroAchievements: User not logged in, skipping game load")
+            return
+        }
+        
+        // Get the game path from the native layer
+        let gamePath = GetGamePath()
+        if let path = gamePath {
+            let pathString = String(cString: path)
+            print("RetroAchievements: Loading game from path: \(pathString)")
+            
+            // Use the new file-based loading method
+            manager.loadGameFromFile(path: pathString) { success, error in
+                if success {
+                    print("RetroAchievements: Game session started successfully")
+                } else {
+                    print("RetroAchievements: Failed to start game session: \(error ?? "Unknown error")")
+                    
+                    // Fallback to hash-based loading
+                    if let hashString = manager.getCurrentGameHash() {
+                        print("RetroAchievements: Trying fallback with hash: \(hashString)")
+                        
+                        manager.loadGame(hash: hashString) { success, error in
+                            if success {
+                                print("RetroAchievements: Game data loaded successfully (fallback)")
+                            } else {
+                                print("RetroAchievements: Failed to load game data: \(error ?? "Unknown error")")
+                            }
+                        }
+                    } else {
+                        print("RetroAchievements: No game hash available for fallback")
+                    }
+                }
+            }
+        } else {
+            print("RetroAchievements: No game path available")
+        }
+    }
+    
+    // MARK: - Deinitialization
+    deinit {
+        // Clean up RetroAchievements notification system
+        RetroAchievementsNotificationView.cleanup()
+        print("GameViewController deinitialized")
     }
 }
 
@@ -1254,7 +1455,7 @@ func findGameMainViewController(from root: UIViewController?) -> GameMainViewCon
 }
 
 @_cdecl("YSOnBackupWrite")
-public func YSOnBackupWrite(fname: UnsafePointer<CChar>, before: UnsafeRawPointer, after: UnsafeRawPointer, size: Int32) {
+public func YSOnBackupWrite(fname: UnsafePointer<CChar>, deviceId: Int32, before: UnsafeRawPointer, after: UnsafeRawPointer, size: Int32) {
     guard let rootVC = UIApplication.shared.windows.first?.rootViewController,
           let mainViewController = findGameMainViewController(from: rootVC),
           let gameViewController = mainViewController.children.first(where: { $0 is GameViewController }) as? GameViewController else {
@@ -1276,3 +1477,4 @@ public func YSOnBackupWrite(fname: UnsafePointer<CChar>, before: UnsafeRawPointe
     // ゲームのonBackUpUpdatedメソッドを呼び出す
     gameViewController.currentGame?.onBackUpUpdated(fname: fileName, before: beforeData, after: afterData)
 }
+

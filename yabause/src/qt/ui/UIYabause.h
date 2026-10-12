@@ -37,6 +37,7 @@ class YabauseGL;
 class QTextEdit;
 class QDockWidget;
 class QYabVulkanWidget;
+class DebugMcpServer;
 
 enum BARDISPLAY
 {
@@ -101,6 +102,10 @@ public:
 		return app;
 	}
 
+	YabauseThread* getYabauseThread() { return mYabauseThread; }
+
+	void handleFileSelected(const QString& filePath);
+
 	DEVMODE originalMode;
 
 
@@ -117,6 +122,12 @@ protected:
 	QStackedWidget* mStackedWidget;
 	FileSearchWidget* mFileSearch;
 	YabauseThread* mYabauseThread;
+	DebugMcpServer* mDebugMcpServer;
+	QAction* aDebugMcpServer;
+	// True while enabling the MCP server from the --debug-mcp CLI flag, so the
+	// action's toggled handler starts the server for this run only without
+	// persisting Debug/McpServerEnabled. The menu toggle still persists.
+	bool mMcpEnableFromCli = false;
 	QDockWidget* mLogDock;
 	QTextEdit* teLog;
 	bool mCanLog;
@@ -185,6 +196,7 @@ public slots:
 	void initWinSparkle();
 	void checkForUpdates();
 
+	void handleViewBugReportsRequested(const QString& productNumber, const QString& gameTitle);
 
 protected slots:
 	void errorReceived( const QString& error, bool internal = true );
@@ -262,10 +274,6 @@ protected slots:
 	void on_cbSound_toggled( bool toggled );
 	void on_sVolume_valueChanged( int value );
 	void on_cbVideoDriver_currentIndexChanged( int id );
-
-	void handleFileSelected(const QString& filePath);
-
-
 
 };
 

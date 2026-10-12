@@ -4,14 +4,14 @@ import android.app.UiModeManager
 import android.content.Context
 import android.content.res.Configuration
 import android.os.Bundle
-import android.view.Menu
-import android.view.MenuItem
 import android.view.View
 import android.widget.Button
 import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import com.bumptech.glide.Glide
 import com.google.firebase.auth.FirebaseUser
@@ -22,8 +22,9 @@ import org.devmiyax.yabasanshiro.R
  * Activity that demonstrates Discord account linking
  * This can be used as a reference for implementing Discord linking in other activities
  */
-class DiscordLinkActivity : AppCompatActivity(), DiscordLinkPromptDialog.DiscordLinkPromptListener {
-
+class DiscordLinkActivity :
+    AppCompatActivity(),
+    DiscordLinkPromptDialog.DiscordLinkPromptListener {
     private lateinit var firebaseAuthManager: FirebaseAuthManager
 
     // UI elements
@@ -37,7 +38,11 @@ class DiscordLinkActivity : AppCompatActivity(), DiscordLinkPromptDialog.Discord
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
         setContentView(R.layout.activity_discord_link)
+
+        // Setup edge-to-edge window insets handling
+        setupEdgeToEdgeInsets()
 
         // Set up action bar
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
@@ -63,7 +68,7 @@ class DiscordLinkActivity : AppCompatActivity(), DiscordLinkPromptDialog.Discord
     }
 
     override fun onSupportNavigateUp(): Boolean {
-        onBackPressed()
+        onBackPressedDispatcher.onBackPressed()
         return true
     }
 
@@ -136,7 +141,8 @@ class DiscordLinkActivity : AppCompatActivity(), DiscordLinkPromptDialog.Discord
         // Load user avatar
         val photoUrl = user.photoUrl
         if (photoUrl != null) {
-            Glide.with(this)
+            Glide
+                .with(this)
                 .load(photoUrl)
                 .circleCrop()
                 .placeholder(R.drawable.ic_discord_logo)
@@ -169,13 +175,13 @@ class DiscordLinkActivity : AppCompatActivity(), DiscordLinkPromptDialog.Discord
      */
     private fun showDiscordUnlinkConfirmation() {
         // Create and show a confirmation dialog
-        androidx.appcompat.app.AlertDialog.Builder(this)
+        androidx.appcompat.app.AlertDialog
+            .Builder(this)
             .setTitle(R.string.discord_unlink_account)
             .setMessage(R.string.discord_unlink_confirm)
-            .setPositiveButton(android.R.string.yes) { _, _ ->
+            .setPositiveButton(android.R.string.ok) { _, _ ->
                 unlinkDiscordAccount()
-            }
-            .setNegativeButton(android.R.string.no, null)
+            }.setNegativeButton(android.R.string.cancel, null)
             .show()
     }
 
@@ -186,18 +192,20 @@ class DiscordLinkActivity : AppCompatActivity(), DiscordLinkPromptDialog.Discord
         lifecycleScope.launch {
             val success = firebaseAuthManager.unlinkDiscord()
             if (success) {
-                Toast.makeText(
-                    this@DiscordLinkActivity,
-                    R.string.discord_account_unlinked,
-                    Toast.LENGTH_SHORT
-                ).show()
+                Toast
+                    .makeText(
+                        this@DiscordLinkActivity,
+                        R.string.discord_account_unlinked,
+                        Toast.LENGTH_SHORT,
+                    ).show()
                 updateUserInfo() // Refresh UI
             } else {
-                Toast.makeText(
-                    this@DiscordLinkActivity,
-                    R.string.discord_link_error,
-                    Toast.LENGTH_SHORT
-                ).show()
+                Toast
+                    .makeText(
+                        this@DiscordLinkActivity,
+                        R.string.discord_link_error,
+                        Toast.LENGTH_SHORT,
+                    ).show()
             }
         }
     }
@@ -227,5 +235,24 @@ class DiscordLinkActivity : AppCompatActivity(), DiscordLinkPromptDialog.Discord
     private fun isAndroidTv(context: Context): Boolean {
         val uiModeManager = context.getSystemService(Context.UI_MODE_SERVICE) as UiModeManager
         return uiModeManager.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION
+    }
+
+    /**
+     * Setup edge-to-edge window insets handling for Android 15+ (API 35+)
+     */
+    private fun setupEdgeToEdgeInsets() {
+        val rootView = findViewById<android.view.View>(android.R.id.content)
+        ViewCompat.setOnApplyWindowInsetsListener(rootView) { view, windowInsets ->
+            val insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())
+
+            view.setPadding(
+                view.paddingLeft,
+                insets.top,
+                view.paddingRight,
+                view.paddingBottom,
+            )
+
+            windowInsets
+        }
     }
 }

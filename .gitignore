@@ -25,3 +25,12 @@ yabause/src/ios/uoyabause/uoyabause/GoogleService-Info-lite.plist
 bin*/*
 yabause/src/qt/firebase_cpp_sdk*/*
 **/._.DS_Store/*
+*.aab
+node_modules/*
+.serena/*
+.claude/*
+.vscode/*
+
+# vulkan port debug ui output
+**/debug/vdp1/
+

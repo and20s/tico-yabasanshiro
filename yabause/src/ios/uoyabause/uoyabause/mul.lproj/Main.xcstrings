@@ -3,7 +3,7 @@
   "strings" : {
     "0uv-hR-62t.text" : {
       "comment" : "Class = \"UILabel\"; text = \"Show FPS\"; ObjectID = \"0uv-hR-62t\";",
-      "extractionState" : "extracted_with_value",
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -81,7 +81,7 @@
     },
     "5kh-BO-spI.text" : {
       "comment" : "Class = \"UILabel\"; text = \"Label\"; ObjectID = \"5kh-BO-spI\";",
-      "extractionState" : "extracted_with_value",
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -123,7 +123,7 @@
     },
     "05T-W3-45O.text" : {
       "comment" : "Class = \"UILabel\"; text = \"Force Landscape Mode\"; ObjectID = \"05T-W3-45O\";",
-      "extractionState" : "extracted_with_value",
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -165,7 +165,7 @@
     },
     "7a9-1I-qMs.text" : {
       "comment" : "Class = \"UILabel\"; text = \"Keep original aspect rate\"; ObjectID = \"7a9-1I-qMs\";",
-      "extractionState" : "extracted_with_value",
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -207,7 +207,7 @@
     },
     "a6W-wy-CZs.text" : {
       "comment" : "Class = \"UILabel\"; text = \"Rotate 90 degree\"; ObjectID = \"a6W-wy-CZs\";",
-      "extractionState" : "extracted_with_value",
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -285,7 +285,7 @@
     },
     "Adw-oe-5dn.headerTitle" : {
       "comment" : "Class = \"UITableViewSection\"; headerTitle = \"Graphics\"; ObjectID = \"Adw-oe-5dn\";",
-      "extractionState" : "extracted_with_value",
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -327,7 +327,7 @@
     },
     "DjX-3S-nbY.text" : {
       "comment" : "Class = \"UILabel\"; text = \"Rendering Resolution\"; ObjectID = \"DjX-3S-nbY\";",
-      "extractionState" : "extracted_with_value",
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -369,7 +369,7 @@
     },
     "dP5-m9-P5R.title" : {
       "comment" : "Class = \"UINavigationItem\"; title = \"Setting\"; ObjectID = \"dP5-m9-P5R\";",
-      "extractionState" : "extracted_with_value",
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -411,7 +411,7 @@
     },
     "GDt-1B-FZj.headerTitle" : {
       "comment" : "Class = \"UITableViewSection\"; headerTitle = \"Controller\"; ObjectID = \"GDt-1B-FZj\";",
-      "extractionState" : "extracted_with_value",
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -419,16 +419,16 @@
             "value" : "Controller"
           }
         },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "コントローラー設定"
-          }
-        },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Controlador"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "コントローラー設定"
           }
         },
         "pt-BR" : {
@@ -453,7 +453,7 @@
     },
     "HEk-JT-gUF.text" : {
       "comment" : "Class = \"UILabel\"; text = \"Frame Skip\"; ObjectID = \"HEk-JT-gUF\";",
-      "extractionState" : "extracted_with_value",
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -531,7 +531,7 @@
     },
     "KCH-Zr-n0O.text" : {
       "comment" : "Class = \"UILabel\"; text = \"Use Analog Pad as D-pad\"; ObjectID = \"KCH-Zr-n0O\";",
-      "extractionState" : "extracted_with_value",
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -539,16 +539,16 @@
             "value" : "Use Analog Pad as D-pad"
           }
         },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "アナログパッドをDPadとして使用する"
-          }
-        },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Usar el pad analógico como D-pad"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アナログパッドをDPadとして使用する"
           }
         },
         "pt-BR" : {
@@ -573,7 +573,7 @@
     },
     "kHL-Tt-8Bi.title" : {
       "comment" : "Class = \"UISwitch\"; title = \"Use Analog pad as D-Pad\"; ObjectID = \"kHL-Tt-8Bi\";",
-      "extractionState" : "extracted_with_value",
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -581,16 +581,16 @@
             "value" : "Use Analog pad as D-Pad"
           }
         },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "アナログパッドをDPadとして使用する"
-          }
-        },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Usar el pad analógico como D-pad"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アナログパッドをDPadとして使用する"
           }
         },
         "pt-BR" : {
@@ -615,7 +615,7 @@
     },
     "KND-t5-hSX.headerTitle" : {
       "comment" : "Class = \"UITableViewSection\"; headerTitle = \"General\"; ObjectID = \"KND-t5-hSX\";",
-      "extractionState" : "extracted_with_value",
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -741,7 +741,7 @@
     },
     "NIg-ct-7sX.text" : {
       "comment" : "Class = \"UILabel\"; text = \"Resolution Picker label\"; ObjectID = \"NIg-ct-7sX\";",
-      "extractionState" : "extracted_with_value",
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -819,7 +819,7 @@
     },
     "Tsw-hZ-S89.text" : {
       "comment" : "Class = \"UILabel\"; text = \"Cartridge\"; ObjectID = \"Tsw-hZ-S89\";",
-      "extractionState" : "extracted_with_value",
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {

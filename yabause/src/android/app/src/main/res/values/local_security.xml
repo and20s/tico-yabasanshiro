@@ -19,25 +19,40 @@
     Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 -->
 <resources>
-    <string name="basic_user" translatable="false" >jfonvwe</string>
-    <string name="basic_password" translatable="false" >in23408vnwer</string>
-    <string name="ad_app_id" translatable="false" >ca-app-pub-1</string>
-    <string name="banner_ad_unit_id" translatable="false" >ca-app-pub-2</string>
-    <string name="banner_ad_unit_id2" translatable="false" >ca-app-pub-3</string>
-    <string name="global_tracker" translatable="false" >UA-9999999-1</string>
-    <string name="donation_publickey" translatable="false">ddddd</string>
-    <string name="donation_payload" translatable="false">ddddd</string>
-    <string name="check_order_url" translatable="false">https://www.uoyabause.org/</string>
-    <string name="host" translatable="false">dq344</string>
-    <string name="schema" translatable="false">fkweorijc</string>
-    <string name="nend_spoid" translatable="false">000000</string>
-    <string name="nend_apikey" translatable="false">aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</string>
+    <string name="basic_user" translatable="false" >REPLACE_WITH_YOUR_OWN_VALUE</string>
+    <string name="basic_password" translatable="false" >REPLACE_WITH_YOUR_OWN_VALUE</string>
+    <string name="ad_app_id" translatable="false" >REPLACE_WITH_YOUR_OWN_VALUE</string>
+    <string name="banner_ad_unit_id" translatable="false" >REPLACE_WITH_YOUR_OWN_VALUE</string>
+    <string name="banner_ad_unit_id2" translatable="false" >REPLACE_WITH_YOUR_OWN_VALUE</string>
+    <string name="global_tracker" translatable="false" >REPLACE_WITH_YOUR_OWN_VALUE</string>
+    <string name="donation_publickey" translatable="false">REPLACE_WITH_YOUR_OWN_VALUE</string>
+    <string name="donation_payload" translatable="false">REPLACE_WITH_YOUR_OWN_VALUE</string>
+    <string name="check_order_url" translatable="false">REPLACE_WITH_YOUR_OWN_VALUE</string>
+    <string name="host" translatable="false">REPLACE_WITH_YOUR_OWN_VALUE</string>
+    <string name="schema" translatable="false">REPLACE_WITH_YOUR_OWN_VALUE</string>
+    <string name="nend_spoid" translatable="false">REPLACE_WITH_YOUR_OWN_VALUE</string>
+    <string name="nend_apikey" translatable="false">REPLACE_WITH_YOUR_OWN_VALUE</string>
 
-    <string name="key_getLoginPinIn" translatable="false" >pass</string>
-    <string name="key_getTokenAndDelete" translatable="false" >pass</string>
-    <string name="url_getLoginPinIn" translatable="false" >"https://localhost:3000/getLoginPinIn"</string>
-    <string name="url_getTokenAndDelete" translatable="false" >"https://localhost:3000/getTokenAndDelete"</string>
-    <string name="boxart_sigin" translatable="false">""</string>
-    <string name="game_id" translatable="false" >123456</string>
+    <string name="key_getLoginPinIn" translatable="false" >REPLACE_WITH_YOUR_OWN_VALUE</string>
+    <string name="key_getTokenAndDelete" translatable="false" >REPLACE_WITH_YOUR_OWN_VALUE</string>
+    <string name="url_getLoginPinIn" translatable="false" >REPLACE_WITH_YOUR_OWN_VALUE</string>
+    <string name="url_getTokenAndDelete" translatable="false" >REPLACE_WITH_YOUR_OWN_VALUE</string>
+    <string name="boxart_sigin" translatable="false">REPLACE_WITH_YOUR_OWN_VALUE</string>
+
+    <string name="game_id" translatable="false" >REPLACE_WITH_YOUR_OWN_VALUE</string>
+
+    <!-- Discord OAuth2 Configuration -->
+    <string name="discord_client_id" translatable="false">REPLACE_WITH_YOUR_OWN_VALUE</string>
+    <string name="discord_client_secret" translatable="false">REPLACE_WITH_YOUR_OWN_VALUE</string>
+    <string name="discord_redirect_uri" translatable="false">REPLACE_WITH_YOUR_OWN_VALUE</string>
+    <string name="discord_auth_url" translatable="false">REPLACE_WITH_YOUR_OWN_VALUE</string>
+    <string name="discord_token_url" translatable="false">REPLACE_WITH_YOUR_OWN_VALUE</string>
+    <string name="discord_user_url" translatable="false">REPLACE_WITH_YOUR_OWN_VALUE</string>
+    <string name="firebase_custom_token_url" translatable="false">REPLACE_WITH_YOUR_OWN_VALUE</string>
+
+    <string name="fcm_server_key" translatable="false">REPLACE_WITH_YOUR_OWN_VALUE</string>
+
+    <!-- Discord Webhook Configuration -->
+    <string name="discord_report_webhook_url" translatable="false">REPLACE_WITH_YOUR_OWN_VALUE</string>
 
 </resources>

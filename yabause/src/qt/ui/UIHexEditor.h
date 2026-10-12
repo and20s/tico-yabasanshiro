@@ -42,6 +42,7 @@ public:
    virtual void setFont(const QFont &font);
    bool saveSelected(QString filename);
    bool saveTab(QString filename);
+   QString getMemoryAsText();
 private:
    u8 readByte(u32 addr);
    void writeByte(u32 addr, u8 val);
@@ -126,6 +127,7 @@ public:
    u32 getEndAddress();
    bool saveSelected(QString filename);
    bool saveTab(QString filename);
+   QString getMemoryAsText();
 private:
    ;
 };

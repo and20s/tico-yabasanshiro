@@ -1,19 +1,11 @@
 package org.uoyabause.android.game
 
-import android.os.Bundle
 import android.util.Log
-import android.widget.Toast
-import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.firebase.firestore.FirebaseFirestore
-import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.analytics.FirebaseAnalytics
-import com.google.firebase.firestore.Query
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import org.devmiyax.yabasanshiro.R
-import org.uoyabause.android.YabauseApplication
+import org.uoyabause.android.auth.AuthState
 
 /*
   Offset: 00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F
@@ -70,9 +62,7 @@ class SonicRBackup {
 
 // Moved to BaseGame.kt as shared functionality
 
-
 class SonicR : BaseGame {
-
     constructor(gameCode: String) {
         // リーダーボードの初期化
         leaderBoards = mutableListOf<LeaderBoard>()
@@ -96,34 +86,38 @@ class SonicR : BaseGame {
 
     // leaderboardsコレクションの初期化
     private fun initLeaderboards() {
-        if( gameId.isEmpty() ) return
+        if (gameId.isEmpty()) return
         val db = FirebaseFirestore.getInstance()
         val leaderboardsRef = db.collection("games").document(gameId).collection("leaderboards")
         leaderboardsRef.get().addOnSuccessListener { result ->
             if (result.isEmpty) {
-                val leaderboardsData = listOf(
-                    Pair("01", "Resort Island"),
-                    Pair("02", "Radical City"),
-                    Pair("03", "Regal Ruin"),
-                    Pair("04", "Reactive Factory"),
-                    Pair("05", "Radiant Emerald")
-                )
+                val leaderboardsData =
+                    listOf(
+                        Pair("01", "Resort Island"),
+                        Pair("02", "Radical City"),
+                        Pair("03", "Regal Ruin"),
+                        Pair("04", "Reactive Factory"),
+                        Pair("05", "Radiant Emerald"),
+                    )
                 leaderboardsData.forEach { (id, name) ->
-                    val data = hashMapOf("name" to name)
+                    val data = hashMapOf("name" to name, "scoreType" to "TIME", "rankingType" to "ASCENDING")
                     leaderboardsRef.document(id).set(data)
                 }
             }
         }
     }
 
-
     fun insertDummyLeaderboardData() {
         val db = FirebaseFirestore.getInstance()
         val gameId = "31"
         val leaderboardId = "01"
-        val scoresRef = db.collection("games").document(gameId)
-            .collection("leaderboards").document(leaderboardId)
-            .collection("scores")
+        val scoresRef =
+            db
+                .collection("games")
+                .document(gameId)
+                .collection("leaderboards")
+                .document(leaderboardId)
+                .collection("scores")
 
         // 1000件分のダミーデータを作成
         for (i in 1..1000) {
@@ -131,29 +125,30 @@ class SonicR : BaseGame {
             val name = "ダミー$i"
             val score = 100000L + i * 100 // 例: タイムアタックならミリ秒
             val timestamp = System.currentTimeMillis() - (1000L * i)
-            val data = hashMapOf(
-                "name" to name,
-                "score" to score,
-                "timestamp" to timestamp,
-                "photoUrl" to "https://cdn.discordapp.com/embed/avatars/${i % 5}.png" // ダミーのアバターURL
-            )
+            val data =
+                hashMapOf(
+                    "name" to name,
+                    "score" to score,
+                    "timestamp" to timestamp,
+                    "photoUrl" to "https://cdn.discordapp.com/embed/avatars/${i % 5}.png", // ダミーのアバターURL
+                )
             scoresRef.document(userId).set(data)
         }
     }
 
-    override fun onBackUpUpdated(fname: String, before: ByteArray, after: ByteArray) {
-
-        if( gameId == "" ) return
-        val auth = FirebaseAuth.getInstance()
-        val currentUser = auth.currentUser ?: return
+    override fun onBackUpUpdated(
+        fname: String,
+        before: ByteArray,
+        after: ByteArray,
+    ) {
+        if (gameId == "") return
+        val currentUser = AuthState.realUser() ?: return
         val beforeRecord = SonicRBackup(before)
         val afterRecord = SonicRBackup(after)
 
         for (i in 0..4) {
             if (afterRecord.records[i].courseRecord < beforeRecord.records[i].courseRecord) {
-                val context = YabauseApplication.appContext
                 val score = afterRecord.records[i].courseRecord.toLong()
-                val account = GoogleSignIn.getLastSignedInAccount(context)
                 val gid = leaderBoards?.get(i)?.id
                 if (gid != null) {
                     // Use the display name if available, but ensure we're using the Firebase UID for the document ID

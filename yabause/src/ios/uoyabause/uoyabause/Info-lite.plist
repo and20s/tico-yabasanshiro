@@ -27,12 +27,13 @@
 			<string>Editor</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>$(CF_BUNDLE_URL_SCHEME_LITE)</string>
+				<string>com.googleusercontent.apps.YOUR_REVERSED_CLIENT_ID</string>
+				<string>com.googleusercontent.apps.YOUR_REVERSED_CLIENT_ID</string>
 			</array>
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>57</string>
+	<string>61</string>
 	<key>GADApplicationIdentifier</key>
 	<string>ca-app-pub-2526043010907640~1516750003</string>
 	<key>GCSupportedGameControllers</key>
@@ -96,6 +97,6 @@
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>GIDClientID</key>
-	<string>$(GID_CLIENT_ID_LITE)</string>
+	<string>YOUR_CLIENT_ID.apps.googleusercontent.com</string>
 </dict>
 </plist>

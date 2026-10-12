@@ -21,12 +21,19 @@
 
 #include "ui_UIDebugSCSP.h"
 #include "../QtYabause.h"
+#include "UIDebugSCSPGraph.h"
+
+extern "C" {
+#include "scsp.h"
+}
 
 #ifdef HAVE_QT_MULTIMEDIA
 #include <QAudioSink>
 #include <QMediaDevices>
 #include <QAudioFormat>
 #endif
+
+class QComboBox;
 
 class UIDebugSCSP : public QDialog, public Ui::UIDebugSCSP
 {
@@ -45,6 +52,15 @@ private:
 	s16 *slot_buf;
 #endif
 
+	// Real-time update timer (Issue #73)
+	QTimer *updateTimer;
+	bool realtimeUpdateEnabled;
+	ScspSlotDebugInfo prevSlotInfo;  // For change detection
+
+	// Graph widget (Issue #73)
+	UIDebugSCSPGraph *graphWidget;
+	QComboBox *cbGraphMode;
+
 public:
 	UIDebugSCSP( QWidget* parent = 0 );
 	~UIDebugSCSP();
@@ -54,10 +70,18 @@ protected:
 	void initAudio();
 #endif
 
+protected:
+	void updateSlotInfo();
+	QString formatSlotInfo(const ScspSlotDebugInfo &info);
+	QString getEnvelopeStateName(int state);
+
 protected slots:
    void on_sbSlotNumber_valueChanged ( int i );
    void on_pbSaveAsWav_clicked ();
    void on_pbSaveSlotRegisters_clicked ();
+   void onUpdateTimer();
+   void on_cbRealtimeUpdate_toggled(bool checked);
+   void onGraphModeChanged(int index);
 #ifdef HAVE_QT_MULTIMEDIA
 	void on_pbPlaySlot_clicked ();
 	void notified();

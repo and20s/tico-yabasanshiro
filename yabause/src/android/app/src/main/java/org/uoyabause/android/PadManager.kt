@@ -22,63 +22,87 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 
 internal abstract class PadManager {
-  var analogMode = MODE_HAT
-  var analogMode2 = MODE_HAT
-  abstract fun hasPad(): Boolean
-  abstract fun onKeyDown(keyCode: Int, event: KeyEvent): Int
-  abstract fun onKeyUp(keyCode: Int, event: KeyEvent): Int
-  abstract fun onGenericMotionEvent(event: MotionEvent): Int
-  abstract fun getName(index: Int): String?
-  abstract fun getId(index: Int): String?
-  abstract fun setPlayer1InputDevice(id: String?)
-  abstract fun getPlayer1InputDevice(): Int
-  abstract fun setPlayer2InputDevice(id: String?)
-  abstract fun getPlayer2InputDevice(): Int
-  abstract fun loadSettings()
-  abstract fun getStatusString(): String?
-  abstract fun setTestMode(mode: Boolean)
-  abstract fun getDeviceList(): String?
-  abstract fun getDeviceCount(): Int
+    var analogMode = MODE_HAT
+    var analogMode2 = MODE_HAT
 
-  interface ShowMenuListener {
-    fun show()
-  }
+    abstract fun hasPad(): Boolean
 
-  fun showMenu() {
-    if (showMenulistener != null) {
-      showMenulistener!!.show()
+    abstract fun onKeyDown(
+        keyCode: Int,
+        event: KeyEvent,
+    ): Int
+
+    abstract fun onKeyUp(
+        keyCode: Int,
+        event: KeyEvent,
+    ): Int
+
+    abstract fun onGenericMotionEvent(event: MotionEvent): Int
+
+    abstract fun getName(index: Int): String?
+
+    abstract fun getId(index: Int): String?
+
+    abstract fun setPlayer1InputDevice(id: String?)
+
+    abstract fun getPlayer1InputDevice(): Int
+
+    abstract fun setPlayer2InputDevice(id: String?)
+
+    abstract fun getPlayer2InputDevice(): Int
+
+    abstract fun loadSettings()
+
+    abstract fun getStatusString(): String?
+
+    abstract fun setTestMode(mode: Boolean)
+
+    abstract fun getDeviceList(): String?
+
+    abstract fun getDeviceCount(): Int
+
+    interface ShowMenuListener {
+        fun show()
     }
-  }
 
-  var showMenulistener: ShowMenuListener? = null
-    set(value) { field = value }
+    fun showMenu() {
+        if (showMenuListener != null) {
+            showMenuListener!!.show()
+        }
+    }
+
+    var showMenuListener: ShowMenuListener? = null
+        set(value) {
+            field = value
+        }
   /*
   fun setShowMenulistener(listener: ShowMenuListener?) {
-    showMenulistener = listener
+    showMenuListener = listener
   }
-  */
+   */
 
-  companion object {
-    var NO_ACTION_MAPPED = 0
-    var ACTION_MAPPED = 1
-    var TOGGLE_MENU = 2
-    private var _instance: PadManager? = null
-    const val invalid_device_id = 65535
-    const val MODE_HAT = 0
-    const val MODE_ANALOG = 1
-    @JvmStatic
-    val padManager: PadManager?
-      get() {
-        if (_instance == null) {
-            _instance = PadManagerV16()
+    companion object {
+        var noActionMapped = 0
+        var actionMapped = 1
+        var toggleMenu = 2
+        private var padInstance: PadManager? = null
+        const val INVALID_DEVICE_ID = 65535
+        const val MODE_HAT = 0
+        const val MODE_ANALOG = 1
+
+        @JvmStatic
+        val padManager: PadManager?
+            get() {
+                if (padInstance == null) {
+                    padInstance = PadManagerV16()
+                }
+                return padInstance
+            }
+
+        @JvmStatic
+        fun updatePadManager(): PadManager? {
+            padInstance = PadManagerV16()
+            return padInstance
         }
-        return _instance
-      }
-
-    @JvmStatic
-    fun updatePadManager(): PadManager? {
-      _instance = PadManagerV16()
-      return _instance
     }
-  }
 }

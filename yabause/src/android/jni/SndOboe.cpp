@@ -183,6 +183,38 @@ public:
     }
   }
 
+  void restartStream() {
+    std::lock_guard<std::mutex> lock(mLock);
+    
+    if (mStream) {
+        // Save current audio state
+        int currentMuteState = muted;
+        
+        // Stop current stream
+        mStream->stop();
+        mStream->close();
+        mStream.reset();
+        
+        // Recreate stream with same parameters
+        oboe::AudioStreamBuilder builder;
+        Result result = builder.setSharingMode(oboe::SharingMode::Exclusive)
+                ->setPerformanceMode(oboe::PerformanceMode::LowLatency)
+                ->setChannelCount(kChannelCount)
+                ->setSampleRate(kSampleRate)
+                ->setSampleRateConversionQuality(oboe::SampleRateConversionQuality::Medium)
+                ->setFormat(oboe::AudioFormat::I16)
+                ->setDataCallback(this)
+                ->openStream(mStream);
+
+        if (result == Result::OK) {
+            mStream->requestStart();
+        }
+        
+        // Restore mute state
+        muted = currentMuteState;
+    }
+  }
+
 };
 
 SndOboeEngine * SndOboeEngine::instance_ = NULL;
@@ -198,6 +230,7 @@ u32 SNDOboeGetAudioSpace(void);
 void SNDOboeMuteAudio(void);
 void SNDOboeUnMuteAudio(void);
 void SNDOboeSetVolume(int volume);
+void SNDOboeRestartStream(void);
 
 SoundInterface_struct SNDOboe = {
 SNDCORE_OBOE,
@@ -266,6 +299,11 @@ void SNDOboeUnMuteAudio(void){
 void SNDOboeSetVolume(int volume){
   SndOboeEngine * i = SndOboeEngine::getInstance();
   return i->setVolume(volume);
+}
+
+void SNDOboeRestartStream(void){
+  SndOboeEngine * i = SndOboeEngine::getInstance();
+  i->restartStream();
 }
 
 

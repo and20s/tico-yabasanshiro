@@ -7,3 +7,6 @@
 [submodule "rcheevos"]
 	path = rcheevos
 	url = https://github.com/RetroAchievements/rcheevos.git
+[submodule "yabause/src/retroachievements/rcheevos"]
+	path = yabause/src/retroachievements/rcheevos
+	url = https://github.com/RetroAchievements/rcheevos.git

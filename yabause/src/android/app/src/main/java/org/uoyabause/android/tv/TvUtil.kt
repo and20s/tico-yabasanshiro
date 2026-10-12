@@ -21,9 +21,7 @@ package org.uoyabause.android.tv
 import android.content.ContentUris
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.Canvas
-import android.graphics.drawable.VectorDrawable
 import android.media.tv.TvContract
 import android.net.Uri
 import android.util.Log
@@ -32,6 +30,7 @@ import androidx.tvprovider.media.tv.Channel
 import androidx.tvprovider.media.tv.ChannelLogoUtils
 import androidx.tvprovider.media.tv.PreviewProgram
 import androidx.tvprovider.media.tv.TvContractCompat
+import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
@@ -43,11 +42,12 @@ object TvUtil {
     private const val TAG = "TvUtil"
     private const val CHANNEL_JOB_ID_OFFSET: Long = 1000
 
-    private val CHANNELS_PROJECTION = arrayOf(
-        TvContractCompat.Channels._ID,
-        TvContract.Channels.COLUMN_DISPLAY_NAME,
-        TvContractCompat.Channels.COLUMN_BROWSABLE
-    )
+    private val CHANNELS_PROJECTION =
+        arrayOf(
+            TvContractCompat.Channels._ID,
+            TvContract.Channels.COLUMN_DISPLAY_NAME,
+            TvContractCompat.Channels.COLUMN_BROWSABLE,
+        )
 
     /**
      * Converts a [Subscription] into a [Channel] and adds it to the tv provider.
@@ -57,7 +57,10 @@ object TvUtil {
      * @return the id of the channel that the tv provider returns.
      */
     @WorkerThread
-    fun createChannel(context: Context, subscription: Subscription): Long {
+    fun createChannel(
+        context: Context,
+        subscription: Subscription,
+    ): Long {
         // Checks if our subscription has been added to the channels before.
 
         val cursor =
@@ -67,7 +70,7 @@ object TvUtil {
                     CHANNELS_PROJECTION,
                     null,
                     null,
-                    null
+                    null,
                 )
         if (cursor != null && cursor.moveToFirst()) {
             do {
@@ -75,9 +78,9 @@ object TvUtil {
                 if (subscription.name == channel.displayName) {
                     Log.d(
                         TAG,
-                        "Channel already exists. Returning channel "
-                                + channel.id
-                                + " from TV Provider."
+                        "Channel already exists. Returning channel " +
+                            channel.id +
+                            " from TV Provider.",
                     )
                     return channel.id
                 }
@@ -88,7 +91,8 @@ object TvUtil {
         val appLinkIntentUri = Uri.parse(subscription.appLinkIntentUri)
 
         val builder = Channel.Builder()
-        builder.setType(TvContractCompat.Channels.TYPE_PREVIEW)
+        builder
+            .setType(TvContractCompat.Channels.TYPE_PREVIEW)
             .setDisplayName(subscription.name)
             .setDescription(subscription.description)
             .setAppLinkIntentUri(appLinkIntentUri)
@@ -98,7 +102,7 @@ object TvUtil {
             context.contentResolver
                 .insert(
                     TvContractCompat.Channels.CONTENT_URI,
-                    builder.build().toContentValues()
+                    builder.build().toContentValues(),
                 )
 
         Log.d(TAG, "channel insert at $channelUrl")
@@ -106,32 +110,37 @@ object TvUtil {
         Log.d(TAG, "channel id $channelId")
 
         val bitmap = convertToBitmap(context, subscription.channelLogo)
-        if (bitmap != null) {
-            ChannelLogoUtils.storeChannelLogo(context, channelId, bitmap)
-        }
+        ChannelLogoUtils.storeChannelLogo(context, channelId, bitmap)
         TvContractCompat.requestChannelBrowsable(context, channelId)
         return channelId
     }
 
-    fun convertToBitmap(context: Context, resourceId: Int): Bitmap {
+    fun convertToBitmap(
+        context: Context,
+        resourceId: Int,
+    ): Bitmap {
         val drawable = context.getDrawable(resourceId)
-        if (drawable is VectorDrawable) {
-            val bitmap =
-                Bitmap.createBitmap(
-                    drawable.getIntrinsicWidth(),
-                    drawable.getIntrinsicHeight(),
-                    Bitmap.Config.ARGB_8888
-                )
-            val canvas = Canvas(bitmap)
-            drawable.setBounds(0, 0, canvas.width, canvas.height)
-            drawable.draw(canvas)
-            return bitmap
+            ?: throw IllegalArgumentException("Resource ID $resourceId not found")
+
+        if (drawable is android.graphics.drawable.BitmapDrawable) {
+            return drawable.bitmap
         }
 
-        return BitmapFactory.decodeResource(context.resources, resourceId)
+        // For VectorDrawable, AdaptiveIconDrawable, LayerDrawable, etc.
+        val width = if (drawable.intrinsicWidth > 0) drawable.intrinsicWidth else 100
+        val height = if (drawable.intrinsicHeight > 0) drawable.intrinsicHeight else 100
+
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        drawable.setBounds(0, 0, canvas.width, canvas.height)
+        drawable.draw(canvas)
+        return bitmap
     }
 
-    fun syncPrograms(context: Context, channelId: Long) {
+    fun syncPrograms(
+        context: Context,
+        channelId: Long,
+    ) {
         Log.d(TAG, "Sync programs for channel: $channelId")
 
         context.contentResolver
@@ -140,42 +149,40 @@ object TvUtil {
                 null,
                 null,
                 null,
-                null
+                null,
             ).use { cursor ->
                 if (cursor != null && cursor.moveToNext()) {
                     val channel = Channel.fromCursor(cursor)
                     if (!channel.isBrowsable) {
                         Log.d(TAG, "Channel is not browsable: $channelId")
-                        //deletePrograms(channelId, movies);
+                        // deletePrograms(channelId, movies);
                         deletePrograms(context, channelId)
                     } else {
                         Log.d(TAG, "Channel is browsable: $channelId")
                         deletePrograms(context, channelId)
                         createPrograms(context, channelId)
-                        //if (movies.isEmpty()) {
+                        // if (movies.isEmpty()) {
                         //   movies = createPrograms(channelId, MockMovieService.getList());
-                        //} else {
+                        // } else {
                         //    movies = updatePrograms(channelId, movies);
-                        //}
-                        //MockDatabase.saveMovies(context, channelId, movies);
+                        // }
+                        // MockDatabase.saveMovies(context, channelId, movies);
                     }
                 }
             }
     }
 
+    @OptIn(DelicateCoroutinesApi::class)
     fun createPrograms(context: Context, channelId: Long)/*: List<GameInfo>?*/ {
-
         GlobalScope.launch(Dispatchers.IO) {
             var recentGameList: List<GameInfo>? = null
             try {
-
                 recentGameList = YabauseStorage.dao.getRecentGames()
-
             } catch (e: Exception) {
                 println(e)
             }
 
-            if( recentGameList != null ) {
+            if (recentGameList != null) {
                 for (game in recentGameList) {
                     val previewProgram = buildProgram(channelId, game)
 
@@ -183,24 +190,27 @@ object TvUtil {
                         context.contentResolver
                             .insert(
                                 TvContractCompat.PreviewPrograms.CONTENT_URI,
-                                previewProgram?.toContentValues()
+                                previewProgram?.toContentValues(),
                             )
                     val programId = ContentUris.parseId(programUri!!)
                     Log.d(TAG, "Inserted new program: $programId")
-                    //game.setProgramId(programId); ToDo
-                    //moviesAdded.add(movie);
+                    // game.setProgramId(programId); ToDo
+                    // moviesAdded.add(movie);
                 }
             }
         }
-        return /*recentGameList*/
+        return // recentGameList
     }
 
-    fun deletePrograms(context: Context, channelId: Long) {
+    fun deletePrograms(
+        context: Context,
+        channelId: Long,
+    ) {
         context.contentResolver
             .delete(
                 TvContractCompat.PreviewPrograms.CONTENT_URI,
                 null,
-                null
+                null,
             )
     }
 
@@ -208,11 +218,15 @@ object TvUtil {
     const val PLAY: String = "play"
     private const val URI_PLAY = SCHEMA_URI_PREFIX + PLAY
 
-    fun buildProgram(channelId: Long, game: GameInfo): PreviewProgram? {
+    @android.annotation.SuppressLint("RestrictedApi")
+    fun buildProgram(
+        channelId: Long,
+        game: GameInfo,
+    ): PreviewProgram? {
         val posterArtUri = Uri.parse(game.image_url)
 
-        //Uri appLinkUri = AppLinkHelper.buildPlaybackUri(channelId, movie.getId());
-        //Uri previewVideoUri = Uri.parse(movie.getVideoUrl());
+        // Uri appLinkUri = AppLinkHelper.buildPlaybackUri(channelId, movie.getId());
+        // Uri previewVideoUri = Uri.parse(movie.getVideoUrl());
         val encodedResult: String
 
         try {
@@ -221,17 +235,22 @@ object TvUtil {
             return null
         }
 
-        val appLinkUri = Uri.parse(URI_PLAY).buildUpon().appendPath(encodedResult).build()
+        val appLinkUri = Uri
+            .parse(URI_PLAY)
+            .buildUpon()
+            .appendPath(encodedResult)
+            .build()
 
         val builder = PreviewProgram.Builder()
-        builder.setChannelId(channelId)
+        builder
+            .setChannelId(channelId)
             .setType(TvContractCompat.PreviewProgramColumns.TYPE_CLIP)
             .setTitle(game.game_title)
             .setDescription(game.maker_id)
             .setIntentUri(appLinkUri)
             .setPosterArtUri(posterArtUri)
 
-        //.setPreviewVideoUri(previewVideoUri)
+        // .setPreviewVideoUri(previewVideoUri)
         return builder.build()
     }
 }

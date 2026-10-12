@@ -3132,7 +3132,9 @@ void VIDGCDVdp2SetResolution(u16 TVMD)
       case 2:
          vdp2height = 256;
          break;
-      default: break;
+      default:
+         vdp2height = 256;
+         break;
    }
    resyratio=1;
 

@@ -24,6 +24,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 
 #ifdef PSP
 #include <stdint.h>
+#include <string.h>
 #endif
 #include <stdio.h>
 #include <stdlib.h>
@@ -51,6 +52,79 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 #define CACHE_IO ((0x07) << 29)
 
 #define MAX_CACHE_MISS_CYCLE (128)
+
+// Cache refill (line fill) cost model.
+//
+// legacy: cost(last longword) << 1, clipped at 128. Historical model,
+//   measured ~2x mednafen on WorkRAM-H (sh2timing S08: 292 vs 148 cyc/iter).
+// burst (default): WorkRAM-H is SDRAM with burst line fill, so the whole
+//   4-longword refill costs about one bus access (mednafen charges the bus
+//   cost once and reads the remaining 3 longwords with BurstHax=true,
+//   ss/sh7095.inc:2637-2642). Regions without burst mode (BIOS ROM,
+//   WorkRAM-L, A/B-bus) have no such discount: charge all 4 accesses.
+//
+// Set YABA_SH2_REFILL_MODEL=old in the environment to A/B against the
+// legacy model without rebuilding.
+static int refill_model_burst = -1;
+
+static INLINE int cache_refill_use_burst(void)
+{
+  if (refill_model_burst < 0)
+  {
+    const char *e = getenv("YABA_SH2_REFILL_MODEL");
+    refill_model_burst = !(e != NULL && strcmp(e, "old") == 0);
+  }
+  return refill_model_burst;
+}
+
+// IF/MA contention approximation for cache-hit reads (see memory.c).
+// Dense back-to-back hits alternate 1/2 cycles (avg 1.5, matching
+// mednafen's pipeline behavior); isolated hits stay at the base cycle.
+static INLINE void cache_hit_contention(u32 *cycle)
+{
+  SH2_struct *sh = CurrentSH2;
+  if (cycle == NULL || sh == NULL || !sh2_ma_model_new())
+    return;
+  if (sh->cycles - sh->tm_last_mem <= 1)
+  {
+    sh->tm_ifslot ^= 1;
+    if (sh->tm_ifslot)
+      *cycle += 1;
+  }
+  else
+  {
+    sh->tm_ifslot = 0;
+  }
+  sh->tm_last_mem = sh->cycles;
+}
+
+static INLINE u32 cache_refill_cycles(u32 addr, u32 last_ccycle, u32 sum_ccycle)
+{
+  u32 c;
+  if (!cache_refill_use_burst())
+    c = last_ccycle << 1;                       // legacy model
+  else if (sh2_read_cost_new())
+  {
+    // Recompute from the pure region cost: last/sum come from the refill
+    // loop's per-byte reads, which now include the slave bus penalty.
+    // The penalty applies once per line fill (only the first access of
+    // the burst is penalized in the reference model), not per byte.
+    u32 base = getMemReadClock(addr, 4);
+    if ((addr & 0x07FFFFFF) >= 0x06000000)
+      c = base;                                 // SDRAM burst: ~one access per line
+    else
+      c = 4 * base;                             // no burst: 4 longword transactions
+    c += sh2_slave_refill_penalty();
+    c += sh2_dmac_bus_penalty();      // one line fill = one bus burst
+  }
+  else if ((addr & 0x07FFFFFF) >= 0x06000000)
+    c = last_ccycle;                            // SDRAM burst: ~one access per line
+  else
+    c = sum_ccycle;                             // no burst: 4 discrete accesses
+  if (c > MAX_CACHE_MISS_CYCLE)
+    c = MAX_CACHE_MISS_CYCLE;
+  return c;
+}
 
 FILE *cache_f = NULL;
 //#define COHERENCY_CHECK
@@ -138,6 +212,102 @@ static INLINE u32 SWAP32(u32 v)
 }
 #endif
 
+// Keep the other CPU's cache coherent when one CPU writes a shared (cacheable
+// or cache-through) address. Real SH2 has no bus snooping, but real hardware
+// evicts lines quickly because instruction fetches share the 4KB cache. The
+// dynarec never routes instruction fetches through the emulated cache, so a
+// data line can stay resident (and stale) practically forever, which breaks
+// master<->slave mailbox polling (e.g. Techno Motor pad input).
+//
+// Write-UPDATE helper: patch the written bytes into the matching valid line.
+// Keeps hit timing identical while delivering fresh data. See
+// cache_update_other_cpu for when this is used instead of invalidation.
+static INLINE void cache_write_line_data(cache_enty *oca, u32 addr, u32 val, int size)
+{
+  const u32 tagaddr = (addr & TAG_MASK) | 0x02;
+  const u32 entry = (addr & ENTRY_MASK) >> ENTRY_SHIFT;
+  int i;
+  for (i = 0; i < 4; i++)
+  {
+    if (oca->way[entry].tag[i] == tagaddr)
+    {
+      u8 *line = oca->way[entry].data[i];
+      switch (size)
+      {
+      case 1:
+        line[addr & LINE_MASK] = (u8)val;
+        break;
+      case 2:
+        *(u16 *)(&line[addr & LINE_MASK & ~1]) = SWAP16((u16)val);
+        break;
+      default:
+        *(u32 *)(&line[addr & LINE_MASK & ~3]) = SWAP32(val);
+        break;
+      }
+    }
+  }
+}
+
+static INLINE void cache_invalidate_line(cache_enty *oca, u32 addr)
+{
+  const u32 tagaddr = (addr & TAG_MASK) | 0x02;
+  const u32 entry = (addr & ENTRY_MASK) >> ENTRY_SHIFT;
+  int i;
+  for (i = 0; i < 4; i++)
+  {
+    if (oca->way[entry].tag[i] == tagaddr)
+      oca->way[entry].tag[i] &= ~0x02; // clear valid bit
+  }
+}
+
+// Cross-CPU snoop with direction-dependent policy. Both directions deliver
+// fresh data; they differ only in whether the other CPU's next read takes a
+// refill miss (up to MAX_CACHE_MISS_CYCLE), and two games constrain the two
+// directions in opposite ways:
+//
+// - master write -> slave cache: write-UPDATE (no miss). Invalidating here
+//   perturbs the slave cycle budget, and Dead or Alive's boot handshake (FRT
+//   input-capture doorbell + synchronous catch-up in SSH2InputCaptureWriteWord)
+//   deadlocks from that perturbation (v1.20.19 regression).
+//
+// - slave write -> master cache: write-INVALIDATE (miss on next read).
+//   Techno Motor's pad input dispatch stops responding when the master reads
+//   slave-written state with pure hit timing (verified with COHERENCY_CHECK:
+//   the data is identical either way, so this is timing sensitivity, not
+//   staleness). The refill miss also matches real hardware more closely,
+//   where such lines are frequently evicted by instruction fetches.
+static INLINE void cache_update_other_cpu(cache_enty *ca, u32 addr, u32 val, int size)
+{
+  if (MSH2 == NULL || SSH2 == NULL)
+    return;
+  if (ca == &MSH2->onchip.cache)
+  {
+    if (SSH2->onchip.cache.enable == 0)
+      return;
+    cache_write_line_data(&SSH2->onchip.cache, addr, val, size);
+  }
+  else
+  {
+    if (MSH2->onchip.cache.enable == 0)
+      return;
+    cache_invalidate_line(&MSH2->onchip.cache, addr);
+  }
+}
+
+// Same rationale (and the same write-update requirement) as
+// cache_update_other_cpu, but for writes performed by a non-SH2 bus master
+// (the M68K sound CPU or SCSP DMA writing sound RAM). Update matching lines
+// in BOTH SH2 caches so mailbox polling through the cacheable mirror
+// (e.g. 0x05Axxxxx) sees fresh data. addr must be the SH2-visible cacheable
+// address.
+void cache_update_external_write(u32 addr, u32 val, int size)
+{
+  if (MSH2 != NULL && MSH2->onchip.cache.enable)
+    cache_write_line_data(&MSH2->onchip.cache, addr, val, size);
+  if (SSH2 != NULL && SSH2->onchip.cache.enable)
+    cache_write_line_data(&SSH2->onchip.cache, addr, val, size);
+}
+
 void cache_memory_write_b(cache_enty *ca, u32 addr, u8 val, u32 *cycle)
 {
   //if( (addr&0x0fffffff)==0x060ffca8 ) { 
@@ -182,10 +352,14 @@ void cache_memory_write_b(cache_enty *ca, u32 addr, u8 val, u32 *cycle)
       update_lru(way, &ca->lru[entry]);
       CACHE_LOG("[%s] %d Cache Write 4 %08X %d:%d:%d %08X\n", CurrentSH2->isslave ? "SH2-S" : "SH2-M", CurrentSH2->cycles, addr, entry, way, (addr & LINE_MASK), val);
     }
+    cache_update_other_cpu(ca, addr, val, 1);
+    if (cycle != NULL && sh2_write_cost_new()) { *cycle = getMemWriteClock(addr, 1) + sh2_slave_bus_penalty() + sh2_dmac_bus_penalty(); }
     MappedMemoryWriteByteNocache(addr, val, NULL);
     break;
   } // THROUGH TO CACHE_THROUGH
   case CACHE_THROUGH:
+    cache_update_other_cpu(ca, addr, val, 1);
+    if (cycle != NULL && sh2_write_cost_new()) { *cycle = getMemWriteClock(addr, 1) + sh2_slave_bus_penalty() + sh2_dmac_bus_penalty(); }
     MappedMemoryWriteByteNocache(addr, val, NULL);
     break;
   case CACHE_DATA_ARRAY:
@@ -254,11 +428,15 @@ void cache_memory_write_w(cache_enty *ca, u32 addr, u16 val, u32 *cycle)
 #ifdef CACHE_STATICS
     ca->write_count++;
 #endif
+    cache_update_other_cpu(ca, addr, val, 2);
+    if (cycle != NULL && sh2_write_cost_new()) { *cycle = getMemWriteClock(addr, 2) + sh2_slave_bus_penalty() + sh2_dmac_bus_penalty(); }
     MappedMemoryWriteWordNocache(addr, val, NULL);
     break;
   } // THROUGH TO CACHE_THROUGH
   case CACHE_THROUGH:
   {
+    cache_update_other_cpu(ca, addr, val, 2);
+    if (cycle != NULL && sh2_write_cost_new()) { *cycle = getMemWriteClock(addr, 2) + sh2_slave_bus_penalty() + sh2_dmac_bus_penalty(); }
     MappedMemoryWriteWordNocache(addr, val, NULL);
   }
   break;
@@ -274,9 +452,9 @@ void cache_memory_write_w(cache_enty *ca, u32 addr, u16 val, u32 *cycle)
 void cache_memory_write_l(cache_enty *ca, u32 addr, u32 val, u32 *cycle)
 {
 
-  if ( 0x060C8004 == (addr & 0x0FFFFFFF)) {
-    LOG("[%s] %d Cache Write 4 PC=%08X addr=%08X val=%08X", CurrentSH2->isslave ? "SH2-S" : "SH2-M", CurrentSH2->cycles, CurrentSH2->regs.PC,  addr, val);
-  }
+  //if ( 0x060C8004 == (addr & 0x0FFFFFFF)) {
+  //  LOG("[%s] %d Cache Write 4 PC=%08X addr=%08X val=%08X", CurrentSH2->isslave ? "SH2-S" : "SH2-M", CurrentSH2->cycles, CurrentSH2->regs.PC,  addr, val);
+  //}
 
   switch (addr & AREA_MASK)
   {
@@ -343,10 +521,14 @@ void cache_memory_write_l(cache_enty *ca, u32 addr, u32 val, u32 *cycle)
 #ifdef CACHE_STATICS
     ca->write_count++;
 #endif
+    cache_update_other_cpu(ca, addr, val, 4);
+    if (cycle != NULL && sh2_write_cost_new()) { *cycle = getMemWriteClock(addr, 4) + sh2_slave_bus_penalty() + sh2_dmac_bus_penalty(); }
     MappedMemoryWriteLongNocache(addr, val, NULL);
     break;
   } // THROUGH TO CACHE_THROUGH
   case CACHE_THROUGH:
+    cache_update_other_cpu(ca, addr, val, 4);
+    if (cycle != NULL && sh2_write_cost_new()) { *cycle = getMemWriteClock(addr, 4) + sh2_slave_bus_penalty() + sh2_dmac_bus_penalty(); }
     MappedMemoryWriteLongNocache(addr, val, NULL);
     break;
   case CACHE_ADDRES_ARRAY:
@@ -401,6 +583,7 @@ u8 cache_memory_read_b(cache_enty *ca, u32 addr, u32 *cycle)
       ca->read_hit_count++;
 #endif
       update_lru(way, &ca->lru[entry]);
+      cache_hit_contention(cycle);
       const u8 rtn = ca->way[entry].data[way][(addr & LINE_MASK)];
 #ifdef COHERENCY_CHECK
       u8 real = MappedMemoryReadByteNocache(addr, NULL);
@@ -419,18 +602,18 @@ u8 cache_memory_read_b(cache_enty *ca, u32 addr, u32 *cycle)
       update_lru(lruway, &ca->lru[entry]);
       ca->way[entry].tag[lruway] = tagaddr;
       u32 tmpcycle = 0;
+      u32 ccycle = 0;
       for (i = 0; i < 16; i += 4)
       {
         u32 odi = (addr + 4 + i) & 0xC;
-        u32 ccycle = 0;
         ca->way[entry].data[lruway][odi] = MappedMemoryReadByteNocache( (addr & 0xFFFFFFF0) + odi, &ccycle);
-        tmpcycle = ccycle << 1;
+        tmpcycle += ccycle;
         ca->way[entry].data[lruway][odi + 1] = ReadByteList[(addr >> 16) & 0xFFF]((addr & 0xFFFFFFF0) + odi + 1);
         ca->way[entry].data[lruway][odi + 2] = ReadByteList[(addr >> 16) & 0xFFF]((addr & 0xFFFFFFF0) + odi + 2);
         ca->way[entry].data[lruway][odi + 3] = ReadByteList[(addr >> 16) & 0xFFF]((addr & 0xFFFFFFF0) + odi + 3);
         //CACHE_LOG("[SH2-%s] %d Cache miss read %08X %d:%d:%d", CurrentSH2->isslave ? "S" : "M", CurrentSH2->cycles, addr, entry, lruway, odi);
       }
-      if (cycle) { *cycle = MIN(MAX_CACHE_MISS_CYCLE, tmpcycle);}
+      if (cycle) { *cycle = cache_refill_cycles(addr, ccycle, tmpcycle);}
 
       CACHE_LOG("[SH2-%s] %d+%d Cache miss read 1 %08X\n", CurrentSH2->isslave ? "S" : "M", CurrentSH2->cycles, tmpcycle, addr);
 
@@ -505,6 +688,7 @@ u16 cache_memory_read_w(cache_enty *ca, u32 addr, u32 *cycle, u32 isInst)
       ca->read_hit_count++;
 #endif
       update_lru(way, &ca->lru[entry]);
+      if (isInst == 0) cache_hit_contention(cycle);
       u16 rtn = SWAP16(*(u16 *)(&ca->way[entry].data[way][(addr & LINE_MASK)]));
 #ifdef COHERENCY_CHECK
       u16 real = MappedMemoryReadWordNocache(addr, NULL);
@@ -527,16 +711,16 @@ u16 cache_memory_read_w(cache_enty *ca, u32 addr, u32 *cycle, u32 isInst)
       ca->way[entry].tag[lruway] = tagaddr;
 
       u32 tmpcycle = 0;
+      u32 ccycle = 0;
       for (i = 0; i < 16; i += 4)
       {
         u32 odi = (addr + 4 + i) & 0xC;
-        u32 ccycle = 0;
         *(u16 *)(&ca->way[entry].data[lruway][odi]) = SWAP16(MappedMemoryReadWordNocache((addr & 0xFFFFFFF0) + odi, &ccycle));
-        tmpcycle = ccycle << 1;
+        tmpcycle += ccycle;
         *(u16 *)(&ca->way[entry].data[lruway][odi + 2]) = SWAP16(ReadWordList[(addr >> 16) & 0xFFF]((addr & 0xFFFFFFF0) + odi + 2));
         //CACHE_LOG("[SH2-%s] %d Cache miss read %08X %d:%d:%d", CurrentSH2->isslave ? "S" : "M", CurrentSH2->cycles, addr, entry, lruway, odi);
       }
-      if (cycle) { *cycle = MIN(MAX_CACHE_MISS_CYCLE, tmpcycle);}
+      if (cycle) { *cycle = cache_refill_cycles(addr, ccycle, tmpcycle);}
       CACHE_LOG("[SH2-%s] %d+%d Cache miss read 2 %08X\n", CurrentSH2->isslave ? "S" : "M", CurrentSH2->cycles, tmpcycle, addr);
       u16 rtn = SWAP16(*(u16 *)(&ca->way[entry].data[lruway][(addr & LINE_MASK)]));
       return rtn;
@@ -610,6 +794,7 @@ u32 cache_memory_read_l(cache_enty *ca, u32 addr, u32 *cycle)
       ca->read_hit_count++;
 #endif
       update_lru(way, &ca->lru[entry]);
+      cache_hit_contention(cycle);
       u32 rtn = SWAP32(*(u32 *)(&ca->way[entry].data[way][(addr & LINE_MASK)]));
 
 #ifdef COHERENCY_CHECK
@@ -636,16 +821,16 @@ u32 cache_memory_read_l(cache_enty *ca, u32 addr, u32 *cycle)
       update_lru(lruway, &ca->lru[entry]);
       ca->way[entry].tag[lruway] = tagaddr;
       u32 tmpcycle = 0;
+      u32 ccycle = 0;
       for (i = 0; i < 16; i += 4)
       {
         u32 odi = (addr + 4 + i) & 0xC;
-        u32 ccycle = 0;
         u32 data = MappedMemoryReadLongNocache((addr & 0xFFFFFFF0) + odi, &ccycle);
         *(u32 *)(&ca->way[entry].data[lruway][odi]) = SWAP32(data);
-        tmpcycle = ccycle << 1;
+        tmpcycle += ccycle;
         //CACHE_LOG("[SH2-%s] %d Cache miss read %08X %d:%d:%d %08X\n", CurrentSH2->isslave ? "S" : "M", CurrentSH2->cycles, addr, entry, lruway, odi, data);
       }
-      if (cycle) { *cycle = MIN(MAX_CACHE_MISS_CYCLE, tmpcycle);}
+      if (cycle) { *cycle = cache_refill_cycles(addr, ccycle, tmpcycle);}
       CACHE_LOG("[SH2-%s] %d+%d Cache miss read 4 %08X\n", CurrentSH2->isslave ? "S" : "M", CurrentSH2->cycles, tmpcycle, addr);
       return SWAP32(*(u32 *)(&ca->way[entry].data[lruway][(addr & LINE_MASK)]));
     }
@@ -668,7 +853,7 @@ u32 cache_memory_read_l(cache_enty *ca, u32 addr, u32 *cycle)
     break;
   default:
     return MappedMemoryReadLongNocache(addr, cycle);
-    break;
+    break;      
   }
   return 0;
 }

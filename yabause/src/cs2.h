@@ -190,6 +190,10 @@ extern "C" {
     int isonesectorstored;
     int isdiskchanged;
     int isbufferfull;
+    // Play was paused by a full sector buffer; the drive auto-resumes
+    // once space frees (real CD block behavior). Cancelled by explicit
+    // Play/Seek commands. Transient; not serialized in save states.
+    int bufferfullpause;
     int speed1x;
     int isaudio;
     u8 transfileinfo[12];
@@ -250,6 +254,7 @@ extern "C" {
     u32 _statustiming;
     u32 _periodiccycles;  // microseconds * 3
     u32 _periodictiming;  // microseconds * 3
+    u32 _seekremaining;   // microseconds * 3 left in an in-progress seek
     u32 _commandtiming;
     CDInterface * cdi;
 

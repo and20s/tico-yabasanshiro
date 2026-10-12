@@ -21,14 +21,14 @@ public:
 
 signals: // [1]
     //void setResult(QString id,QString error);
-    void failToLogin();
+    void failToLogin(QString errorMessage);
     //void reqFetchStatus();
 
 public slots: // [1]
 
     //void Lodaed(bool t);
     void close_window(){ this->close(); }
-    void onFailedToLogin();
+    void onFailedToLogin(QString errorMessage);
     //void fetchStatus();
 
     void on_ok_clicked();

@@ -50,6 +50,10 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 #include <sstream>
 
 #include "bios.h"
+#include "cs0.h"
+#include "json/json.h"
+#include "yabause.h"
+#include "smpc.h"
 #include "cs2.h"
 #include "debug.h"
 #include "smpc.h"
@@ -216,13 +220,8 @@ int decompress_file(const char *input_path, const char *output_path) {
   return ret == Z_STREAM_END ? 0 : -1;
 }
 
-#if defined(IOS) || defined(WIN32) || defined(__SWITCH__) || defined(HAVE_LIBNX)
 #include <filesystem>
 namespace fs = std::filesystem;
-#else
-#include <experimental/filesystem>
-namespace fs = std::experimental::filesystem;
-#endif
 
 std::pair<std::string, std::string> getParentAndLeaf(const std::string &path) {
   fs::path fsPath(path);
@@ -260,8 +259,9 @@ extern "C" int YabMakeCleanDir(const char *dirname) {
   }
   return 0;
 }
-#elif IOS
 #else
+#include <filesystem>
+namespace fs = filesystem;
 #endif
 
 int PlayRecorder::startRocord() {
@@ -394,8 +394,69 @@ int PlayRecorder::startPlay(const char *recorddir, bool clodboot,
   printf("Dir is %s\n", dirname_.c_str());
   YabMakeCleanDir(dirname_.c_str());
   fnameback_test = dirname_ + "/backup.bin.new";
-  // YabCopyFile(fnameback.c_str(), fnameback_test.c_str());
-  decompress_file(fnameback.c_str(), fnameback_test.c_str());
+  // Clean-boot GT mode (YABA_CLEAN_BOOT_PLAY=1): boot from a virgin machine
+  // state so playback matches ground truth captured under the same policy:
+  // freshly formatted internal backup (no recorded saves) and no cartridge.
+  // Used by the boot-check harness; normal playback keeps the recorded state.
+  const int clean_boot = (getenv("YABA_CLEAN_BOOT_PLAY") != NULL);
+  if (clean_boot) {
+    // Match the cartridge mednafen used to capture the ground truth. The
+    // capture policy is ss.cart=auto + ss.cart.auto_default=none, so games
+    // needing a RAM/ROM expansion cart get one (extram / ROM) while everything
+    // else runs cartless (no backup-device selection screen). The captured
+    // per-game decision lives in <parent>/gt_cart_map.json, keyed by the record
+    // dir leaf name and holding mednafen's "Cart:" string. Absent/None/backup
+    // maps to no cartridge here (we also clear the internal backup RAM).
+    int cart = CART_NONE;
+    std::string cartname = "None";
+    try {
+      std::string mappath = dp.first + "/gt_cart_map.json";
+      std::ifstream cf(mappath);
+      if (cf.good()) {
+        Json::Value cmap;
+        cf >> cmap;
+        if (cmap.isMember(dp.second)) {
+          cartname = cmap[dp.second].asString();
+          if (cartname.find("1MiB") != std::string::npos)
+            cart = CART_DRAM8MBIT;
+          else if (cartname.find("4MiB") != std::string::npos)
+            cart = CART_DRAM32MBIT;
+          else if (cartname.find("ROM") != std::string::npos)
+            cart = CART_ROM16MBIT;
+          else
+            cart = CART_NONE;  // "None" / "Backup Memory" -> cartless
+        }
+      }
+    } catch (...) {
+      cart = CART_NONE;
+    }
+    printf("PlayRecorder: clean-boot mode (empty backup, cart=%s [%d])\n",
+           cartname.c_str(), cart);
+    YabauseThread_setBackupPath(fnameback_test.c_str());
+    mode_ = PLAYING;
+    if (clodboot) {
+      YabauseThread_coldBoot();
+    }
+    if (init) {
+      // Nonexistent file: the emulator creates and formats it on init.
+      init->buppath = fnameback_test.c_str();
+      init->extend_backup = 0;
+      init->carttype = cart;
+    }
+    return 0;
+  }
+  // The current recorder stores the backup gzip-compressed (backup.bin.gz).
+  // Older recorded test data only has an uncompressed backup.bin, so when the
+  // gz is missing fall back to copying the plain file. Without this the
+  // decompress silently fails, no backup.bin.new is produced, and the emulator
+  // boots with a freshly formatted (empty) backup instead of the recorded one.
+  if (decompress_file(fnameback.c_str(), fnameback_test.c_str()) != 0) {
+    string fnameback_plain = string(recorddir) + "/backup.bin";
+    if (YabCopyFile(fnameback_plain.c_str(), fnameback_test.c_str()) != 0) {
+      printf("Fail to load backup: neither %s nor %s is available\n",
+             fnameback.c_str(), fnameback_plain.c_str());
+    }
+  }
   YabauseThread_setBackupPath(fnameback_test.c_str());
   mode_ = PLAYING;
   if (clodboot) {
@@ -403,6 +464,13 @@ int PlayRecorder::startPlay(const char *recorddir, bool clodboot,
   }
   if (init) {
     init->buppath = fnameback_test.c_str();
+    // The recorded backup is an 8MB extended-format image (saves can span past
+    // the 64KB internal-backup boundary). Force extend mode for playback so the
+    // image is mapped in full and the BIOS sees the same device geometry it was
+    // recorded with, regardless of the host's Memory/ExtendMemory setting.
+    // YabauseInit calls us before it latches yabsys.extend_backup from init,
+    // so updating init here takes effect for the whole playback session.
+    init->extend_backup = 1;
   }
   return 0;
 }

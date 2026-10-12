@@ -127,6 +127,9 @@ void YabauseThread::resize(int w, int h) {
 
 	VolatileSettings* vs = QtYabause::volatileSettings();
 	VideoSetSetting(VDP_SETTING_ROTATE_SCREEN, vs->value("Video/RotateScreen", false).toBool());
+	// issue #22 (T-007): apply the new VDP2 composite toggle from settings.
+	// Default OFF (legacy fixed-function path).
+	VideoSetSetting(VDP_SETTING_VDP2_NEW_COMPOSITE, vs->value("Video/vdp2_new_composite", false).toBool());
 	int aspectRatio = QtYabause::volatileSettings()->value("Video/AspectRatio", 0).toInt();
 
 	if(VIDCore)

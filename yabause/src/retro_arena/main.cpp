@@ -1,4 +1,4 @@
-/*
+﻿/*
         Copyright 2019 devMiyax(smiyaxdev@gmail.com)
 
 This file is part of YabaSanshiro.
@@ -260,6 +260,7 @@ extern "C" {
   }
 
   int YuiRevokeOGLOnThisThread() {
+#if defined(YAB_ASYNC_RENDERING)
     LOG("revoke thread\n");
 #if defined(_JETSON_) || defined(PC) || defined(_WINDOWS)
     if (g_vidcoretype == VIDCORE_VULKAN)
@@ -282,10 +283,12 @@ extern "C" {
 #else
     SDL_GL_MakeCurrent(wnd, nullptr);
 #endif  
+#endif
     return 0;
   }
 
   int YuiUseOGLOnThisThread() {
+#if defined(YAB_ASYNC_RENDERING)
     LOG("use thread\n");
 #if defined(_JETSON_) || defined(PC) || defined(_WINDOWS)
     if (g_vidcoretype == VIDCORE_VULKAN)
@@ -307,6 +310,7 @@ extern "C" {
     }
 #else
     SDL_GL_MakeCurrent(wnd, glc);
+#endif
 #endif
     return 0;
   }
@@ -555,6 +559,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE prevInstance, LPSTR lpCmdLine,
 #else
   FILE * stdout_fp = freopen(string(home_dir + "/stdout.txt").c_str(), "wb", stdout);
   FILE * stderr_fp = freopen(string(home_dir + "/stderr.txt").c_str(), "wb", stderr);
+#endif
 
   std::string games_dir = home_dir + "games";
   if (stat(games_dir.c_str(), &st) == -1) {
@@ -569,10 +574,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE prevInstance, LPSTR lpCmdLine,
   strcpy(buppath, bckup_dir.c_str());
   strcpy(s_savepath, home_dir.c_str());
   g_keymap_filename = home_dir + "/keymapv3.json";
-
-  s_playrecord_path = home_dir + "/record/";
-  s_playdatadir = home_dir + "/record/GS-9039/";
-
 
   s_playrecord_path = home_dir + "/record/";
   s_playdatadir = home_dir + "/record/GS-9039/";
@@ -710,7 +711,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE prevInstance, LPSTR lpCmdLine,
   }
   else {
 
-    int targetDisplay = defpref->getInt("target display", 0);
+    int targetDisplay = 0; // defpref->getInt("target display", 0);
 
     // enumerate displays
     int displays = SDL_GetNumVideoDisplays();
@@ -1053,6 +1054,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE prevInstance, LPSTR lpCmdLine,
           menu_show = true;
           SDL_ShowCursor(SDL_TRUE);
           ScspMuteAudio(1);
+#if defined(YAB_ASYNC_RENDERING)  
 #if defined(_JETSON_) || defined(PC) || defined(_WINDOWS)
           SDL_GL_MakeCurrent(subwnd, nullptr);
           VdpRevoke();
@@ -1060,7 +1062,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE prevInstance, LPSTR lpCmdLine,
 #else
           VdpRevoke();
 #endif
-
+#endif
           fflush(stdout_fp);
           fflush(stderr_fp);
 
@@ -1175,7 +1177,8 @@ void hideMenuScreen(){
   inputmng->setMenuLayer(nullptr);
   glClearColor(0.0f, 0.0f, 0.0f, 1);
   glClear(GL_COLOR_BUFFER_BIT);
-  SDL_GL_SwapWindow(wnd);          
+  SDL_GL_SwapWindow(wnd);       
+#if defined(YAB_ASYNC_RENDERING)
 #if defined(_JETSON_)  || defined(PC) || defined(_WINDOWS)
   SDL_GL_MakeCurrent(wnd,nullptr);
   VdpResume();

@@ -1,11 +1,12 @@
 package org.uoyabause.android.auth
 
 import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import org.devmiyax.yabasanshiro.R
@@ -20,7 +21,11 @@ class DiscordOAuthRedirectActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
         setContentView(R.layout.activity_discord_oauth_redirect)
+
+        // Setup edge-to-edge window insets handling
+        setupEdgeToEdgeInsets()
 
         firebaseAuthManager = FirebaseAuthManager(this)
 
@@ -45,24 +50,26 @@ class DiscordOAuthRedirectActivity : AppCompatActivity() {
             return
         }
 
-        Log.d(TAG, "Received OAuth redirect: ${data.toString()}")
+        Log.d(TAG, "Received OAuth redirect: $data")
 
         lifecycleScope.launch {
             try {
                 val success = firebaseAuthManager.handleDiscordRedirect(data)
 
                 if (success) {
-                    Toast.makeText(
-                        this@DiscordOAuthRedirectActivity,
-                        R.string.discord_account_linked,
-                        Toast.LENGTH_SHORT
-                    ).show()
+                    Toast
+                        .makeText(
+                            this@DiscordOAuthRedirectActivity,
+                            R.string.discord_account_linked,
+                            Toast.LENGTH_SHORT,
+                        ).show()
                 } else {
-                    Toast.makeText(
-                        this@DiscordOAuthRedirectActivity,
-                        R.string.discord_account_link_failed,
-                        Toast.LENGTH_SHORT
-                    ).show()
+                    Toast
+                        .makeText(
+                            this@DiscordOAuthRedirectActivity,
+                            R.string.discord_account_link_failed,
+                            Toast.LENGTH_SHORT,
+                        ).show()
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error handling Discord OAuth redirect", e)
@@ -91,6 +98,25 @@ class DiscordOAuthRedirectActivity : AppCompatActivity() {
      */
     private fun showError(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+    }
+
+    /**
+     * Setup edge-to-edge window insets handling for Android 15+ (API 35+)
+     */
+    private fun setupEdgeToEdgeInsets() {
+        val rootView = findViewById<android.view.View>(android.R.id.content)
+        ViewCompat.setOnApplyWindowInsetsListener(rootView) { view, windowInsets ->
+            val insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())
+
+            view.setPadding(
+                view.paddingLeft,
+                insets.top,
+                view.paddingRight,
+                view.paddingBottom,
+            )
+
+            windowInsets
+        }
     }
 
     companion object {

@@ -38,12 +38,15 @@
 #include "UIMemoryTransfer.h"
 #include "UIAbout.h"
 #include "WebLoginWindow.h"
+#include "UIReportList.h"
 #include "../YabauseGL.h"
 #include "../QtYabause.h"
 #include "../CommonDialogs.h"
+#include "../DebugMcpServer.h"
 
 #include "PlayRecorder.h"
 
+#include <QCoreApplication>
 #include <QKeyEvent>
 #include <QTextEdit>
 #include <QDockWidget>
@@ -116,15 +119,15 @@ UIYabause::UIYabause( QWidget* parent )
 	// create glcontext
 	
 
-	// ï¿½Xï¿½^ï¿½bï¿½Nï¿½Eï¿½Bï¿½Wï¿½Fï¿½bï¿½gï¿½ï¿½ï¿½ì¬
+	// ã‚¹ã‚¿ãƒƒã‚¯ã‚¦ã‚£ã‚¸ã‚§ãƒƒãƒˆã‚’ä½œæˆ
 	mStackedWidget = new QStackedWidget(this);
 	setCentralWidget(mStackedWidget);
 
-	// FileSearchWidgetï¿½ï¿½ï¿½ì¬
+	// FileSearchWidgetã‚’ä½œæˆ
 	mFileSearch = new FileSearchWidget(this);
 	mStackedWidget->addWidget(mFileSearch);
 
-	// YabauseGLï¿½ï¿½ï¿½ì¬
+	// YabauseGLã‚’ä½œæˆ
 	mYabauseGL = new YabauseGL(this);
 	mStackedWidget->addWidget(mYabauseGL);
 
@@ -138,6 +141,9 @@ UIYabause::UIYabause( QWidget* parent )
 
 	connect(mFileSearch, &FileSearchWidget::fileSelected,
 		this, &UIYabause::handleFileSelected);
+
+	connect(mFileSearch, &FileSearchWidget::viewBugReportsRequested,
+		this, &UIYabause::handleViewBugReportsRequested);
 
 	// create log widget
 	teLog = new QTextEdit( this );
@@ -160,6 +166,62 @@ UIYabause::UIYabause( QWidget* parent )
 
 	// create emulator thread
 	mYabauseThread = new YabauseThread( this );
+
+	// MCP debug server: menu toggle + optional --debug-mcp[=port] CLI switch.
+	mDebugMcpServer = new DebugMcpServer(mYabauseThread, this);
+	aDebugMcpServer = new QAction(QtYabause::translate("MCP Debug Server"), this);
+	aDebugMcpServer->setCheckable(true);
+	mViewDebug->addAction(aDebugMcpServer);
+	connect(aDebugMcpServer, &QAction::toggled, this, [this](bool on) {
+		Settings* s = QtYabause::settings();
+		int port = s->value("Debug/McpServerPort", 9640).toInt();
+		// Mirror the --debug-mcp CLI validation below: reject an out-of-range
+		// (e.g. 0, meaning "ephemeral port") or corrupt stored value instead
+		// of silently binding an unexpected port.
+		if (port < 1 || port > 65535) port = 9640;
+		if (on) {
+			if (!mDebugMcpServer->start(port)) {
+				CommonDialogs::information(
+					QtYabause::translate("Failed to start MCP debug server (port busy?)"));
+				aDebugMcpServer->setChecked(false);
+				return;
+			}
+		} else {
+			mDebugMcpServer->stop();
+		}
+		// Persist the enabled state only for menu-driven toggles. When the
+		// server was enabled by the --debug-mcp CLI flag, keep it to that run
+		// only so a later plain launch does not auto-start the server.
+		if (!mMcpEnableFromCli)
+			s->setValue("Debug/McpServerEnabled", on);
+	});
+
+	bool mcpEnable =
+		QtYabause::settings()->value("Debug/McpServerEnabled", false).toBool();
+	bool mcpFromCli = false;
+	for (const QString& a : QCoreApplication::arguments()) {
+		if (a == "--debug-mcp") { mcpEnable = true; mcpFromCli = true; }
+		else if (a.startsWith("--debug-mcp=")) {
+			mcpEnable = true;
+			mcpFromCli = true;
+			bool portOk = false;
+			int parsedPort = a.mid(12).toInt(&portOk);
+			// Ignore non-numeric or out-of-range values and keep the
+			// stored/default port instead of silently binding an
+			// ephemeral port.
+			if (portOk && parsedPort >= 1 && parsedPort <= 65535) {
+				QtYabause::settings()->setValue("Debug/McpServerPort", parsedPort);
+			}
+		}
+	}
+	if (mcpEnable) {
+		// Guard the persist inside the toggled handler when the enable came
+		// from the CLI flag (this run only, no settings write).
+		mMcpEnableFromCli = mcpFromCli;
+		aDebugMcpServer->setChecked(true);
+		mMcpEnableFromCli = false;
+	}
+
 	// create hide mouse timer
 	hideMouseTimer = new QTimer();
 	// create mouse cursor timer
@@ -228,7 +290,7 @@ UIYabause::UIYabause( QWidget* parent )
 	QString storageBucket = settings.value("CloudService/storage_bucket").toString();
 	QString projectId = settings.value("CloudService/project_id").toString();
 
-	// Firebase ï¿½Ìï¿½ï¿½ï¿½ï¿½ï¿½
+	// Firebase ã®åˆæœŸåŒ–
 	std::thread t([=] {
 		firebase::AppOptions options;
 		options.set_app_id(appId.toStdString().c_str());
@@ -244,6 +306,8 @@ UIYabause::UIYabause( QWidget* parent )
 
 UIYabause::~UIYabause()
 {
+	// Stop the MCP debug server before the emulation thread tears down.
+	if (mDebugMcpServer) mDebugMcpServer->stop();
 	win_sparkle_cleanup();
 	mCanLog = false;
 }
@@ -310,9 +374,6 @@ void UIYabause::showEvent( QShowEvent* e )
 		aEmulationFrameSkipLimiter->setChecked( vs->value( "General/EnableFrameSkipLimiter" ).toBool() );
 		aViewFPS->setChecked( vs->value( "General/ShowFPS" ).toBool() );
 		mInit = true;
-
-		//QMetaObject::invokeMethod(this, "on_aHelpAbout_triggered", Qt::QueuedConnection );
-
 	}
 
 	emit windowWasShown();
@@ -327,29 +388,29 @@ std::string versionToScalar(const std::string& version) {
 	std::string segment;
 	std::vector<int> parts;
 
-	// ƒo[ƒWƒ‡ƒ“•¶Žš—ñ‚ð "." ‚Å•ªŠ„
+	// ãƒãƒ¼ã‚¸ãƒ§ãƒ³æ–‡å­—åˆ—ã‚’ "." ã§åˆ†å‰²
 	while (std::getline(ss, segment, '.')) {
 		parts.push_back(std::stoi(segment));
 	}
 
-	// Še•”•ª‚ðƒXƒJƒ‰[’l‚É•ÏŠ·
+	// å„éƒ¨åˆ†ã‚’ã‚¹ã‚«ãƒ©ãƒ¼å€¤ã«å¤‰æ›
 	std::ostringstream result;
 	if (parts.size() > 0) {
-		result << std::setw(3) << std::setfill('0') << std::setw(3) << parts[0]; // Majorƒo[ƒWƒ‡ƒ“i1Œ…j
+		result << std::setw(3) << std::setfill('0') << std::setw(3) << parts[0]; // Majorãƒãƒ¼ã‚¸ãƒ§ãƒ³ï¼ˆ1æ¡ï¼‰
 	}
 	if (parts.size() > 1) {
-		result << std::setw(3) << std::setfill('0') << parts[1]; // Minorƒo[ƒWƒ‡ƒ“i3Œ…j
+		result << std::setw(3) << std::setfill('0') << parts[1]; // Minorãƒãƒ¼ã‚¸ãƒ§ãƒ³ï¼ˆ3æ¡ï¼‰
 	}
 	if (parts.size() > 2) {
-		result << std::setw(3) << std::setfill('0') << parts[2]; // Patchƒo[ƒWƒ‡ƒ“i3Œ…j
+		result << std::setw(3) << std::setfill('0') << parts[2]; // Patchãƒãƒ¼ã‚¸ãƒ§ãƒ³ï¼ˆ3æ¡ï¼‰
 	}
 
-	result << "000"; // Žè“®
+	result << "000"; // æ‰‹å‹•
 
 	return result.str();
 }
 
-// char* ‚ð wchar_t* ‚É•ÏŠ·‚·‚éŠÖ”
+// char* ã‚’ wchar_t* ã«å¤‰æ›ã™ã‚‹é–¢æ•°
 std::wstring charToWString(const char* str) {
 	size_t len = std::strlen(str);
 	std::wstring wstr(len, L'\0');
@@ -367,7 +428,7 @@ void UIYabause::initWinSparkle()
 	// could be also, often more conveniently, done using a VERSIONINFO Windows
 	// resource. See the "psdk" example and its .rc file for an example of that
 	// (these calls wouldn't be needed then).
-	win_sparkle_set_appcast_url("https://www.uoyabause.org/appcast.xml");
+	win_sparkle_set_appcast_url("https://www.yabasanshiro.com/appcast.xml");
 	std::wstring wVersion = charToWString(VERSION);
 	win_sparkle_set_app_details(L"devMiyax", L"YabaSanshiro", wVersion.c_str());
 
@@ -395,6 +456,8 @@ void UIYabause::on_actionCheck_for_updates_triggered() {
 
 void UIYabause::closeEvent( QCloseEvent* e )
 {
+	// Stop the MCP debug server before the emulation thread tears down.
+	if (mDebugMcpServer) mDebugMcpServer->stop();
 	aEmulationPause->trigger();
 	LogStop();
 
@@ -528,6 +591,8 @@ void UIYabause::resizeEvent( QResizeEvent* event )
 	}
 #endif
 	QMainWindow::resizeEvent( event );
+
+
 
 }
 
@@ -1120,6 +1185,12 @@ void UIYabause::on_aFileSettings_triggered()
     VideoSetSetting(VDP_SETTING_POLYGON_MODE, newhash["Video/polygon_generation_mode"].toInt());
   }
 
+  // issue #22 (T-007): new per-pixel VDP2 composite toggle. Default OFF
+  // (legacy fixed-function path). 0 = legacy, non-zero = new composite.
+  if (newhash["Video/vdp2_new_composite"] != hash["Video/vdp2_new_composite"]) {
+    VideoSetSetting(VDP_SETTING_VDP2_NEW_COMPOSITE, newhash["Video/vdp2_new_composite"].toInt());
+  }
+
   if (newhash["General/EmulationSpeed"] != hash["General/EmulationSpeed"]) {
     VDP2SetFrameLimit(newhash["General/EmulationSpeed"].toInt());
   }
@@ -1370,14 +1441,33 @@ void UIYabause::takeScreenshot(const char * fname) {
 	VolatileSettings* vs = QtYabause::volatileSettings();
 	int vidcoretype = vs->value("Video/VideoCore").toInt();
 	if (vidcoretype == VIDCORE_VULKAN) {
-		// TODO
+		if (!VIDCore || !VIDCore->GetScreenshot) return;
+		void* buf = nullptr;
+		int w = 0, h = 0;
+		VIDCore->GetScreenshot(&buf, &w, &h);
+		if (buf && w > 0 && h > 0) {
+			unsigned char* px = static_cast<unsigned char*>(buf);
+			// Match the standalone yui.cpp behavior: force opaque alpha so PNG
+			// readers don't show the rendered frame as semi-transparent.
+			for (int i = 3; i < w * h * 4; i += 4) px[i] = 0xFF;
+			// VIDVulkan::getScreenshot returns RGBA8 in bottom-up order
+			// (default branch reads src[height-1-y] into dst[y]); QImage uses
+			// top-down so flip vertically before writing.
+			QImage img(static_cast<const uchar*>(buf), w, h, w * 4,
+			           QImage::Format_RGBA8888);
+			QImage flipped = img.mirrored(false, true);
+			QImageWriter iw(fname);
+			iw.write(flipped);
+		}
+		// Caller frees the malloc'd buffer (see VIDVulkan.cpp:7378).
+		if (buf) free(buf);
 	}
 	else {
 		QImage screenshot = mYabauseGL->grabFramebuffer();
 		QImageWriter iw(fname);
 		iw.write(screenshot);
 	}
-  
+
 }
 
 
@@ -1393,17 +1483,15 @@ void UIYabause::on_aFileiOS_triggered() {
 
 void UIYabause::on_aFileScreenshot_triggered()
 {
-	if (VIDCore && VIDCore->id == VIDCORE_VULKAN) {
-		// TODO
-		return;
-	}
-
+  // Recording-mode hotkey path: PlayRecorder timestamps a frame and calls
+  // takeScreenshot() asynchronously. This works for both OpenGL and Vulkan
+  // because takeScreenshot() now branches on VIDCORE_VULKAN.
   PlayRecorder * p = PlayRecorder::getInstance();
   if (p->getStatus() == 0) {
     p->takeShot();
     return;
   }
-  
+
 	// images filter that qt can write
 	QStringList filters;
 	foreach ( QByteArray ba, QImageWriter::supportedImageFormats() )
@@ -1413,18 +1501,31 @@ void UIYabause::on_aFileScreenshot_triggered()
 		filters[i] = QtYabause::translate( "%1 Images (*.%2)" ).arg( filters[i].toUpper() ).arg( filters[i] );
 
 #if defined(HAVE_LIBGL) && !defined(QT_OPENGL_ES_1) && !defined(QT_OPENGL_ES_2)
-	glReadBuffer(GL_FRONT);
+	if (VIDCore && VIDCore->id == VIDCORE_OGL) {
+		glReadBuffer(GL_FRONT);
+	}
 #endif
 
 	QImage screenshot;
+	void* vkBuf = nullptr;  // owned by us when non-null (Vulkan path malloc)
 	// take screenshot of gl view
 	if (VIDCore && VIDCore->id == VIDCORE_OGL) {
 		screenshot = mYabauseGL->grabFramebuffer();
 	}
+	else if (VIDCore && VIDCore->id == VIDCORE_VULKAN && VIDCore->GetScreenshot) {
+		int w = 0, h = 0;
+		VIDCore->GetScreenshot(&vkBuf, &w, &h);
+		if (vkBuf && w > 0 && h > 0) {
+			unsigned char* px = static_cast<unsigned char*>(vkBuf);
+			for (int i = 3; i < w * h * 4; i += 4) px[i] = 0xFF;
+			screenshot = QImage(static_cast<const uchar*>(vkBuf), w, h, w * 4,
+			                    QImage::Format_RGBA8888).mirrored(false, true);
+		}
+	}
 
 
 	YabauseLocker locker(mYabauseThread);
-	
+
 	// request a file to save to to user
 	QString s = CommonDialogs::getSaveFileName( QString(), QtYabause::translate( "Choose a location for your screenshot" ), filters.join( ";;" ) );
 
@@ -1432,7 +1533,7 @@ void UIYabause::on_aFileScreenshot_triggered()
 	QFileInfo qfi( s );
 	if ( qfi.suffix().isEmpty() )
 		s += ".png";
-	
+
 	// write image if ok
 	if ( !s.isEmpty() )
 	{
@@ -1442,6 +1543,7 @@ void UIYabause::on_aFileScreenshot_triggered()
 			CommonDialogs::information( QtYabause::translate( "An error occur while writing the screenshot: " + iw.errorString()) );
 		}
 	}
+	if (vkBuf) free(vkBuf);
 }
 
 void UIYabause::on_aFileQuit_triggered()
@@ -1685,16 +1787,20 @@ void UIYabause::on_aViewDebugSCUDSP_triggered()
 
 void UIYabause::on_aViewDebugSCSP_triggered()
 {
-	YabauseLocker locker( mYabauseThread );
-	UIDebugSCSP( this ).exec();
+	UIDebugSCSP *dialog = new UIDebugSCSP(this);
+	dialog->setAttribute(Qt::WA_DeleteOnClose);
+	dialog->show();
 }
 
 void UIYabause::on_aViewDebugSCSPChan_triggered()
 {
-   if (use_new_scsp)
-      UIDebugSCSPChan(this).exec();
-   else
+   if (use_new_scsp) {
+      UIDebugSCSPChan *dialog = new UIDebugSCSPChan(this);
+      dialog->setAttribute(Qt::WA_DeleteOnClose);
+      dialog->show();
+   } else {
       CommonDialogs::information( QtYabause::translate( "Only available with new scsp code(USE_NEW_SCSP=1)" ) );
+   }
 }
 
 void UIYabause::on_aViewDebugSCSPDSP_triggered()
@@ -1958,4 +2064,24 @@ void UIYabause::onStateFileLoaded() {
 
   std::remove(sdatapath.c_str());
 
+}
+
+void UIYabause::handleViewBugReportsRequested(const QString& productNumber, const QString& gameTitle)
+{
+	qDebug() << "Opening bug reports dialog for" << productNumber << gameTitle;
+
+	// Check if Firebase app is initialized
+	if (!app) {
+		qCritical() << "Firebase App is not initialized yet!";
+		QMessageBox::warning(this, "Error", "Firebase is still initializing. Please try again in a moment.");
+		return;
+	}
+
+	qDebug() << "Firebase App is initialized, creating UIReportList";
+
+	// Create and show bug reports dialog
+	UIReportList* reportListDialog = new UIReportList(app, this);
+	reportListDialog->setGameInfo(productNumber, gameTitle);
+	reportListDialog->setAttribute(Qt::WA_DeleteOnClose); // Auto-delete when closed
+	reportListDialog->show();
 }

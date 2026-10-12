@@ -15,6 +15,12 @@ project(yabause-ios)
 
 yab_port_start()
 
+# Include RetroAchievements support for iOS
+option(HAVE_RETROACHIEVEMENTS "Enable RetroAchievements support" ON)
+if(HAVE_RETROACHIEVEMENTS)
+    add_subdirectory(../retroachievements retroachievements)
+endif()
+
 set( LIBRARY_NAME yabause_ios )
 
 
@@ -27,10 +33,29 @@ set( SOURCES
 
 set( LIBRARY_OUTPUT_PATH  ${PROJECT_SOURCE_DIR}/uoyabause/ )
 
-add_library(${LIBRARY_NAME}  $<TARGET_OBJECTS:yabause>  ${SOURCES}  )
+# Include RetroAchievements object files directly if enabled
+if(HAVE_RETROACHIEVEMENTS)
+    add_library(${LIBRARY_NAME}  
+        $<TARGET_OBJECTS:yabause>
+        $<TARGET_OBJECTS:rcheevos>
+        $<TARGET_OBJECTS:yabause_retroachievements>
+        ${SOURCES}
+    )
+else()
+    add_library(${LIBRARY_NAME}  $<TARGET_OBJECTS:yabause>  ${SOURCES}  )
+endif()
+
 #set_xcode_property (${LIBRARY_NAME} GCC_GENERATE_DEBUGGING_SYMBOLS YES)
 include_directories( ${YABAUSE_INCLUDE_DIR} ${PROJECT_BINARY_DIR}/../ ${PROJECT_SOURCE_DIR}/../ )
-target_link_libraries(${LIBRARY_NAME}   ${YABAUSE_LIBRARIES} )
+
+# Include RetroAchievements headers if enabled
+if(HAVE_RETROACHIEVEMENTS)
+    include_directories(${PROJECT_SOURCE_DIR}/../retroachievements)
+    include_directories(${PROJECT_SOURCE_DIR}/../retroachievements/rcheevos/include)
+endif()
+
+# Link only core libraries (RetroAchievements objects are already included)
+target_link_libraries(${LIBRARY_NAME} ${YABAUSE_LIBRARIES})
 
 # Installation
 #set (CMAKE_INSTALL_PREFIX "${hello-lib_SOURCE_DIR}/../hello-app/hello-app")
@@ -55,3 +80,6 @@ add_custom_command(TARGET ${LIBRARY_NAME} POST_BUILD
         "${CMAKE_SOURCE_DIR}/src/ios/uoyabause/"
     COMMENT "Copying libraries to uoyabause directory..."
 )
+
+# Note: RetroAchievements object files are now included directly in libyabause_ios.a
+# No separate library files need to be copied to the iOS project

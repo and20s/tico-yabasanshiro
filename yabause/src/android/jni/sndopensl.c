@@ -19,6 +19,7 @@
 */
 
 #include <assert.h>
+#include <stdlib.h>
 #include <jni.h>
 #include <android/log.h>
 #include "sndopensl.h"
@@ -44,6 +45,7 @@ static u32 SNDOpenSLGetAudioSpace(void);
 static void SNDOpenSLMuteAudio(void);
 static void SNDOpenSLUnMuteAudio(void);
 static void SNDOpenSLSetVolume(int volume);
+int InitSoundBuff();
 
 SoundInterface_struct SNDOpenSL = {
 SNDCORE_OPENSL,
@@ -313,7 +315,7 @@ static void SNDOpenSLUpdateAudio(u32 *leftchanbuffer, u32 *rightchanbuffer, u32 
    copy1size = (num_samples * sizeof(s16) * 2);
    //printf("SNDOpenSLUpdateAudio %08X,%08X,%08X",currentpos,soundoffset[currentpos],copy1size);
    if( soundoffset[currentpos]+copy1size > mbufferSizeInBytes  ){
-      yprintf("SNDOpenSLUpdateAudio Overflow cpos:%08X, max:%08X, offset:%08X, size:%08X",currentpos,mbufferSizeInBytes,soundoffset[currentpos],copy1size);
+      printf("SNDOpenSLUpdateAudio Overflow cpos:%08X, max:%08X, offset:%08X, size:%08X",currentpos,mbufferSizeInBytes,soundoffset[currentpos],copy1size);
       copy1size = mbufferSizeInBytes-soundoffset[currentpos];
    }
 

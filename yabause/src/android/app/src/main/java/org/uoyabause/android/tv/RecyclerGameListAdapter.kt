@@ -33,49 +33,52 @@ import org.uoyabause.android.YabauseStorage.Companion.storage
  * Created by shinya on 2016/01/03.
  */
 class RecyclerGameListAdapter : RecyclerView.Adapter<RecyclerGameListAdapter.ViewHolder>() {
-    var _gamelist: List<GameInfo>
+    var gamelist: List<GameInfo>
 
     // Provide a reference to the views for each data item
     // Complex data items may need more than one view per item, and
     // you provide access to all the views for a data item in a view holder
     class ViewHolder(
 // each data item is just a string in this case
-        var _cardview: CardView
-    ) : RecyclerView.ViewHolder(_cardview) {
-        var _title: TextView = _cardview.findViewById<View>(R.id.game_title) as TextView
+        var cardview: CardView,
+    ) : RecyclerView.ViewHolder(cardview) {
+        var title: TextView = cardview.findViewById<View>(R.id.game_title) as TextView
     }
 
     // Provide a suitable constructor (depends on the kind of dataset)
     init {
         val yb = storage
         yb.generateGameDB(3)
-        _gamelist = YabauseStorage.dao.getAllSortedByTitle()
+        gamelist = YabauseStorage.dao.getAllSortedByTitle()
     }
 
     // Create new views (invoked by the layout manager)
     override fun onCreateViewHolder(
         parent: ViewGroup,
-        viewType: Int
+        viewType: Int,
     ): ViewHolder {
         // create a new view
-        val v = LayoutInflater.from(parent.context)
-            .inflate(R.layout.game_card_listitem, parent, false) as CardView
+        val v =
+            LayoutInflater
+                .from(parent.context)
+                .inflate(R.layout.game_card_listitem, parent, false) as CardView
         // set the view's size, margins, paddings and layout parameters
         val vh = ViewHolder(v)
         return vh
     }
 
     // Replace the contents of a view (invoked by the layout manager)
-    override fun onBindViewHolder(holder: ViewHolder, position: Int) {
+    override fun onBindViewHolder(
+        holder: ViewHolder,
+        position: Int,
+    ) {
         // - get element from your dataset at this position
         // - replace the contents of the view with that element
-        //holder.mTextView.setText(mDataset[position]);
+        // holder.mTextView.setText(mDataset[position]);
 
-        holder._title.text = _gamelist[position].game_title
+        holder.title.text = gamelist[position].game_title
     }
 
     // Return the size of your dataset (invoked by the layout manager)
-    override fun getItemCount(): Int {
-        return _gamelist.size
-    }
+    override fun getItemCount(): Int = gamelist.size
 }

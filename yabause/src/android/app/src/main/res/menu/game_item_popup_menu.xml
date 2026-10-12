@@ -16,11 +16,15 @@
       android:title="@string/restore_defaults"
   />
   <item
-      android:id="@+id/report"
-      android:title="@string/menu_report"
+      android:id="@+id/reproduce_report"
+      android:title="@string/reproduce_report"
   />
   <item
       android:id="@+id/detail"
       android:title="@string/menu_detail"
+   />
+  <item
+      android:id="@+id/create_shortcut"
+      android:title="@string/create_home_shortcut"
    />
 </menu>

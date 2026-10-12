@@ -53,6 +53,12 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 #include <sys/stat.h>
 #include <ctype.h>
 
+#if defined(_WIN32) || defined(_WINDOWS)
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
+
 #include "memory.h"
 #include "coffelf.h"
 #include "cs0.h"
@@ -69,6 +75,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 #include "yabause.h"
 #include "yui.h"
 #include "movie.h"
+
+#include "retroachievements/yabause_ra_integration_cwrapper.h"
 
 // #ifdef HAVE_LIBGL
 // #define USE_OPENGL
@@ -90,6 +98,7 @@ void FASTCALL MappedMemoryWriteByteNocache(u32 addr, u8 val, u32 *cycle) { Mappe
 void FASTCALL MappedMemoryWriteWordNocache(u32 addr, u16 val, u32 *cycle) { MappedMemoryWriteWord(addr, val, NULL); }
 void FASTCALL MappedMemoryWriteLongNocache(u32 addr, u32 val, u32 *cycle) { MappedMemoryWriteLong(addr, val, NULL); }
 #endif
+
 
 //////////////////////////////////////////////////////////////////////////////
 
@@ -166,6 +175,20 @@ void YabFreeMap(void *p)
    free(p); // memalign'd memory is freed with free()
 }
 
+int YabFlushMemMap(void *mappedPtr)
+{
+   // No real mmap on NX: write the buffer back to its file
+   if (mappedPtr == NULL || mappedPtr != nx_memmap_ptr || nx_memmap_filename == NULL)
+      return -1;
+
+   FILE *fp = fopen(nx_memmap_filename, "wb");
+   if (fp == NULL)
+      return -1;
+   size_t written = fwrite(mappedPtr, 1, nx_memmap_size, fp);
+   fclose(fp);
+   return written == nx_memmap_size ? 0 : -1;
+}
+
 #elif defined(__GNUC__) && !defined(_WINDOWS)
 
 #include <stdio.h>
@@ -195,13 +218,15 @@ void *YabMemMap(char *filename, u32 size)
    if (fstat(fd, &sb) == -1)
    {
       LOG("YabMemMap: fstat failed");
+    close(fd);
       return NULL;
    }
 
-   // if (!S_ISREG(sb.st_mode)) {
-   //   yprintf("YabMemMap: %s is not a file\n", filename);
-   //   return NULL;
-   // }
+  if (sb.st_size > 10 * 1024 * 1024) {
+    LOG("YabMemMap: file too large (%lld bytes), refusing to mmap", (long long)sb.st_size);
+    close(fd);
+    return NULL;
+  }
 
    p = mmap(0, sb.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
    if (p == MAP_FAILED)
@@ -224,6 +249,22 @@ void YabFreeMap(void *p)
 {
    munmap(p, mmapsize);
 }
+
+int YabFlushMemMap(void* mappedPtr)
+{
+  if (mappedPtr == NULL || mmapsize == 0) {
+    return -1;  // 何もすることがない
+  }
+
+  // MS_SYNC: 呼び出しが戻るときには、少なくともカーネルバッファまでは書き出されている
+  if (msync(mappedPtr, mmapsize, MS_SYNC) != 0) {
+    //LOG("YabFlushMemMap: msync failed: %s", strerror(errno));
+    return -1;
+  }
+
+  return 0;
+}
+
 
 #elif defined(_WINDOWS)
 
@@ -276,6 +317,33 @@ void YabFreeMap(void *p)
    CloseHandle(hFile);
    hFMWrite = NULL;
 }
+
+int YabFlushMemMap(void* mappedPtr){
+  boolean ok1 = TRUE;
+  boolean ok2 = TRUE;
+
+  // ① マップしたビューの内容をファイルに反映
+  if (mappedPtr != NULL) {
+    // 第2引数 0 → このビューの dirty page 全部をフラッシュ
+    ok1 = FlushViewOfFile(mappedPtr, 0);
+    if (!ok1) {
+      LOG("FlushViewOfFile failed");
+    }
+  }
+
+  // ② ファイルシステム側のバッファを物理ディスクに反映
+  if (hFile != INVALID_HANDLE_VALUE) {
+    ok2 = FlushFileBuffers(hFile);
+    if (!ok2) {
+      LOG("FlushFileBuffers failed");
+    }
+  }
+
+  if(ok1 && ok2) return 0;
+  return -1;
+
+}
+
 
 #else
 void *YabMemMap(char *filename)
@@ -556,8 +624,7 @@ static u8 FASTCALL BupRamMemoryReadByte(u32 addr)
     return fgetc(pbackup);
   }
 #endif
-   if (yabsys.extend_backup)
-   {
+  if (yabsys.extend_backup && addr >= tweak_backup_file_addr) {
 
       // if( yabsys.emulatebios == 1 ) {
       addr = (addr & 0x0FFFFFFF) - tweak_backup_file_addr;
@@ -616,8 +683,7 @@ static void FASTCALL BupRamMemoryWriteByte(u32 addr, u8 val)
     BupRamWritten = 1;  
   }
 #endif
-   if (yabsys.extend_backup)
-   {
+  if (yabsys.extend_backup && addr >= tweak_backup_file_addr ) {
       // if( yabsys.emulatebios == 1 ) {
       addr = (addr & 0x0FFFFFFF) - tweak_backup_file_addr;
       if (addr >= tweak_backup_file_size)
@@ -880,6 +946,291 @@ u32 getMemClock(u32 addr)
    return 0;
 }
 
+// Write cost model (cycle-cost accuracy Phase 1).
+//
+// Historically WorkRAM writes through the emulated cache charged zero
+// memory cycles on both CPU cores. The reference model (mednafen) charges
+// a posted-write issue cost on SDRAM (+2, ss/sh7095.inc:2206) and the full
+// bus cost on CS0 regions. This function returns the write cost for the
+// regions covered so far; regions not listed keep their legacy behavior.
+//
+// Default ON; set YABA_SH2_WRITE_COST_MODEL=old to A/B the legacy
+// (uncharged) behavior. Note: Techno Motor's song load can sporadically
+// take ~2000 frames longer -- confirmed to be a pre-existing host-async
+// race, not caused by this model (tools/sh2timing/README.md).
+static int write_cost_model_new = -1;
+
+int sh2_write_cost_new(void)
+{
+  if (write_cost_model_new < 0)
+  {
+    const char *e = getenv("YABA_SH2_WRITE_COST_MODEL");
+    write_cost_model_new = !(e != NULL && strcmp(e, "old") == 0);
+  }
+  return write_cost_model_new;
+}
+
+// Per-region write costs. Defaults follow mednafen (SDRAM posted issue +2;
+// WorkRAM-L same bucket as reads). Overridable for diagnosis/tuning via
+// YABA_SH2_WRITE_COST_H / YABA_SH2_WRITE_COST_L (integers).
+static int write_cost_wramh = -1;
+static int write_cost_wraml = -1;
+
+static int env_cost(const char *name, int defval)
+{
+  const char *e = getenv(name);
+  return e != NULL ? atoi(e) : defval;
+}
+
+// Read cost model (cycle-cost accuracy Phase 1).
+//
+// The legacy table (getMemClock) charges one flat cost per access
+// regardless of size and lumps BIOS/WorkRAM-L/backup into one bucket.
+// The reference model (mednafen) charges per bus transaction: CS0 is a
+// 16-bit bus (32-bit access = 2 transactions; WorkRAM-L +7, BIOS +8,
+// backup +8 each, ss/ss.cpp:192-276) and WorkRAM-H is 32-bit SDRAM
+// (+7 per read regardless of size, ss/sh7095.inc:2282).
+// Regions not listed keep the legacy table.
+// Set YABA_SH2_READ_COST_MODEL=old to A/B the legacy behavior.
+static int read_cost_model_new = -1;
+
+int sh2_read_cost_new(void)
+{
+  if (read_cost_model_new < 0)
+  {
+    const char *e = getenv("YABA_SH2_READ_COST_MODEL");
+    read_cost_model_new = !(e != NULL && strcmp(e, "old") == 0);
+  }
+  return read_cost_model_new;
+}
+
+// IF/MA contention approximation (cycle-cost accuracy Phase 2).
+//
+// On real SH2 (and in mednafen's pipeline model, ss/sh7095.inc:2604,3156)
+// a data access occupies the MA stage and every other instruction fetch
+// has to share that slot, so back-to-back cached loads cost ~1.5 cycles
+// on average while isolated loads cost 1. We approximate this with an
+// alternating +1 charged only when the previous data access was recent.
+// Set YABA_SH2_MA_MODEL=old to disable.
+static int ma_model_new = -1;
+
+int sh2_ma_model_new(void)
+{
+  if (ma_model_new < 0)
+  {
+    const char *e = getenv("YABA_SH2_MA_MODEL");
+    ma_model_new = !(e != NULL && strcmp(e, "old") == 0);
+  }
+  return ma_model_new;
+}
+
+// Slave bus-access penalty (cycle-cost accuracy Phase 3).
+//
+// The two SH2s share the external bus and the slave is deprioritized.
+// mednafen models this only in full cache-emulation mode (SlavePenalty
+// templates, ss/sh7095.inc:2326-2370): reads +2..3 around the access,
+// writes lose their posted-write overlap. Measured effective costs on
+// the timing disc (tools/sh2timing, mednafen -ss.dbg_cem full vs data):
+// uncached reads +4.7/access regardless of bus width (S16 vs S17 pin it
+// to per-access, not per-transaction), writes +5.5, line refills +6.25.
+// We charge flat +5 per slave bus access and +6 per slave line refill.
+//
+// Opt-in (YABA_SH2_SLAVE_BUS_MODEL=new), default OFF: mednafen only
+// models this penalty in full cache-emulation mode, i.e. it is absent
+// from its default per-game configuration, and enabling it on top of
+// the SCU-DMA and DMAC models pushes Bio Hazard's CD streaming buffer
+// into the (badly modeled) buffer-full path where playback never
+// resumes -> title freeze. It also shifts DOA's load phases. Penalties
+// tunable via YABA_SH2_SLAVE_RW_PENALTY / YABA_SH2_SLAVE_REFILL_PENALTY.
+static int slave_bus_model_new = -1;
+static int slave_rw_penalty = -1;
+static int slave_refill_penalty_v = -1;
+
+int sh2_slave_bus_model_new(void)
+{
+  if (slave_bus_model_new < 0)
+  {
+    const char *e = getenv("YABA_SH2_SLAVE_BUS_MODEL");
+    slave_bus_model_new = (e != NULL && strcmp(e, "new") == 0);
+    slave_rw_penalty = env_cost("YABA_SH2_SLAVE_RW_PENALTY", 5);
+    slave_refill_penalty_v = env_cost("YABA_SH2_SLAVE_REFILL_PENALTY", 6);
+  }
+  return slave_bus_model_new;
+}
+
+u32 sh2_slave_bus_penalty(void)
+{
+  if (!sh2_slave_bus_model_new() || CurrentSH2 == NULL || !CurrentSH2->isslave)
+    return 0;
+  return (u32)slave_rw_penalty;
+}
+
+u32 sh2_slave_refill_penalty(void)
+{
+  if (!sh2_slave_bus_model_new() || CurrentSH2 == NULL || !CurrentSH2->isslave)
+    return 0;
+  return (u32)slave_refill_penalty_v;
+}
+
+// On-chip DMAC bus contention (cycle-cost accuracy Phase 3c).
+//
+// While a DMAC channel is running the CPU and the DMAC share the external
+// bus. mednafen charges every CPU external bus access +19 while a channel
+// runs (sh7095.inc DMA_PenaltyKludge) and leaves cache-resident code
+// untouched. The legacy yabause approximation instead charges the CPU
+// half of the accumulated DMA bus time unconditionally (penerly>>1),
+// which slows down pure-ALU loops that never touch the bus (timing disc
+// S20: 36.4 cyc/iter vs mednafen's 20.0).
+//
+// New model (default ON; YABA_SH2_DMAC_MODEL=old reverts): per-access
+// charge only. +12 per CPU bus access (tuned on S21: 101.3 cyc/iter
+// measured) while a channel of the executing CPU is active; the penerly
+// charge and the DMAC transfer-speed hacks are disabled (see sh2core.c
+// DMAProc; CD-block-sourced transfers keep the legacy speed there).
+// Override the charge via YABA_SH2_DMAC_RW_PENALTY.
+static int dmac_model_new_v = -1;
+static int dmac_rw_penalty_v = -1;
+static int dmac_transfer_active_v = 0;
+
+int sh2_dmac_model_new(void)
+{
+  if (dmac_model_new_v < 0)
+  {
+    // Back to opt-in (2026-07-12): combined with the Phase 7 CD-block
+    // timing model, the DMAC model gives Bio Hazard's title a ~20%%
+    // freeze rate when START skips the intro (interaction race, 2/7
+    // frozen with both on; 0/15+ with the DMAC model off). Enable with
+    // YABA_SH2_DMAC_MODEL=new for timing-accuracy work (S20-S22).
+    const char *e = getenv("YABA_SH2_DMAC_MODEL");
+    dmac_model_new_v = (e != NULL && strcmp(e, "new") == 0);
+    dmac_rw_penalty_v = env_cost("YABA_SH2_DMAC_RW_PENALTY", 12);
+  }
+  return dmac_model_new_v;
+}
+
+// Diagnostic knob (Dragon Force black-screen investigation): with the
+// new DMAC model, YABA_SH2_DMAC_UCOST=legacy keeps the legacy transfer
+// speed (MAX(read,write) unit cost + the 1.5x budget) while retaining
+// the rest of the new model. Isolates "accurate transfer speed" as the
+// trigger for timing-sensitive games.
+static int dmac_ucost_legacy_v = -1;
+
+int sh2_dmac_ucost_legacy(void)
+{
+  if (dmac_ucost_legacy_v < 0)
+  {
+    const char *e = getenv("YABA_SH2_DMAC_UCOST");
+    dmac_ucost_legacy_v = (e != NULL && strcmp(e, "legacy") == 0);
+  }
+  return dmac_ucost_legacy_v;
+}
+
+// Suppress the contention charge for the DMAC's own transfer accesses
+// (they go through the same MappedMemory*Nocache choke points).
+void sh2_dmac_transfer_begin(void) { dmac_transfer_active_v = 1; }
+void sh2_dmac_transfer_end(void)   { dmac_transfer_active_v = 0; }
+
+u32 sh2_dmac_bus_penalty(void)
+{
+  SH2_struct *sh = CurrentSH2;
+  if (!sh2_dmac_model_new() || sh == NULL || dmac_transfer_active_v)
+    return 0;
+  if ((sh->onchip.DMAOR & 7) != 1)
+    return 0;
+  if (((sh->onchip.CHCR0 & 3) == 1 && sh->onchip.TCR0 != 0) ||
+      ((sh->onchip.CHCR1 & 3) == 1 && sh->onchip.TCR1 != 0))
+    return (u32)dmac_rw_penalty_v;
+  return 0;
+}
+
+u32 getMemReadClock(u32 addr, int size)
+{
+  u32 a;
+  if (!sh2_read_cost_new())
+    return getMemClock(addr);
+  a = addr & 0xDFFFFFFF;
+  if (a >= 0x06000000 && a < 0x06100000) {
+    return 7;                              // SDRAM, 32-bit bus: any size
+  }
+  if (a < 0x00100000) {
+    return size == 4 ? 16 : 8;             // BIOS ROM, 16-bit bus
+  }
+  if (a >= 0x00180000 && a < 0x00200000) {
+    return size == 4 ? 16 : 8;             // Backup RAM, 16-bit bus
+  }
+  if (a >= 0x00200000 && a < 0x00300000) {
+    return size == 4 ? 14 : 7;             // WorkRAM-L, 16-bit bus
+  }
+  if (a >= 0x05A00000 && a < 0x05C00000) {
+    // B-bus SCSP: reads are always 32-bit, split into two 16-bit
+    // transactions of +24 each (ss/scu.inc:975,1229-1237)
+    return 48;
+  }
+  if (a >= 0x05C00000 && a < 0x05D80000) {
+    // B-bus VDP1 VRAM/FB/registers: two 16-bit transactions of +14
+    // each, any access size (ss/scu.inc:876)
+    return 28;
+  }
+  if (a >= 0x05F00000 && a < 0x05FC0000) {
+    // B-bus VDP2 CRAM/registers: +20 per 16-bit transaction, always
+    // 32-bit (ss/scu.inc:927). VDP2 VRAM (0x05E00000) keeps the legacy
+    // display-slot model in getMemClock (same 40 outside display).
+    return 40;
+  }
+  if (a >= 0x05800000 && a < 0x05900000) {
+    // A-bus CS2 (CD block): +8 per 16-bit half, reads always 32-bit
+    // (ss/scu.inc:1088-1104). Legacy charged 0 here, making HIRQ
+    // polling loops nearly free.
+    return 16;
+  }
+  // A-bus CS0/CS1 reads stay on the legacy table: flat 40 matches the
+  // BIOS-default SCU ASR0 timing ((5+15 wait) x two 16-bit halves,
+  // ss/scu.inc:1030; timing disc S29). Carts that reprogram ASR0 for
+  // faster access are not modeled.
+  return getMemClock(addr);                // other regions: legacy table
+}
+
+u32 getMemWriteClock(u32 addr, int size)
+{
+  if (write_cost_wramh < 0)
+  {
+    write_cost_wramh = env_cost("YABA_SH2_WRITE_COST_H", 2);
+    write_cost_wraml = env_cost("YABA_SH2_WRITE_COST_L", 22 >> clock_shift);
+  }
+  addr = addr & 0xDFFFFFFF;
+  if (addr >= 0x06000000 && addr < 0x06100000) {
+    return write_cost_wramh;     // SDRAM posted write: issue cost only
+  }
+  if (addr >= 0x00200000 && addr < 0x00300000) {
+    return write_cost_wraml;     // WorkRAM-L
+  }
+  // B-bus writes are posted with a per-region finish time (mednafen
+  // scu.inc BBusRW_DB: CPU-visible +2, finish time += 17/9/3 per 16-bit
+  // half, += 13/1/1 for the second half of a 32-bit access). Sequential
+  // writes stall on the finish time; the constants below reproduce the
+  // sustained loop cost measured on the timing disc (S24/S26/S28).
+  if (addr >= 0x05A00000 && addr < 0x05C00000) {
+    return size == 4 ? 30 : 17;  // SCSP RAM / registers
+  }
+  if (addr >= 0x05C00000 && addr < 0x05D80000) {
+    return size == 4 ? 10 : 9;   // VDP1 VRAM / FB / registers
+  }
+  if (addr >= 0x05E00000 && addr < 0x05FC0000) {
+    return size == 4 ? 4 : 3;    // VDP2 VRAM / CRAM / registers
+  }
+  // A-bus writes are synchronous (no posted-write finish time). CS0/CS1
+  // cost follows the BIOS-default SCU ASR0 ((5+wait+ext) per 16-bit
+  // half, ss/scu.inc:1030; timing disc S30); CS2 (CD block) is a flat
+  // 8 per half (ss/scu.inc:1101).
+  if (addr >= 0x02000000 && addr < 0x05000000) {
+    return size == 4 ? 38 : 19;  // A-bus CS0/CS1 (cartridge)
+  }
+  if (addr >= 0x05800000 && addr < 0x05900000) {
+    return size == 4 ? 16 : 8;   // A-bus CS2 (CD block)
+  }
+  return 0;                      // other regions: legacy (uncharged here)
+}
+
 #endif
 
 #if 0
@@ -934,9 +1285,8 @@ u8 FASTCALL MappedMemoryReadByteNocache(u32 addr, u32 *cycle)
 u8 FASTCALL MappedMemoryReadByte(u32 addr, u32 *cycle)
 #endif
 {
-   if (cycle != NULL)
-   {
-      *cycle = getMemClock(addr);
+  if (cycle != NULL) { 
+    *cycle = getMemReadClock(addr, 1) + sh2_slave_bus_penalty() + sh2_dmac_bus_penalty();
    }
 
    switch (addr >> 29)
@@ -997,9 +1347,21 @@ u16 MappedMemoryReadInst(u32 addr, u32 *cycle)
 {
    return cache_memory_read_w(&CurrentSH2->onchip.cache, addr, cycle, 1);
 }
-u16 FASTCALL MappedMemoryReadWord(u32 addr, u32 *cycle)
-{
-   return cache_memory_read_w(&CurrentSH2->onchip.cache, addr, cycle, 0);
+u16 FASTCALL MappedMemoryReadWord(u32 addr, u32 * cycle){
+  u16 rtn = cache_memory_read_w(&CurrentSH2->onchip.cache, addr, cycle, 0);
+#if 0
+  if (addr == 0x04) {
+    //LOG("[%s] 2-byte read address=0x%08x value=0x%x\n", CurrentSH2->isslave ? "SH2-S" : "SH2-M", addr, rtn);
+    LOG("[%s] %d 2-byte read of 0x%08x from 0x%08x PC=%08X frame=%d:%d", CurrentSH2->isslave ? "SH2-S" : "SH2-M", CurrentSH2->cycles, rtn, addr, CurrentSH2->regs.PC, yabsys.frame_count, yabsys.LineCount);
+    if (CurrentSH2->bp.BreakpointCallBack) {
+      CurrentSH2->bp.inbreakpoint = 1;
+      SH2DumpHistory(CurrentSH2);
+      CurrentSH2->bp.BreakpointCallBack(CurrentSH2, 0, CurrentSH2->bp.BreakpointUserData);
+      CurrentSH2->bp.inbreakpoint = 0;
+    }
+  }
+#endif
+  return rtn;
 }
 u16 FASTCALL MappedMemoryReadWordNocache(u32 addr, u32 *cycle)
 #else
@@ -1010,9 +1372,8 @@ u16 MappedMemoryReadInst(u32 addr, u32 *cycle)
 u16 FASTCALL MappedMemoryReadWord(u32 addr, u32 *cycle)
 #endif
 {
-   if (cycle != NULL)
-   {
-      *cycle = getMemClock(addr);
+  if (cycle != NULL) {
+    *cycle = getMemReadClock(addr, 2) + sh2_slave_bus_penalty() + sh2_dmac_bus_penalty();
    }
 
    switch (addr >> 29)
@@ -1069,9 +1430,20 @@ u16 FASTCALL MappedMemoryReadWord(u32 addr, u32 *cycle)
 
 //////////////////////////////////////////////////////////////////////////////
 #if CACHE_ENABLE
-u32 FASTCALL MappedMemoryReadLong(u32 addr, u32 *cycle)
-{
-   return cache_memory_read_l(&CurrentSH2->onchip.cache, addr, cycle);
+u32 FASTCALL MappedMemoryReadLong(u32 addr, u32 * cycle){
+  u32 rtn = cache_memory_read_l(&CurrentSH2->onchip.cache, addr, cycle);
+#if 0
+  if(CurrentSH2->regs.PC == 0x06060292 && rtn == 0x00) {
+     LOG("[%s] 4-byte read address=0x%08x value=0x%x\n", CurrentSH2->isslave ? "SH2-S" : "SH2-M", addr,rtn);
+     if (CurrentSH2->bp.BreakpointCallBack) {
+       CurrentSH2->bp.inbreakpoint = 1;
+       SH2DumpHistory(CurrentSH2);
+       CurrentSH2->bp.BreakpointCallBack(CurrentSH2, 0, CurrentSH2->bp.BreakpointUserData);
+       CurrentSH2->bp.inbreakpoint = 0;
+     }
+  }
+#endif
+  return rtn;
 }
 u32 FASTCALL MappedMemoryReadLongNocache(u32 addr, u32 *cycle)
 #else
@@ -1079,9 +1451,8 @@ u32 FASTCALL MappedMemoryReadLong(u32 addr, u32 *cycle)
 #endif
 {
 
-   if (cycle != NULL)
-   {
-      *cycle = getMemClock(addr);
+  if (cycle != NULL) {
+    *cycle = getMemReadClock(addr, 4) + sh2_slave_bus_penalty() + sh2_dmac_bus_penalty();
    }
 
    switch (addr >> 29)
@@ -1146,17 +1517,43 @@ void FASTCALL MappedMemoryWriteByte(u32 addr, u8 val, u32 *cycle)
 {
    cache_memory_write_b(&CurrentSH2->onchip.cache, addr, val, cycle);
 }
+// Temporary write-watch for the timing-model investigation
+// (YABA_DMAC_DEBUG=1): reports writers of the Bio Hazard boot-wait flag
+// long at 0x060FFCBC (the game polls bit2 of byte 0x060FFCBD).
+static int ww_dbg_v = -1;
+static int ww_dbg_count = 0;
+
+static void ww_check(u32 addr, u32 val, int size)
+{
+  if (ww_dbg_v < 0)
+    ww_dbg_v = (getenv("YABA_DMAC_DEBUG") != NULL);
+  if (!ww_dbg_v || ww_dbg_count > 300)
+    return;
+  if (((addr & 0x0FFFFFFF) & ~3u) == 0x060FFCBC)
+  {
+    ww_dbg_count++;
+    printf("[WW] %c sz%d %08X <= %08X pc=%08X\n",
+           (CurrentSH2 != NULL && CurrentSH2->isslave) ? 'S' : 'M', size,
+           addr, val, CurrentSH2 != NULL ? SH2Core->GetPC(CurrentSH2) : 0);
+    fflush(stdout);
+  }
+}
+
 void FASTCALL MappedMemoryWriteByteNocache(u32 addr, u8 val, u32 *cycle)
 #else
 void FASTCALL MappedMemoryWriteByte(u32 addr, u8 val, u32 *cycle)
 #endif
 {
-   // if ((addr & 0x0FFFFFFF) == 0x060f9600) {
-   //   LOG("[%s] %d Write %zu-byte write of 0x%08x to 0x%08x PC=%08X frame=%d:%d", CurrentSH2->isslave ? "SH2-S" : "SH2-M", CurrentSH2->cycles, 1, val, addr, CurrentSH2->regs.PC, yabsys.frame_count, yabsys.LineCount);
+  ww_check(addr, val, 1);
+#if 0
+  if ((addr & 0x0FFFFFF0) == 0x060EA410) {
+    LOG("[%s] %d Write 1-byte write of 0x%08x to 0x%08x PC=%08X frame=%d:%d", CurrentSH2->isslave ? "SH2-S" : "SH2-M", CurrentSH2->cycles, val, addr, CurrentSH2->regs.PC, yabsys.frame_count, yabsys.LineCount);
    // if (slogp != NULL){
    //    fprintf(slogp, "%08X: CPU write 0x%08X = %d(0x%08X)\n", CurrentSH2->regs.PC, addr, val,val );
    // }
-   //}
+  }
+#endif
+
 
    if (cycle != NULL)
    {
@@ -1224,8 +1621,8 @@ void FASTCALL MappedMemoryWriteWordNocache(u32 addr, u16 val, u32 *cycle)
 void FASTCALL MappedMemoryWriteWord(u32 addr, u16 val, u32 *cycle)
 #endif
 {
-   if (cycle != NULL)
-   {
+  ww_check(addr, val, 2);
+  if (cycle != NULL) {
       *cycle = getMemClock(addr);
    }
 
@@ -1285,8 +1682,24 @@ extern FILE * slogp;
 
 //////////////////////////////////////////////////////////////////////////////
 #if CACHE_ENABLE
-void FASTCALL MappedMemoryWriteLong(u32 addr, u32 val, u32 *cycle)
-{
+void FASTCALL MappedMemoryWriteLong(u32 addr, u32 val , u32 * cycle ){
+
+#if 0
+  if ((addr & 0x0FFFFFFF) == 0x060F084C && val == 0x00 ) {
+    LOG("BBB [%s] %d Write 4-byte write of 0x%08x to 0x%08x PC=%08X frame=%d:%d", CurrentSH2->isslave ? "SH2-S" : "SH2-M", CurrentSH2->cycles, val, addr, CurrentSH2->regs.PC, yabsys.frame_count, yabsys.LineCount);
+  }
+  if ((addr & 0x0FFFFFFF) == 0x06001F40) {
+    LOG("[%s] %d Write 4-byte write of 0x%08x to 0x%08x PC=%08X frame=%d:%d", CurrentSH2->isslave ? "SH2-S" : "SH2-M", CurrentSH2->cycles, val, addr, CurrentSH2->regs.PC, yabsys.frame_count, yabsys.LineCount);
+    if (val == 0x0BEFFFFE) {
+      if (CurrentSH2->bp.BreakpointCallBack) {
+        CurrentSH2->bp.inbreakpoint = 1;
+        SH2DumpHistory(CurrentSH2);
+        CurrentSH2->bp.BreakpointCallBack(CurrentSH2, 0, CurrentSH2->bp.BreakpointUserData);
+        CurrentSH2->bp.inbreakpoint = 0;
+      }
+    }
+  }
+#endif
    cache_memory_write_l(&CurrentSH2->onchip.cache, addr, val, cycle);
 }
 void FASTCALL MappedMemoryWriteLongNocache(u32 addr, u32 val, u32 *cycle)
@@ -1294,14 +1707,7 @@ void FASTCALL MappedMemoryWriteLongNocache(u32 addr, u32 val, u32 *cycle)
 void FASTCALL MappedMemoryWriteLong(u32 addr, u32 val, u32 *cycle)
 #endif
 {
-#if 0   
-   if( (addr & 0x0FFFFFFF) == 0x060f9600){
-     LOG("[%s] %d Write %zu-byte write of 0x%08x to 0x%08x PC=%08X frame=%d:%d", CurrentSH2->isslave ? "SH2-S" : "SH2-M", CurrentSH2->cycles, 4, val, addr, CurrentSH2->regs.PC, yabsys.frame_count, yabsys.LineCount);
-      //if (slogp != NULL){
-      //   fprintf(slogp, "%08X: CPU write 0x%08X = %d(0x%08X)\n", CurrentSH2->regs.PC, addr, val,val );
-      //}
-   }
-#endif
+  ww_check(addr, val, 4);
 
    if (cycle != NULL)
    {
@@ -1554,6 +1960,8 @@ void FormatBackupRamFile(FILE *fp, u32 size)
    int i, i2;
    u32 i3;
 
+  fseek(fp, 0, SEEK_SET);
+
    // Fill in header
    for (i2 = 0; i2 < 4; i2++)
       for (i = 0; i < 32; i++)
@@ -1566,6 +1974,13 @@ void FormatBackupRamFile(FILE *fp, u32 size)
       fputc(0x00, fp);
    }
    fflush(fp);
+
+  // Truncate any excess data beyond the expected size
+#if defined(_WIN32) || defined(_WINDOWS)
+  _chsize(_fileno(fp), size);
+#else
+  ftruncate(fileno(fp), size);
+#endif
 }
 
 void FormatBackupRam(void *mem, u32 size)
@@ -1687,8 +2102,8 @@ int YabSaveStateStream(FILE *fp)
    fputc(0x01, fp);
 #endif
 
-   // Write version(fix me)
-   i = 2;
+   // Write version - version 3 adds RetroAchievements support
+   i = 3;
    ywrite(&check, (void *)&i, sizeof(i), 1, fp);
 
    // Skip the next 4 bytes for now
@@ -1711,6 +2126,30 @@ int YabSaveStateStream(FILE *fp)
    i += SmpcSaveState(fp);
    i += Vdp1SaveState(fp);
    i += Vdp2SaveState(fp);
+
+   // Save RetroAchievements state
+   {
+      size_t ra_size = YabauseRA_GetProgressSize();
+      // Always write RACH header for version 3+ to maintain consistent format
+      int ra_offset = StateWriteHeader(fp, "RACH", 1);
+      
+      // Write size first (0 if no data)
+      ywrite(&check, (void *)&ra_size, sizeof(ra_size), 1, fp);
+      
+      // Only write buffer if there's data
+      if (ra_size > 0) {
+         // Allocate buffer and serialize progress
+         uint8_t* ra_buffer = (uint8_t*)malloc(ra_size);
+         if (ra_buffer) {
+            if (YabauseRA_SerializeProgress(ra_buffer, ra_size)) {
+               ywrite(&check, (void *)ra_buffer, ra_size, 1, fp);
+            }
+            free(ra_buffer);
+         }
+      }
+      
+      i += StateFinishHeader(fp, ra_offset);
+   }
 
    offset = StateWriteHeader(fp, "OTHR", 1);
 
@@ -1867,6 +2306,13 @@ int YabLoadStateStream(FILE *fp)
       yread(&check, (void *)&movieposition, 4, 1, fp);
       headersize = 0x14;
       break;
+      case 3:
+         /* version 3 adds RetroAchievements support (same header format as version 2) */
+         yread(&check, (void *)&framecounter, 4, 1, fp);
+		 movieposition=ftell(fp);
+		 yread(&check, (void *)&movieposition, 4, 1, fp);
+         headersize = 0x14;
+         break;
    default:
       /* we're trying to open a save state using a future version
        * of the YSS format, that won't work, sorry :) */
@@ -1959,6 +2405,40 @@ int YabLoadStateStream(FILE *fp)
       return -3;
    }
    Vdp2LoadState(fp, version, chunksize);
+
+   // Load RetroAchievements state (only available in version 3+)
+   if (headerversion >= 3) {
+      long pos_before_rach = ftell(fp);  // Save position before trying to read RACH
+      
+      if (StateCheckRetrieveHeader(fp, "RACH", &version, &chunksize) == 0)
+      {
+         size_t ra_size;
+         yread(&check, (void *)&ra_size, sizeof(ra_size), 1, fp);
+         
+         if (ra_size > 0 && ra_size <= chunksize - sizeof(ra_size)) {
+            uint8_t* ra_buffer = (uint8_t*)malloc(ra_size);
+            if (ra_buffer) {
+               yread(&check, (void *)ra_buffer, ra_size, 1, fp);
+               YabauseRA_DeserializeProgress(ra_buffer, ra_size);
+               free(ra_buffer);
+            } else {
+               // Skip the data if we can't allocate memory
+               fseek(fp, ra_size, SEEK_CUR);
+            }
+         } else {
+            // Skip remaining chunk data if size is invalid
+            fseek(fp, chunksize - sizeof(ra_size), SEEK_CUR);
+         }
+      } else {
+         // No RACH header found - rewind to try OTHR instead (for compatibility with old saves)
+         fseek(fp, pos_before_rach, SEEK_SET);
+         // Reset RetroAchievements progress
+         YabauseRA_DeserializeProgress(NULL, 0);
+      }
+   } else {
+      // Older save state versions don't have RetroAchievements data - reset progress
+      YabauseRA_DeserializeProgress(NULL, 0);
+   }
 
    if (StateCheckRetrieveHeader(fp, "OTHR", &version, &chunksize) != 0)
    {

@@ -39,7 +39,8 @@ platform :ios do
       workspace: "./YabaSnashiro.xcworkspace",      
       scheme: "YabaSnashiro",
       configuration: "Debug",
-      export_method: "development"
+      export_method: "development",
+      xcargs: "APS_ENVIRONMENT=development"
     )
 
   end
@@ -53,7 +54,8 @@ platform :ios do
       workspace: "./YabaSnashiro.xcworkspace",
       scheme: "YabaSnashiro-Lite",
       configuration: "Debug",
-      export_method: "development"
+      export_method: "development",
+      xcargs: "APS_ENVIRONMENT=development"
     )
   end
 
@@ -95,7 +97,8 @@ platform :ios do
       workspace: "./YabaSnashiro.xcworkspace",
       scheme: "YabaSnashiro",
       configuration: "Release",
-      export_method: "app-store"
+      export_method: "app-store",
+      xcargs: "APS_ENVIRONMENT=production"
     )
 
     # Upload the newly created build to Test Flight using the App Store Connect
@@ -121,7 +124,8 @@ platform :ios do
       workspace: "./YabaSnashiro.xcworkspace",
       scheme: "YabaSnashiro-Lite",
       configuration: "Release",
-      export_method: "app-store"
+      export_method: "app-store",
+      xcargs: "APS_ENVIRONMENT=production"
     )
     upload_to_testflight(
       app_identifier: "org.devMiyax.yabasanshiro2-lite"

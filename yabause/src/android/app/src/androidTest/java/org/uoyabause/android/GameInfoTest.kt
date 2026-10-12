@@ -8,7 +8,6 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
-import org.uoyabause.android.GameInfo
 import java.io.BufferedWriter
 import java.io.File
 import java.io.FileWriter
@@ -37,10 +36,12 @@ class GameInfoTest {
     var tempFolder: TemporaryFolder = TemporaryFolder()
 
     val db: GameInfoDatabase by lazy {
-        Room.databaseBuilder(
-            YabauseApplication.appContext,
-            GameInfoDatabase::class.java, "test-database"
-        ).build()
+        Room
+            .databaseBuilder(
+                YabauseApplication.appContext,
+                GameInfoDatabase::class.java,
+                "test-database",
+            ).build()
     }
     val dao: GameInfoDao by lazy {
         db.gameInfoDao()
@@ -48,7 +49,7 @@ class GameInfoTest {
 
     @Before
     fun cleanTable() {
-        //new Delete().from(GameInfo.class).execute();
+        // new Delete().from(GameInfo.class).execute();
     }
 
     @Test
@@ -80,7 +81,6 @@ class GameInfoTest {
         Assert.assertEquals(0, len.toLong())
     }
 
-
     @Test
     fun removeInstance_mdsFilesAreRemoved() {
         // SetUpTest
@@ -110,7 +110,6 @@ class GameInfoTest {
         Assert.assertEquals(0, len.toLong())
     }
 
-
     @Test
     fun removeInstance_chdFilesAreRemoved() {
         // SetUpTest
@@ -139,6 +138,87 @@ class GameInfoTest {
         Assert.assertEquals(0, len.toLong())
     }
 
+    // ========== UT-DM-001: RA関連フィールドのデフォルト値確認 ==========
+    @Test
+    fun raFields_defaultValues() {
+        val game = GameInfo()
+
+        // Verify RA関連フィールドのデフォルト値
+        Assert.assertNull("raGameId should be null by default", game.raGameId)
+        Assert.assertNull("raHash should be null by default", game.raHash)
+        Assert.assertEquals("raUnlocked should be 0 by default", 0, game.raUnlocked)
+        Assert.assertEquals("raTotal should be 0 by default", 0, game.raTotal)
+        Assert.assertNull("raLastUpdate should be null by default", game.raLastUpdate)
+        Assert.assertEquals("raNotSupported should be false by default", false, game.raNotSupported)
+    }
+
+    // ========== UT-DM-002: raGameIdの設定・取得 ==========
+    @Test
+    fun raGameId_setAndGet() {
+        val game = GameInfo()
+        game.raGameId = 12345
+
+        Assert.assertEquals("raGameId should be 12345", 12345, game.raGameId)
+    }
+
+    // ========== UT-DM-003: raHashの設定・取得（32文字MD5） ==========
+    @Test
+    fun raHash_setAndGet() {
+        val game = GameInfo()
+        val hash = "a1b2c3d4e5f6789012345678901234ab"
+        game.raHash = hash
+
+        Assert.assertEquals("raHash should match", hash, game.raHash)
+        Assert.assertEquals("raHash should be 32 characters", 32, game.raHash?.length)
+    }
+
+    // ========== UT-DM-004: raUnlockedとraTotalの計算 ==========
+    @Test
+    fun raAchievements_calculation() {
+        val game = GameInfo()
+        game.raUnlocked = 12
+        game.raTotal = 47
+
+        val achievementRate = if (game.raTotal > 0) {
+            (game.raUnlocked.toFloat() / game.raTotal.toFloat() * 100)
+        } else {
+            0f
+        }
+
+        Assert.assertEquals("Achievement rate should be approximately 25.5%", 25.53f, achievementRate, 0.01f)
+    }
+
+    // ========== UT-DM-005: raLastUpdate日時の設定 ==========
+    @Test
+    fun raLastUpdate_setAndGet() {
+        val game = GameInfo()
+        val now = java.util.Date()
+        game.raLastUpdate = now
+
+        Assert.assertNotNull("raLastUpdate should not be null", game.raLastUpdate)
+        Assert.assertEquals("raLastUpdate should match", now.time, game.raLastUpdate?.time)
+    }
+
+    // ========== UT-DM-006: raNotSupportedフラグのトグル ==========
+    @Test
+    fun raNotSupported_toggle() {
+        val game = GameInfo()
+
+        // Default: false
+        Assert.assertEquals("raNotSupported should be false initially", false, game.raNotSupported)
+
+        // Toggle to true
+        game.raNotSupported = true
+        Assert.assertEquals("raNotSupported should be true", true, game.raNotSupported)
+
+        // Toggle back to false
+        game.raNotSupported = false
+        Assert.assertEquals("raNotSupported should be false again", false, game.raNotSupported)
+
+        // Toggle to true again
+        game.raNotSupported = true
+        Assert.assertEquals("raNotSupported should be true again", true, game.raNotSupported)
+    }
 
     @Test
     fun removeInstance_cueFilesAreRemoved() {

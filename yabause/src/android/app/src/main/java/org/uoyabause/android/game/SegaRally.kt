@@ -1,15 +1,11 @@
 package org.uoyabause.android.game
 
-import android.os.Bundle
 import android.util.Log
-import com.google.android.gms.auth.api.signin.GoogleSignIn
-import com.google.firebase.analytics.FirebaseAnalytics
-import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import org.uoyabause.android.YabauseApplication
+import org.uoyabause.android.auth.AuthState
 
 /*
 Desert	Personal record
@@ -32,9 +28,7 @@ class SegaRallyRecord {
     var milliseconds: Int = 0
 
     // Convert to total milliseconds for comparison and storage
-    fun toTotalMilliseconds(): Long {
-        return (minutes * 60000L) + (seconds * 1000L) + milliseconds
-    }
+    fun toTotalMilliseconds(): Long = (minutes * 60000L) + (seconds * 1000L) + milliseconds
 }
 
 class SegaRallyBackup {
@@ -47,7 +41,12 @@ class SegaRallyBackup {
         extractStageRecord(bin, 0x0E49, 0x0E4A, 0x0E4B) // Mountain
     }
 
-    private fun extractStageRecord(bin: ByteArray, minAddr: Int, secAddr: Int, msecAddr: Int) {
+    private fun extractStageRecord(
+        bin: ByteArray,
+        minAddr: Int,
+        secAddr: Int,
+        msecAddr: Int,
+    ) {
         val record = SegaRallyRecord()
 
         if (minAddr < bin.size && secAddr < bin.size && msecAddr < bin.size) {
@@ -58,7 +57,7 @@ class SegaRallyBackup {
             // Extract timing data using the provided formulas
             record.minutes = minByte and 0x0F
             record.seconds = ((secByte shr 4) and 0x0F) * 10 + (secByte and 0x0F) // Fixed formula
-            record.milliseconds = (((msecByte shr 4) and 0x0F) * 10 + (msecByte and 0x0F)) * 10// Fixed formula
+            record.milliseconds = (((msecByte shr 4) and 0x0F) * 10 + (msecByte and 0x0F)) * 10 // Fixed formula
         }
 
         records.add(record)
@@ -66,7 +65,6 @@ class SegaRallyBackup {
 }
 
 class SegaRally : BaseGame {
-
     constructor(gameCode: String) {
         // リーダーボードの初期化
         leaderBoards = mutableListOf<LeaderBoard>()
@@ -88,36 +86,38 @@ class SegaRally : BaseGame {
 
     // leaderboardsコレクションの初期化
     private fun initLeaderboards() {
-        if( gameId.isEmpty() ) return
+        if (gameId.isEmpty()) return
         val db = FirebaseFirestore.getInstance()
         val leaderboardsRef = db.collection("games").document(gameId).collection("leaderboards")
         leaderboardsRef.get().addOnSuccessListener { result ->
             if (result.isEmpty) {
-                val leaderboardsData = listOf(
-                    Pair("01", "Desert"),
-                    Pair("02", "Forest"),
-                    Pair("03", "Mountain")
-                )
+                val leaderboardsData =
+                    listOf(
+                        Pair("01", "Desert"),
+                        Pair("02", "Forest"),
+                        Pair("03", "Mountain"),
+                    )
                 leaderboardsData.forEach { (id, name) ->
-                    val data = hashMapOf("name" to name)
+                    val data = hashMapOf("name" to name, "scoreType" to "TIME", "rankingType" to "ASCENDING")
                     leaderboardsRef.document(id).set(data)
                 }
             }
         }
     }
 
-
-    override fun onBackUpUpdated(fname: String, before: ByteArray, after: ByteArray) {
-
+    override fun onBackUpUpdated(
+        fname: String,
+        before: ByteArray,
+        after: ByteArray,
+    ) {
         Log.d("SegaRally", "onBackUpUpdated called fname=$fname")
 
-        if( gameId == "" ) return
+        if (gameId == "") return
 
         // SEGARALLY_0 のときのみスコア評価処理を実行
-        if (fname != "SEGARALLY_0" && fname != "RALLYPLUS_0" ) return
+        if (fname != "SEGARALLY_0" && fname != "RALLYPLUS_0") return
 
-        val auth = FirebaseAuth.getInstance()
-        val currentUser = auth.currentUser ?: return
+        val currentUser = AuthState.realUser() ?: return
 /*
         // ここから追加: afterの内容を16バイトごとにHEXで出力
         var i = 0
@@ -160,10 +160,33 @@ class SegaRally : BaseGame {
         val beforeRecord = SegaRallyBackup(before)
         val afterRecord = SegaRallyBackup(after)
 
-        Log.d("SegaRally", String.format("Desert %02d:%02d.%03d", afterRecord.records[0].minutes, afterRecord.records[0].seconds,afterRecord.records[0].milliseconds))
-        Log.d("SegaRally", String.format("Forest %02d:%02d.%03d", afterRecord.records[1].minutes, afterRecord.records[1].seconds,afterRecord.records[1].milliseconds))
-        Log.d("SegaRally", String.format("Mountain %02d:%02d.%03d", afterRecord.records[2].minutes, afterRecord.records[2].seconds,afterRecord.records[2].milliseconds))
-
+        Log.d(
+            "SegaRally",
+            String.format(
+                "Desert %02d:%02d.%03d",
+                afterRecord.records[0].minutes,
+                afterRecord.records[0].seconds,
+                afterRecord.records[0].milliseconds,
+            ),
+        )
+        Log.d(
+            "SegaRally",
+            String.format(
+                "Forest %02d:%02d.%03d",
+                afterRecord.records[1].minutes,
+                afterRecord.records[1].seconds,
+                afterRecord.records[1].milliseconds,
+            ),
+        )
+        Log.d(
+            "SegaRally",
+            String.format(
+                "Mountain %02d:%02d.%03d",
+                afterRecord.records[2].minutes,
+                afterRecord.records[2].seconds,
+                afterRecord.records[2].milliseconds,
+            ),
+        )
 
         for (i in 0..2) { // 3 stages: Desert, Forest, Mountain
             val beforeTime = beforeRecord.records[i].toTotalMilliseconds()
@@ -171,7 +194,6 @@ class SegaRally : BaseGame {
 
             // Check if there's a new record (shorter time and not zero)
             if (afterTime > 0 && (beforeTime == 0L || afterTime < beforeTime)) {
-                val context = YabauseApplication.appContext
                 val score = afterTime
                 val gid = leaderBoards?.get(i)?.id
                 if (gid != null) {
@@ -179,7 +201,12 @@ class SegaRally : BaseGame {
                     val userName = currentUser.displayName ?: "Anonymous"
 
                     // Log the user information for debugging
-                    Log.d("SegaRally", "Submitting score for user: ${currentUser.uid}, display name: $userName, stage: ${leaderBoards?.get(i)?.title}, time: ${formatTime(score)}")
+                    Log.d(
+                        "SegaRally",
+                        "Submitting score for user: ${currentUser.uid}, display name: $userName, stage: ${leaderBoards?.get(
+                            i,
+                        )?.title}, time: ${formatTime(score)}",
+                    )
 
                     submitScoreToFirestore(gameId, gid, score, userName, "discord_webhook_url_segarally")
                     logScoreEvent(score, gid)

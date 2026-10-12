@@ -5,55 +5,40 @@ import android.util.Log
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.asFlow
 import androidx.lifecycle.viewModelScope
 import com.android.billingclient.api.BillingFlowParams
 import com.android.billingclient.api.ProductDetails
 import com.android.billingclient.api.Purchase
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import org.uoyabause.android.billing.BillingClientWrapper
 import org.uoyabause.android.repository.SubscriptionDataRepository
 
 data class MainState(
-    val hasRenewableBasic: Boolean? = false,
-    val hasPrepaidBasic: Boolean? = false,
-    val hasRenewablePremium: Boolean? = false,
-    val hasPrepaidPremium: Boolean? = false,
-    val basicProductDetails: ProductDetails? = null,
-    val premiumProductDetails: ProductDetails? = null,
+    val hasProAnnual: Boolean? = false,
     val purchases: List<Purchase>? = null,
 )
 
-class BillingViewModel : ViewModel(){
+class BillingViewModel : ViewModel() {
     var billingClient: BillingClientWrapper = BillingClientWrapper(YabauseApplication.appContext)
     private var repo: SubscriptionDataRepository =
         SubscriptionDataRepository(billingClientWrapper = billingClient)
     private val _billingConnectionState = MutableLiveData(false)
     val billingConnectionState: LiveData<Boolean> = _billingConnectionState
 
-    // The productsForSaleFlows object combines all the Product flows into one for emission.
-    val productsForSaleFlows = repo.basicProductDetails
+    // Pro annual subscription product details for the subscription purchase UI.
+    val proAnnualProductDetails = repo.proAnnualProductDetails
 
-    // The userCurrentSubscriptionFlow object combines all the possible subscription flows into one
-    // for emission.
-    val userCurrentSubscriptionFlow = combine(
-        repo.hasRenewableBasic,
-        repo.hasPrepaidBasic,
-        repo.hasRenewablePremium,
-        repo.hasPrepaidPremium
-    ) { hasRenewableBasic,
-        hasPrepaidBasic,
-        hasRenewablePremium,
-        hasPrepaidPremium
-        ->
-        MainState(
-            hasRenewableBasic = hasRenewableBasic,
-            hasPrepaidBasic = hasPrepaidBasic,
-            hasRenewablePremium = hasRenewablePremium,
-            hasPrepaidPremium = hasPrepaidPremium
-        )
-    }
+    // The userCurrentSubscriptionFlow emits the current pro annual subscription state.
+    val userCurrentSubscriptionFlow =
+        repo.hasProAnnual.map { hasProAnnual ->
+            MainState(
+                hasProAnnual = hasProAnnual,
+            )
+        }
 
     val currentPurchasesFlow = repo.purchases
 
@@ -62,27 +47,27 @@ class BillingViewModel : ViewModel(){
         billingClient.startBillingConnection(billingConnectionState = _billingConnectionState)
 
         viewModelScope.launch {
+            // Wait for billing connection before syncing subscription state
+            // to avoid clearing SharedPreferences with initial empty values
+            billingConnectionState.asFlow().first { it == true }
+
             userCurrentSubscriptionFlow.collectLatest { collectedSubscriptions ->
-                when {
-                    collectedSubscriptions.hasPrepaidBasic == true -> {
-                       Log.d(TAG,"hasPrepaidBasic")
-                    }
-                    collectedSubscriptions.hasRenewableBasic == true -> {
-                        Log.d(TAG,"hasRenewableBasic")
-                    }
-                    else -> {
-                        Log.d(TAG,"else")
-                    }
-                }
+                val subscribed = collectedSubscriptions.hasProAnnual == true
+
+                Log.i(
+                    TAG,
+                    "Subscription state update: subscribed=$subscribed " +
+                        "(proAnnual=${collectedSubscriptions.hasProAnnual})",
+                )
+
+                YabauseApplication.setSubscriptionState(subscribed)
             }
         }
-
     }
-
 
     private fun retrieveEligibleOffers(
         offerDetails: MutableList<ProductDetails.SubscriptionOfferDetails>,
-        tag: String
+        tag: String,
     ): List<ProductDetails.SubscriptionOfferDetails> {
         val eligibleOffers = emptyList<ProductDetails.SubscriptionOfferDetails>().toMutableList()
         offerDetails.forEach { offerDetail ->
@@ -94,9 +79,7 @@ class BillingViewModel : ViewModel(){
         return eligibleOffers
     }
 
-    private fun leastPricedOfferToken(
-        offerDetails: List<ProductDetails.SubscriptionOfferDetails>
-    ): String {
+    private fun leastPricedOfferToken(offerDetails: List<ProductDetails.SubscriptionOfferDetails>): String {
         var offerToken = String()
         var leastPricedOffer: ProductDetails.SubscriptionOfferDetails
         var lowestPrice = Int.MAX_VALUE
@@ -118,50 +101,51 @@ class BillingViewModel : ViewModel(){
     private fun upDowngradeBillingFlowParamsBuilder(
         productDetails: ProductDetails,
         offerToken: String,
-        oldToken: String
-    ): BillingFlowParams {
-        return BillingFlowParams.newBuilder().setProductDetailsParamsList(
+        oldToken: String,
+    ): BillingFlowParams = BillingFlowParams
+        .newBuilder()
+        .setProductDetailsParamsList(
             listOf(
-                BillingFlowParams.ProductDetailsParams.newBuilder()
+                BillingFlowParams.ProductDetailsParams
+                    .newBuilder()
                     .setProductDetails(productDetails)
                     .setOfferToken(offerToken)
-                    .build()
-            )
+                    .build(),
+            ),
         ).setSubscriptionUpdateParams(
-            BillingFlowParams.SubscriptionUpdateParams.newBuilder()
+            BillingFlowParams.SubscriptionUpdateParams
+                .newBuilder()
                 .setOldPurchaseToken(oldToken)
-              //  .setReplaceProrationMode(
-              //      BillingFlowParams.ProrationMode.IMMEDIATE_AND_CHARGE_FULL_PRICE
-              //  )
-                .build()
+                //  .setReplaceProrationMode(
+                //      BillingFlowParams.ProrationMode.IMMEDIATE_AND_CHARGE_FULL_PRICE
+                //  )
+                .build(),
         ).build()
-    }
 
     private fun billingFlowParamsBuilder(
         productDetails: ProductDetails,
-        offerToken: String
-    ): BillingFlowParams.Builder {
-        return BillingFlowParams.newBuilder().setProductDetailsParamsList(
-            listOf(
-                BillingFlowParams.ProductDetailsParams.newBuilder()
-                    .setProductDetails(productDetails)
-                    .setOfferToken(offerToken)
-                    .build()
-            )
-        )
-    }
+        offerToken: String,
+    ): BillingFlowParams.Builder = BillingFlowParams.newBuilder().setProductDetailsParamsList(
+        listOf(
+            BillingFlowParams.ProductDetailsParams
+                .newBuilder()
+                .setProductDetails(productDetails)
+                .setOfferToken(offerToken)
+                .build(),
+        ),
+    )
 
     fun buy(
         productDetails: ProductDetails,
         currentPurchases: List<Purchase>?,
         activity: Activity,
-        tag: String
+        tag: String,
     ) {
         val offers =
             productDetails.subscriptionOfferDetails?.let {
                 retrieveEligibleOffers(
                     offerDetails = it,
-                    tag = tag.lowercase()
+                    tag = tag.lowercase(),
                 )
             }
         val offerToken = offers?.let { leastPricedOfferToken(it) }
@@ -197,24 +181,25 @@ class BillingViewModel : ViewModel(){
  */
         } else if (currentPurchases == null) {
             // This is a normal purchase.
-            val billingParams = offerToken?.let {
-                billingFlowParamsBuilder(
-                    productDetails = productDetails,
-                    offerToken = it
-                )
-            }
+            val billingParams =
+                offerToken?.let {
+                    billingFlowParamsBuilder(
+                        productDetails = productDetails,
+                        offerToken = it,
+                    )
+                }
 
             if (billingParams != null) {
                 billingClient.launchBillingFlow(
                     activity,
-                    billingParams.build()
+                    billingParams.build(),
                 )
             }
         } else if (!currentPurchases.isNullOrEmpty() &&
             currentPurchases.size > MAX_CURRENT_PURCHASES_ALLOWED
         ) {
             // The developer has allowed users  to have more than 1 purchase, so they need to
-            /// implement a logic to find which one to use.
+            // / implement a logic to find which one to use.
             Log.d(TAG, "User has more than 1 current purchase.")
         }
     }
@@ -223,5 +208,4 @@ class BillingViewModel : ViewModel(){
         private const val MAX_CURRENT_PURCHASES_ALLOWED = 1
         private const val TAG = "BillingViewModel"
     }
-
 }

@@ -1,6 +1,7 @@
 import UIKit
 import FirebaseAuth
 import FirebaseFirestore
+import GameController
 
 protocol LeaderBoardControllerDelegate: AnyObject {
     func onLeaderboardClose()
@@ -16,12 +17,22 @@ class LeaderBoardController: UIViewController {
     private var emptyView: UILabel!
     private var rankLabel: UILabel!
     private var currentLeaderboardName: String = ""
+    
+    // Tab bar for leaderboard selection
+    private var tabScrollView: UIScrollView!
+    private var tabStackView: UIStackView!
+    private var selectedTabIndex: Int = 0
+    private var tabButtons: [UIButton] = []
 
     // Delegate for handling close events
     weak var closeDelegate: LeaderBoardControllerDelegate?
 
     // Game code for the leaderboard
     private var gameCode: String = "SATURNAPP"
+    
+    // GameController support
+    private var gameControllerObserver: Any?
+    private var selectedRowIndex: Int = 0
 
     // MARK: - Lifecycle
 
@@ -37,9 +48,20 @@ class LeaderBoardController: UIViewController {
         setupUI()
         setupViewModel()
         setupObservers()
+        setupGameController()
 
         // Load initial data
         viewModel.loadLeaderboards(gameCode: gameCode)
+    }
+    
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        setupGameController()
+    }
+    
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        removeGameControllerObserver()
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -64,19 +86,21 @@ class LeaderBoardController: UIViewController {
             action: #selector(closeButtonTapped)
         )
 
-        // Setup leaderboard popup button
-        leaderboardButton = UIButton(type: .system)
-        leaderboardButton.setTitle(NSLocalizedString("Select Leaderboard", comment: "Leaderboard selection button"), for: .normal)
-        leaderboardButton.titleLabel?.font = UIFont.systemFont(ofSize: 18, weight: .medium)
-        leaderboardButton.backgroundColor = .defaultBackground
-        leaderboardButton.layer.cornerRadius = 8
-        leaderboardButton.layer.borderWidth = 1
-        leaderboardButton.layer.borderColor = UIColor.colorAccent.cgColor
-        leaderboardButton.contentHorizontalAlignment = .center
-        leaderboardButton.contentEdgeInsets = UIEdgeInsets(top: 12, left: 16, bottom: 12, right: 16)
-        leaderboardButton.addTarget(self, action: #selector(leaderboardButtonTapped), for: .touchUpInside)
-        leaderboardButton.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(leaderboardButton)
+        // Setup tab scroll view for leaderboard selection
+        tabScrollView = UIScrollView()
+        tabScrollView.showsHorizontalScrollIndicator = false
+        tabScrollView.showsVerticalScrollIndicator = false
+        tabScrollView.translatesAutoresizingMaskIntoConstraints = false
+        tabScrollView.backgroundColor = .defaultBackground
+        view.addSubview(tabScrollView)
+        
+        // Setup tab stack view
+        tabStackView = UIStackView()
+        tabStackView.axis = .horizontal
+        tabStackView.distribution = .fillProportionally
+        tabStackView.spacing = 8
+        tabStackView.translatesAutoresizingMaskIntoConstraints = false
+        tabScrollView.addSubview(tabStackView)
 
         // Setup rank label
         rankLabel = UILabel()
@@ -115,13 +139,21 @@ class LeaderBoardController: UIViewController {
 
         // Setup constraints
         NSLayoutConstraint.activate([
-            // Leaderboard button constraints
-            leaderboardButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 16),
-            leaderboardButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            leaderboardButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            // Tab scroll view constraints
+            tabScrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 16),
+            tabScrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            tabScrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            tabScrollView.heightAnchor.constraint(equalToConstant: 44),
+            
+            // Tab stack view constraints
+            tabStackView.topAnchor.constraint(equalTo: tabScrollView.topAnchor),
+            tabStackView.leadingAnchor.constraint(equalTo: tabScrollView.leadingAnchor),
+            tabStackView.trailingAnchor.constraint(equalTo: tabScrollView.trailingAnchor),
+            tabStackView.bottomAnchor.constraint(equalTo: tabScrollView.bottomAnchor),
+            tabStackView.heightAnchor.constraint(equalTo: tabScrollView.heightAnchor),
 
             // Rank label constraints
-            rankLabel.topAnchor.constraint(equalTo: leaderboardButton.bottomAnchor, constant: 8),
+            rankLabel.topAnchor.constraint(equalTo: tabScrollView.bottomAnchor, constant: 8),
             rankLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             rankLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor),
 
@@ -160,11 +192,13 @@ class LeaderBoardController: UIViewController {
         viewModel.onLeaderboardsChanged = { [weak self] leaderboards in
             guard let self = self, !leaderboards.isEmpty else { return }
             DispatchQueue.main.async {
+                // Create tabs for leaderboards
+                self.createTabsForLeaderboards(leaderboards)
+                
                 // Select first leaderboard by default
                 if let firstLeaderboard = leaderboards.first {
                     self.viewModel.selectLeaderboard(leaderboardId: firstLeaderboard.id)
                     self.currentLeaderboardName = firstLeaderboard.name ?? "Unknown"
-                    self.updateLeaderboardButtonTitle()
                 }
             }
         }
@@ -260,43 +294,6 @@ class LeaderBoardController: UIViewController {
         close()
     }
 
-    @objc private func leaderboardButtonTapped() {
-        guard let leaderboards = viewModel.leaderboards, !leaderboards.isEmpty else { return }
-
-        // Create menu actions for each leaderboard
-        var actions = [UIAction]()
-
-        for leaderboard in leaderboards {
-            let leaderboardName = leaderboard.name ?? "Unknown"
-            let isSelected = leaderboard.id == viewModel.currentLeaderboardId
-
-            let action = UIAction(
-                title: leaderboardName,
-                image: isSelected ? UIImage(systemName: "checkmark") : nil,
-                state: isSelected ? .on : .off
-            ) { [weak self] _ in
-                guard let self = self else { return }
-                self.viewModel.selectLeaderboard(leaderboardId: leaderboard.id)
-                self.currentLeaderboardName = leaderboardName
-                self.updateLeaderboardButtonTitle()
-            }
-
-            actions.append(action)
-        }
-
-        // Create and show the menu
-        let menu = UIMenu(title: "", children: actions)
-        leaderboardButton.menu = menu
-        leaderboardButton.showsMenuAsPrimaryAction = true
-    }
-
-    private func updateLeaderboardButtonTitle() {
-        if currentLeaderboardName.isEmpty {
-            leaderboardButton.setTitle(NSLocalizedString("Select Leaderboard", comment: "Leaderboard selection button"), for: .normal)
-        } else {
-            leaderboardButton.setTitle(currentLeaderboardName, for: .normal)
-        }
-    }
 
     func close() {
         closeDelegate?.onLeaderboardClose()
@@ -329,6 +326,253 @@ class LeaderBoardController: UIViewController {
             rankLabel.isHidden = true
         }
     }
+    
+    // MARK: - Tab Management
+    
+    private func createTabsForLeaderboards(_ leaderboards: [LeaderBoardRepository.LeaderboardInfo]) {
+        // Clear existing tabs
+        tabButtons.removeAll()
+        tabStackView.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        
+        // Create tab buttons for each leaderboard
+        for (index, leaderboard) in leaderboards.enumerated() {
+            let button = UIButton(type: .system)
+            let leaderboardName = leaderboard.name ?? "Board \(index + 1)"
+            button.setTitle(leaderboardName, for: .normal)
+            button.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .medium)
+            button.backgroundColor = .colorPrimary
+            button.layer.cornerRadius = 8
+            button.contentEdgeInsets = UIEdgeInsets(top: 8, left: 16, bottom: 8, right: 16)
+            button.tag = index
+            button.addTarget(self, action: #selector(tabButtonTapped(_:)), for: .touchUpInside)
+            
+            tabButtons.append(button)
+            tabStackView.addArrangedSubview(button)
+        }
+        
+        // Select first tab by default
+        if !tabButtons.isEmpty {
+            selectedTabIndex = 0
+            updateTabAppearance()
+        }
+    }
+    
+    @objc private func tabButtonTapped(_ sender: UIButton) {
+        selectedTabIndex = sender.tag
+        selectTabAtIndex(selectedTabIndex)
+    }
+    
+    private func selectTabAtIndex(_ index: Int) {
+        guard index >= 0 && index < tabButtons.count else { return }
+        
+        selectedTabIndex = index
+        updateTabAppearance()
+        
+        // Get the leaderboard at the selected index
+        if let leaderboards = viewModel.leaderboards,
+           index < leaderboards.count {
+            let selectedLeaderboard = leaderboards[index]
+            viewModel.selectLeaderboard(leaderboardId: selectedLeaderboard.id)
+            currentLeaderboardName = selectedLeaderboard.name ?? "Unknown"
+        }
+        
+        // Reset selected row to top
+        selectedRowIndex = 0
+        updateTableViewSelection()
+    }
+    
+    private func updateTabAppearance() {
+        for (index, button) in tabButtons.enumerated() {
+            if index == selectedTabIndex {
+                button.backgroundColor = .colorAccent
+                button.setTitleColor(.appWhite, for: .normal)
+                button.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
+            } else {
+                button.backgroundColor = .colorPrimary
+                button.setTitleColor(.adaptiveTextColor, for: .normal)
+                button.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .medium)
+            }
+        }
+        
+        // Scroll to selected tab if needed
+        if selectedTabIndex < tabButtons.count {
+            let selectedButton = tabButtons[selectedTabIndex]
+            tabScrollView.scrollRectToVisible(selectedButton.frame, animated: true)
+        }
+    }
+    
+    // MARK: - GameController Support
+    
+    private func setupGameController() {
+        removeGameControllerObserver()
+        
+        // Register for controller connections
+        gameControllerObserver = NotificationCenter.default.addObserver(
+            forName: .GCControllerDidConnect,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.configureGameController()
+        }
+        
+        // Configure any already connected controllers
+        configureGameController()
+    }
+    
+    private func removeGameControllerObserver() {
+        if let observer = gameControllerObserver {
+            NotificationCenter.default.removeObserver(observer)
+            gameControllerObserver = nil
+        }
+    }
+    
+    private func configureGameController() {
+        guard let controller = GCController.controllers().first else { return }
+        
+        // Configure extended gamepad if available
+        if let extendedGamepad = controller.extendedGamepad {
+            configureExtendedGamepad(extendedGamepad)
+        } else if let gamepad = controller.gamepad {
+            configureGamepad(gamepad)
+        }
+    }
+    
+    private func configureExtendedGamepad(_ gamepad: GCExtendedGamepad) {
+        // D-pad for list navigation
+        gamepad.dpad.up.pressedChangedHandler = { [weak self] (button, value, pressed) in
+            if pressed {
+                self?.moveSelection(up: true)
+            }
+        }
+        
+        gamepad.dpad.down.pressedChangedHandler = { [weak self] (button, value, pressed) in
+            if pressed {
+                self?.moveSelection(up: false)
+            }
+        }
+        
+        // Left/Right triggers for tab switching
+        gamepad.leftTrigger.pressedChangedHandler = { [weak self] (button, value, pressed) in
+            if pressed {
+                self?.switchTab(previous: true)
+            }
+        }
+        
+        gamepad.rightTrigger.pressedChangedHandler = { [weak self] (button, value, pressed) in
+            if pressed {
+                self?.switchTab(previous: false)
+            }
+        }
+        
+        // Left/Right shoulder buttons as alternative for tab switching
+        gamepad.leftShoulder.pressedChangedHandler = { [weak self] (button, value, pressed) in
+            if pressed {
+                self?.switchTab(previous: true)
+            }
+        }
+        
+        gamepad.rightShoulder.pressedChangedHandler = { [weak self] (button, value, pressed) in
+            if pressed {
+                self?.switchTab(previous: false)
+            }
+        }
+        
+        // A button to scroll to user position (if available)
+        gamepad.buttonA.pressedChangedHandler = { [weak self] (button, value, pressed) in
+            if pressed {
+                self?.scrollToCurrentUserPosition()
+            }
+        }
+        
+        // B button to close
+        gamepad.buttonB.pressedChangedHandler = { [weak self] (button, value, pressed) in
+            if pressed {
+                self?.close()
+            }
+        }
+    }
+    
+    private func configureGamepad(_ gamepad: GCGamepad) {
+        // D-pad for list navigation
+        gamepad.dpad.up.pressedChangedHandler = { [weak self] (button, value, pressed) in
+            if pressed {
+                self?.moveSelection(up: true)
+            }
+        }
+        
+        gamepad.dpad.down.pressedChangedHandler = { [weak self] (button, value, pressed) in
+            if pressed {
+                self?.moveSelection(up: false)
+            }
+        }
+        
+        // Left/Right buttons for tab switching
+        gamepad.dpad.left.pressedChangedHandler = { [weak self] (button, value, pressed) in
+            if pressed {
+                self?.switchTab(previous: true)
+            }
+        }
+        
+        gamepad.dpad.right.pressedChangedHandler = { [weak self] (button, value, pressed) in
+            if pressed {
+                self?.switchTab(previous: false)
+            }
+        }
+        
+        // A button to scroll to user position
+        gamepad.buttonA.pressedChangedHandler = { [weak self] (button, value, pressed) in
+            if pressed {
+                self?.scrollToCurrentUserPosition()
+            }
+        }
+        
+        // B button to close
+        gamepad.buttonB.pressedChangedHandler = { [weak self] (button, value, pressed) in
+            if pressed {
+                self?.close()
+            }
+        }
+    }
+    
+    private func moveSelection(up: Bool) {
+        guard let scores = viewModel.scores, !scores.isEmpty else { return }
+        
+        let maxIndex = scores.count - 1
+        
+        if up {
+            selectedRowIndex = max(0, selectedRowIndex - 1)
+        } else {
+            selectedRowIndex = min(maxIndex, selectedRowIndex + 1)
+        }
+        
+        updateTableViewSelection()
+    }
+    
+    private func switchTab(previous: Bool) {
+        let maxIndex = tabButtons.count - 1
+        guard maxIndex >= 0 else { return }
+        
+        if previous {
+            selectedTabIndex = selectedTabIndex > 0 ? selectedTabIndex - 1 : maxIndex
+        } else {
+            selectedTabIndex = selectedTabIndex < maxIndex ? selectedTabIndex + 1 : 0
+        }
+        
+        selectTabAtIndex(selectedTabIndex)
+    }
+    
+    private func updateTableViewSelection() {
+        guard let scores = viewModel.scores, !scores.isEmpty else { return }
+        guard selectedRowIndex >= 0 && selectedRowIndex < scores.count else { return }
+        
+        let indexPath = IndexPath(row: selectedRowIndex, section: 0)
+        tableView.selectRow(at: indexPath, animated: true, scrollPosition: .middle)
+    }
+    
+    private func scrollToCurrentUserPosition() {
+        guard let userPosition = viewModel.userPosition else { return }
+        scrollToUserPosition(userPosition)
+    }
 }
 
 // MARK: - UITableViewDelegate, UITableViewDataSource
@@ -346,10 +590,13 @@ extension LeaderBoardController: UITableViewDelegate, UITableViewDataSource {
         let timeWidth: CGFloat = remain / 2
         let diffWidth: CGFloat = remain / 2
 
+        // Get dynamic column name based on score type
+        let columnName = viewModel.getColumnName()
+        
         let labels = [
             NSLocalizedString("Pos", comment: "Leaderboard header for rank number"),
             NSLocalizedString("Name", comment: "Leaderboard header for user name"),
-            NSLocalizedString("Time", comment: "Leaderboard header for score/time"),
+            columnName,  // Dynamic: "Time" or "Score"
             NSLocalizedString("DIFF", comment: "Leaderboard header for difference from top score")
         ]
         let widths: [CGFloat] = [noWidth, nameWidth, timeWidth, diffWidth]
@@ -386,7 +633,7 @@ extension LeaderBoardController: UITableViewDelegate, UITableViewDataSource {
 
         let score = scores[indexPath.row]
         let isCurrentUser = score.userId == viewModel.userPosition?.userId
-        cell.configure(with: score, isCurrentUser: isCurrentUser, repository: viewModel.repository)
+        cell.configure(with: score, isCurrentUser: isCurrentUser, viewModel: viewModel)
 
         return cell
     }
@@ -437,6 +684,16 @@ class LeaderBoardCell: UITableViewCell {
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
+    
+    override func setSelected(_ selected: Bool, animated: Bool) {
+        super.setSelected(selected, animated: animated)
+        updateSelectionVisuals(selected: selected, animated: animated)
+    }
+    
+    override func setHighlighted(_ highlighted: Bool, animated: Bool) {
+        super.setHighlighted(highlighted, animated: animated)
+        updateSelectionVisuals(selected: highlighted, animated: animated)
+    }
 
     private func setupUI() {
         // Configure labels
@@ -444,7 +701,7 @@ class LeaderBoardCell: UITableViewCell {
         nameLabel.font = UIFont.systemFont(ofSize: 16)
         scoreLabel.font = UIFont.systemFont(ofSize: 16)
         diffLabel.font = UIFont.systemFont(ofSize: 14)
-        diffLabel.textColor = .secondaryLabel
+        diffLabel.textColor = .appDisable
 
         // Configure user avatar
         userAvatarImageView.contentMode = .scaleAspectFit
@@ -488,11 +745,11 @@ class LeaderBoardCell: UITableViewCell {
         ])
     }
 
-    func configure(with score: LeaderBoardRepository.ScoreEntry, isCurrentUser: Bool, repository: LeaderBoardRepository) {
+    func configure(with score: LeaderBoardRepository.ScoreEntry, isCurrentUser: Bool, viewModel: LeaderBoardViewModel) {
         rankLabel.text = "\(score.rank)"
         nameLabel.text = score.name
-        scoreLabel.text = repository.formatTime(score.score)
-        diffLabel.text = repository.formatTime(score.diff)
+        scoreLabel.text = viewModel.formatScore(score.score)
+        diffLabel.text = viewModel.formatDiffScore(score.diff)
 
         // ユーザーアバターを表示
         if let photoURL = score.photoURL, let url = URL(string: photoURL) {
@@ -506,14 +763,14 @@ class LeaderBoardCell: UITableViewCell {
                     // 画像の読み込みに失敗した場合はデフォルト画像を設定
                     DispatchQueue.main.async { [weak self] in
                         self?.userAvatarImageView.image = UIImage(systemName: "person.circle.fill")
-                        self?.userAvatarImageView.tintColor = .systemBlue
+                        self?.userAvatarImageView.tintColor = .tint
                     }
                 }
             }
         } else {
             // プロフィール画像がない場合はデフォルト画像を設定
             userAvatarImageView.image = UIImage(systemName: "person.circle.fill")
-            userAvatarImageView.tintColor = .systemBlue
+            userAvatarImageView.tintColor = .tint
         }
 
         // Highlight current user's score
@@ -521,6 +778,30 @@ class LeaderBoardCell: UITableViewCell {
             contentView.backgroundColor = UIColor.secondary.withAlphaComponent(0.2)
         } else {
             contentView.backgroundColor = UIColor.clear
+        }
+    }
+    
+    private func updateSelectionVisuals(selected: Bool, animated: Bool) {
+        let animationBlock = {
+            if selected {
+                // Selected state
+                self.contentView.backgroundColor = UIColor.tint.withAlphaComponent(0.2)
+                self.layer.borderWidth = 1
+                self.layer.borderColor = UIColor.tint.cgColor
+            } else {
+                // Normal state - restore original background
+                self.contentView.backgroundColor = UIColor.clear
+                self.layer.borderWidth = 0
+                self.layer.borderColor = UIColor.clear.cgColor
+            }
+        }
+        
+        if animated {
+            UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseInOut]) {
+                animationBlock()
+            }
+        } else {
+            animationBlock()
         }
     }
 }

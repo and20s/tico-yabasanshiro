@@ -3,20 +3,16 @@ package org.uoyabause.android.phone
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
-import androidx.activity.result.ActivityResultLauncher
-import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
 import io.mockk.*
 import org.junit.After
+import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.junit.Assert.*
 import org.junit.runners.JUnit4
 
 @RunWith(JUnit4::class)
 class GameSelectActivityPhonePermissionTest {
-
     @Before
     fun setUp() {
         // Setup basic mocks without Robolectric
@@ -31,7 +27,7 @@ class GameSelectActivityPhonePermissionTest {
     fun `test POST_NOTIFICATIONS permission constant exists`() {
         // Given & When
         val permission = Manifest.permission.POST_NOTIFICATIONS
-        
+
         // Then
         assertNotNull(permission)
         assertTrue(permission.isNotEmpty())
@@ -43,7 +39,7 @@ class GameSelectActivityPhonePermissionTest {
         // Given & When
         val granted = PackageManager.PERMISSION_GRANTED
         val denied = PackageManager.PERMISSION_DENIED
-        
+
         // Then
         assertEquals(0, granted)
         assertEquals(-1, denied)
@@ -55,7 +51,7 @@ class GameSelectActivityPhonePermissionTest {
         // Given & When
         val tiramisu = Build.VERSION_CODES.TIRAMISU // API 33
         val android9 = Build.VERSION_CODES.P // API 28
-        
+
         // Then
         assertEquals(33, tiramisu)
         assertEquals(28, android9)
@@ -67,7 +63,7 @@ class GameSelectActivityPhonePermissionTest {
         // Given
         var permissionGranted = false
         var permissionDenied = false
-        
+
         val callback = { isGranted: Boolean ->
             if (isGranted) {
                 permissionGranted = true
@@ -75,21 +71,21 @@ class GameSelectActivityPhonePermissionTest {
                 permissionDenied = true
             }
         }
-        
+
         // When - Permission granted
         callback(true)
-        
+
         // Then
         assertTrue(permissionGranted)
         assertFalse(permissionDenied)
-        
+
         // Reset
         permissionGranted = false
         permissionDenied = false
-        
+
         // When - Permission denied
         callback(false)
-        
+
         // Then
         assertFalse(permissionGranted)
         assertTrue(permissionDenied)

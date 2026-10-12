@@ -25,27 +25,36 @@ import android.os.Bundle
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.DialogFragment
 import androidx.preference.PreferenceManager
-import java.util.ArrayList
 import org.devmiyax.yabasanshiro.R
 import org.uoyabause.android.PadManager.Companion.padManager
 import org.uoyabause.android.PadManager.Companion.updatePadManager
+import java.util.ArrayList
 
-class InputDevice(var Inputlabel_: CharSequence?, var Inputvalue_: CharSequence?)
-class SelInputDeviceFragment : DialogFragment(), InputManager.InputDeviceListener {
+class InputDevice(
+    var inputLabel: CharSequence?,
+    var inputValue: CharSequence?,
+)
+
+class SelInputDeviceFragment :
+    DialogFragment(),
+    InputManager.InputDeviceListener {
     interface InputDeviceListener {
         fun onDeviceUpdated(target: Int)
-        fun onSelected(target: Int, name: String?, id: String?)
+
+        fun onSelected(
+            target: Int,
+            name: String?,
+            id: String?,
+        )
+
         fun onCancel(target: Int)
     }
 
     var mInputManager: InputManager? = null
-    var listener_: InputDeviceListener? = null
+    var listener: InputDeviceListener? = null
     private var padm: PadManager? = null
-    var InputDevices: MutableList<InputDevice> = ArrayList()
-    var target_ = PLAYER1
-    fun setTarget(target: Int) {
-        target_ = target
-    }
+    var inputDevices: MutableList<InputDevice> = ArrayList()
+    var target = PLAYER1
 
     override fun onAttach(context: Context) {
         super.onAttach(context)
@@ -56,78 +65,84 @@ class SelInputDeviceFragment : DialogFragment(), InputManager.InputDeviceListene
         super.onCreate(savedInstanceState)
     }
 
-    fun setListener(l: InputDeviceListener?) {
-        listener_ = l
-    }
-
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
-        val dialogBuilder = AlertDialog.Builder(
-            requireActivity())
+        val dialogBuilder =
+            AlertDialog.Builder(
+                requireActivity(),
+            )
         val res = resources
         updatePadManager()
         padm = padManager
         padm!!.loadSettings()
-        val sharedPref = PreferenceManager.getDefaultSharedPreferences(
-            requireActivity())
+        val sharedPref =
+            PreferenceManager.getDefaultSharedPreferences(
+                requireActivity(),
+            )
         val selInputdevice: String?
-        selInputdevice = when (target_) {
-            PLAYER1 -> sharedPref.getString("pref_player1_inputdevice", "65535")
-            PLAYER2 -> sharedPref.getString("pref_player2_inputdevice", "65535")
-            else -> sharedPref.getString("pref_player1_inputdevice", "65535")
-        }
-        InputDevices.clear()
+        selInputdevice =
+            when (target) {
+                PLAYER1 -> sharedPref.getString("pref_player1_inputdevice", "65535")
+                PLAYER2 -> sharedPref.getString("pref_player2_inputdevice", "65535")
+                else -> sharedPref.getString("pref_player1_inputdevice", "65535")
+            }
+        inputDevices.clear()
         val items: Array<String?>
-        var insert_index = 0
-        if (target_ == PLAYER1) {
+        var insertIndex = 0
+        if (target == PLAYER1) {
             val pad = InputDevice(res.getString(R.string.onscreen_pad), "-1")
-            InputDevices.add(pad)
+            inputDevices.add(pad)
             items = arrayOfNulls(padm!!.getDeviceCount() + 1)
-            items[insert_index] = res.getString(R.string.onscreen_pad)
-            insert_index++
+            items[insertIndex] = res.getString(R.string.onscreen_pad)
+            insertIndex++
         } else {
             val pad = InputDevice("Disconnect", "-1")
-            InputDevices.add(pad)
+            inputDevices.add(pad)
             items = arrayOfNulls(padm!!.getDeviceCount() + 1)
-            items[insert_index] = "Disconnect"
-            insert_index++
+            items[insertIndex] = "Disconnect"
+            insertIndex++
         }
         for (inputType in 0 until padm!!.getDeviceCount()) {
             val tmp = InputDevice(padm!!.getName(inputType), padm!!.getId(inputType))
-            InputDevices.add(tmp)
-            items[insert_index] = padm!!.getName(inputType)
-            insert_index++
+            inputDevices.add(tmp)
+            items[insertIndex] = padm!!.getName(inputType)
+            insertIndex++
         }
         var selid = 0
-        for (i in InputDevices.indices) {
-            if (InputDevices[i].Inputvalue_ == selInputdevice) {
+        for (i in inputDevices.indices) {
+            if (inputDevices[i].inputValue == selInputdevice) {
                 selid = i
             }
         }
         dialogBuilder.setTitle("Select Input Device")
         dialogBuilder.setSingleChoiceItems(items, selid, null)
         dialogBuilder.setNegativeButton("Cancel") { _, _ ->
-            if (listener_ != null) {
-                listener_!!.onCancel(target_)
+            if (listener != null) {
+                listener!!.onCancel(target)
             }
         }
         dialogBuilder.setPositiveButton(R.string.ok) { dialog, _ ->
             dialog.dismiss()
             val selectedPosition = (dialog as AlertDialog).listView.checkedItemPosition
-            val lsharedPref = PreferenceManager.getDefaultSharedPreferences(
-                requireActivity())
+            val lsharedPref =
+                PreferenceManager.getDefaultSharedPreferences(
+                    requireActivity(),
+                )
             val editor = lsharedPref.edit()
-            val edit_target: String
-            edit_target = when (target_) {
-                PLAYER1 -> "pref_player1_inputdevice"
-                PLAYER2 -> "pref_player2_inputdevice"
-                else -> "pref_player1_inputdevice"
-            }
-            editor.putString(edit_target, InputDevices[selectedPosition].Inputvalue_ as String?)
+            val editTarget: String
+            editTarget =
+                when (target) {
+                    PLAYER1 -> "pref_player1_inputdevice"
+                    PLAYER2 -> "pref_player2_inputdevice"
+                    else -> "pref_player1_inputdevice"
+                }
+            editor.putString(editTarget, inputDevices[selectedPosition].inputValue as String?)
             editor.apply()
-            if (listener_ != null) {
-                listener_!!.onSelected(target_,
-                    InputDevices[selectedPosition].Inputlabel_ as String?,
-                    InputDevices[selectedPosition].Inputvalue_ as String?)
+            if (listener != null) {
+                listener!!.onSelected(
+                    target,
+                    inputDevices[selectedPosition].inputLabel as String?,
+                    inputDevices[selectedPosition].inputValue as String?,
+                )
             }
         }
         return dialogBuilder.create()
@@ -145,19 +160,19 @@ class SelInputDeviceFragment : DialogFragment(), InputManager.InputDeviceListene
 
     override fun onInputDeviceAdded(i: Int) {
         // PadManager.updatePadManager();
-        if (listener_ != null) listener_!!.onDeviceUpdated(target_)
+        if (listener != null) listener!!.onDeviceUpdated(target)
         dismiss()
     }
 
     override fun onInputDeviceRemoved(i: Int) {
         // PadManager.updatePadManager();
-        if (listener_ != null) listener_!!.onDeviceUpdated(target_)
+        if (listener != null) listener!!.onDeviceUpdated(target)
         dismiss()
     }
 
     override fun onInputDeviceChanged(i: Int) {
         // PadManager.updatePadManager();
-        if (listener_ != null) listener_!!.onDeviceUpdated(target_)
+        if (listener != null) listener!!.onDeviceUpdated(target)
         dismiss()
     }
 

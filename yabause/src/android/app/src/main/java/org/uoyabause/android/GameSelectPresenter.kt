@@ -22,7 +22,6 @@ import android.Manifest
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
-import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.database.Cursor
 import android.net.Uri
@@ -36,256 +35,197 @@ import android.view.View
 import android.widget.CheckBox
 import android.widget.Toast
 import androidx.activity.result.ActivityResultLauncher
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
-import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.fragment.app.Fragment
-import androidx.multidex.MultiDexApplication
 import androidx.preference.PreferenceManager
 import com.firebase.ui.auth.AuthUI
-import com.firebase.ui.auth.AuthUI.IdpConfig.GoogleBuilder
 import com.firebase.ui.auth.AuthUI.IdpConfig.AppleBuilder
+import com.firebase.ui.auth.AuthUI.IdpConfig.GoogleBuilder
 import com.firebase.ui.auth.IdpResponse
 import com.google.android.gms.analytics.HitBuilders
 import com.google.android.gms.analytics.Tracker
-import com.google.android.gms.auth.api.signin.GoogleSignIn
-import com.google.android.gms.auth.api.signin.GoogleSignInClient
-import com.google.android.gms.auth.api.signin.GoogleSignInOptions
-import com.google.android.gms.common.api.ApiException
 import com.google.firebase.analytics.FirebaseAnalytics
 import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.database.FirebaseDatabase
-import io.reactivex.Observable
-import io.reactivex.Observer
-import io.reactivex.Single
-import io.reactivex.SingleEmitter
-import io.reactivex.SingleOnSubscribe
-import io.reactivex.android.schedulers.AndroidSchedulers
-import io.reactivex.observers.DisposableSingleObserver
-import io.reactivex.schedulers.Schedulers
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.apache.commons.compress.archivers.sevenz.SevenZFile
 import org.devmiyax.yabasanshiro.BuildConfig
 import org.devmiyax.yabasanshiro.R
 import org.uoyabause.android.YabauseStorage.Companion.storage
-import java.io.*
+import java.io.File
+import java.io.FileDescriptor
+import java.io.FileInputStream
+import java.io.FileNotFoundException
+import java.io.FileOutputStream
+import java.io.IOException
 import java.nio.channels.FileChannel
-import java.util.*
+import java.util.Arrays
+import java.util.Calendar
+import java.util.Locale
 import java.util.zip.ZipFile
 import androidx.appcompat.view.ContextThemeWrapper as ContextThemeWrapper1
-import android.os.Handler
-import android.os.Looper
-import androidx.room.Room
-import kotlinx.coroutines.GlobalScope
-import kotlinx.coroutines.invoke
-import org.uoyabause.android.YabauseStorage.Companion.dao
 
-
+@OptIn(DelicateCoroutinesApi::class)
 class GameSelectPresenter(
     target: Fragment,
-    private val yabauseActivityLauncher: ActivityResultLauncher<Intent>,
+    private var yabauseActivityLauncher: ActivityResultLauncher<Intent>,
     listener: GameSelectPresenterListener,
-) : AutoBackupManager.AutoBackupManagerListener {
+) {
     private val mFirebaseAnalytics: FirebaseAnalytics
-    private var mGoogleSignInClient: GoogleSignInClient? = null
-    private val TAG = "GameSelectPresenter"
+    private val tag = "GameSelectPresenter"
     private var tracker: Tracker? = null
     private val scope = CoroutineScope(Dispatchers.IO)
-    private val autoBackupManager: AutoBackupManager
-
-
-    private var gameSignInActivityLauncher = target.registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
-            try {
-                task.getResult(ApiException::class.java)
-            } catch (apiException: ApiException) {
-                var message = apiException.message
-                if (message == null || message.isEmpty()) {
-                    message = "Fail to login" // target_.getString(R.string.signin_other_error)
-                }
-                AlertDialog.Builder(target_.requireActivity())
-                    .setMessage(message)
-                    .setNeutralButton(android.R.string.ok, null)
-                    .show()
-            }
-        }
-    }
-
 
     interface GameSelectPresenterListener {
-        // void onUpdateGameList( );
         fun onShowMessage(string_id: Int)
+
         fun onShowDialog(message: String)
+
         fun onUpdateDialogMessage(message: String)
+
         fun onDismissDialog()
+
         fun onLoadRows()
 
-        fun onStartSyncBackUp()
-
-        fun onFinishSyncBackUp(result: AutoBackupManager.SyncResult, message: String )
-
         fun onSignOut()
-
     }
 
-    private fun updateGameDatabaseRx(observer: Observer<String>?) {
-        if (observer != null) {
-            Observable.create<String?> { emitter ->
-                val ybs = storage
-                ybs.setProcessEmmiter(emitter)
-                ybs.generateGameDB(refresh_level_)
-                ybs.setProcessEmmiter(null)
-                refresh_level_ = 0
-                emitter.onComplete()
-            }.observeOn(AndroidSchedulers.mainThread())
-                .subscribeOn(Schedulers.io())
-                .subscribe(observer)
+    suspend fun updateGameDatabase(level: Int = 0, onProgress: (String) -> Unit) =
+        withContext(Dispatchers.IO) {
+            val ybs = storage
+            ybs.setProgressCallback { message ->
+                MainScope().launch { onProgress(message) }
+            }
+            ybs.generateGameDB(level)
+            ybs.setProgressCallback(null)
         }
+
+    var targetFragment: Fragment
+    var presenterListener: GameSelectPresenterListener
+
+    fun updateReferences(
+        target: Fragment,
+        launcher: ActivityResultLauncher<Intent>,
+        listener: GameSelectPresenterListener,
+    ) {
+        targetFragment = target
+        yabauseActivityLauncher = launcher
+        presenterListener = listener
     }
 
-    var refresh_level_ = 0
-    val target_: Fragment
-    val listener_: GameSelectPresenterListener
-    private var username_: String? = null
-    private var photo_url_: Uri? = null
-    fun updateGameList(refresh_level: Int, observer: Observer<String>?) {
-        refresh_level_ = refresh_level
-        val activity = target_.activity ?: return
+    private var username: String? = null
+    private var photoUrl: Uri? = null
+
+    fun prepareStorage(): Boolean {
+        val activity = targetFragment.activity ?: return false
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             // Verify that all required contact permissions have been granted.
-            if (ActivityCompat.checkSelfPermission(activity,
-                    Manifest.permission.READ_EXTERNAL_STORAGE)
+            if (ActivityCompat.checkSelfPermission(
+                    activity,
+                    Manifest.permission.READ_EXTERNAL_STORAGE,
+                )
                 != PackageManager.PERMISSION_GRANTED ||
-                ActivityCompat.checkSelfPermission(activity,
-                    Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                ActivityCompat.checkSelfPermission(
+                    activity,
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                )
                 != PackageManager.PERMISSION_GRANTED
             ) {
-                return
+                return false
             }
         }
-        val external_AND_removable_storage_m1 = activity.getExternalFilesDirs(null)
-        if (external_AND_removable_storage_m1.size > 1 && external_AND_removable_storage_m1[1] != null) {
-            val path = external_AND_removable_storage_m1[1].toString()
+        val externalAndRemovableStorageM1 = activity.getExternalFilesDirs(null)
+        if (externalAndRemovableStorageM1.size > 1 && externalAndRemovableStorageM1[1] != null) {
+            // Use Android/media on SD card so games persist after app uninstall.
+            // File migration from old locations is handled by StorageMigrationHelper (with user dialog).
+            val sdCardDataPath = externalAndRemovableStorageM1[1].absolutePath
+            val sdCardRoot = sdCardDataPath.substringBefore("/Android/data")
+            val sdMediaGames = "$sdCardRoot/Android/media/${activity.packageName}/games"
             val ys = storage
-            ys.setExternalStoragePath(path /*external_path*/)
+            ys.setExternalStoragePath(sdMediaGames)
         } else {
             val sharedPrefwrite = PreferenceManager.getDefaultSharedPreferences(activity)
             val editor = sharedPrefwrite.edit()
             editor.putString("pref_game_download_directory", "0")
             editor.apply()
         }
-        updateGameDatabaseRx(observer)
+        return true
     }
 
-    fun signIn( launcher : ActivityResultLauncher<Intent> ) {
-        val intent = AuthUI.getInstance()
-            .createSignInIntentBuilder()
-            .setAvailableProviders(Arrays.asList(
-                GoogleBuilder().build(),
-                AppleBuilder().build()
-            ))
-            .build()
+    fun signIn(launcher: ActivityResultLauncher<Intent>) {
+        val intent =
+            AuthUI
+                .getInstance()
+                .createSignInIntentBuilder()
+                .setAvailableProviders(
+                    Arrays.asList(
+                        GoogleBuilder().build(),
+                        AppleBuilder().build(),
+                    ),
+                ).build()
         launcher.launch(intent)
     }
 
-    var authEmitter: SingleEmitter<FirebaseUser?>? = null
-    fun signIn(singleObserver: DisposableSingleObserver<FirebaseUser>?) {
-        Single.create(SingleOnSubscribe<FirebaseUser?> { emitter ->
-            authEmitter = null
-            val auth = FirebaseAuth.getInstance()
-            val user = auth.currentUser
-            if (user != null) {
-                emitter.onSuccess(user)
-                return@SingleOnSubscribe
-            }
-            authEmitter = emitter
-            target_.startActivity(
-                    AuthUI.getInstance()
-                        .createSignInIntentBuilder()
-                        .setAvailableProviders(Arrays.asList(
-                            GoogleBuilder().build(),
-                            AppleBuilder().build()
-                        ))
-                        .build()
-            )
-        })
-        .subscribeOn(AndroidSchedulers.mainThread())
-        .observeOn(AndroidSchedulers.mainThread())
-        .subscribe(singleObserver!!)
-    }
-
     fun signOut() {
-        AuthUI.getInstance()
-            .signOut(target_.requireActivity())
+        AuthUI
+            .getInstance()
+            .signOut(targetFragment.requireActivity())
             .addOnCompleteListener {
-                this.listener_.onSignOut()
+                this.presenterListener.onSignOut()
                 // user is now signed out
-                // startActivity(new Intent(MyActivity.this, SignInActivity.class));
-                // finish();
-                // listener_.onUpdateGameList();
             }
-
-        if (GoogleSignIn.getLastSignedInAccount(target_.requireActivity()) != null) {
-            mGoogleSignInClient?.signOut()?.addOnCompleteListener(target_.requireActivity()
-            ) { task ->
-                val successful = task.isSuccessful
-                Log.d(TAG,
-                    "signOut(): " + if (successful) "success" else "failed")
-            }
-        }
     }
 
-    fun onSignIn(resultCode: Int, data: Intent?) {
+    fun onSignIn(
+        resultCode: Int,
+        data: Intent?,
+    ) {
         val response = IdpResponse.fromResultIntent(data)
-        // Successfully signed in
-        if (resultCode == Activity.RESULT_OK) {
+        val auth = FirebaseAuth.getInstance()
+        val currentUser = auth.currentUser
 
+        // Check actual auth state instead of resultCode,
+        // because Firebase AuthUI may return RESULT_CANCELED even on successful sign-in
+        if (currentUser != null) {
             val bundle = Bundle()
             mFirebaseAnalytics.logEvent(FirebaseAnalytics.Event.LOGIN, bundle)
 
-            response!!.idpToken
-            val token = response.idpToken
-            // listener_.onUpdateGameList();
-            val auth = FirebaseAuth.getInstance()
-
-            val currentUser = auth.currentUser
-            if (currentUser == null) {
-                Log.d(TAG, "Fail to get currentUser even if Auth is successed!")
-                return
-            }
+            val token = response?.idpToken
 
             val baseref = FirebaseDatabase.getInstance().reference
             val baseurl = "/user-posts/" + currentUser.uid
 
-            // Set username_ based on available information
-            username_ = when {
-                !currentUser.displayName.isNullOrEmpty() -> currentUser.displayName
-                !currentUser.email.isNullOrEmpty() -> currentUser.email!!.split("@").firstOrNull() ?: currentUser.email
-                else -> currentUser.uid
-            }
+            // Set username based on available information
+            username =
+                when {
+                    !currentUser.displayName.isNullOrEmpty() -> currentUser.displayName
+                    !currentUser.email.isNullOrEmpty() -> currentUser.email!!.split("@").firstOrNull() ?: currentUser.email
+                    else -> currentUser.uid
+                }
 
             // Store the username in Firebase
-            baseref.child(baseurl).child("name").setValue(username_)
+            baseref.child(baseurl).child("name").setValue(username)
 
             if (currentUser.email != null) {
                 baseref.child(baseurl).child("email").setValue(currentUser.email)
             }
             // if (currentUser.photoUrl != null) {
             //    baseref.child(baseurl).child("photo").setValue(auth.getCurrentUser().getPhotoUrl());
-            //    photo_url_ = auth.getCurrentUser().getPhotoUrl();
+            //    photoUrl = auth.getCurrentUser().getPhotoUrl();
             // }
             baseref.child(baseurl).child("android_token").setValue(token)
-            FirebaseCrashlytics.getInstance().setUserId(username_ + "_" + currentUser.email)
-            mFirebaseAnalytics.setUserId(username_ + "_" + currentUser.email)
-            mFirebaseAnalytics.setUserProperty("name", username_ + "_" + currentUser.email)
-            val activity: Activity? = target_.activity
+            FirebaseCrashlytics.getInstance().setUserId(username + "_" + currentUser.email)
+            mFirebaseAnalytics.setUserId(username + "_" + currentUser.email)
+            mFirebaseAnalytics.setUserProperty("name", username + "_" + currentUser.email)
+            val activity: Activity? = targetFragment.activity
             val prefs = activity!!.getSharedPreferences("private", Context.MODE_PRIVATE)
             var hasDonated = false
             if (prefs != null) {
@@ -294,74 +234,68 @@ class GameSelectPresenter(
             if (BuildConfig.BUILD_TYPE == "pro" || hasDonated) {
                 baseref.child(baseurl).child("max_backup_count").setValue(256)
             } else {
-                baseref.child(baseurl).child("max_backup_count").setValue(3)
+                baseref.child(baseurl).child("max_backup_count").setValue(0)
             }
-
-            autoBackupManager.startSubscribeBackupMemory(currentUser)
-
 
             // startActivity(SignedInActivity.createIntent(this, response));
-            // val application = target_.activity!!.application as YabauseApplication
-            FirebaseCrashlytics.getInstance().setUserId(username_ + "_" + currentUser.email)
-
-            if (authEmitter != null) {
-                authEmitter!!.onSuccess(currentUser)
-                authEmitter = null
-            }
-
-            mGoogleSignInClient = GoogleSignIn.getClient(target_.requireActivity(),
-                GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_GAMES_SIGN_IN).build())
-            if (mGoogleSignInClient != null) {
-                gameSignInActivityLauncher.launch(mGoogleSignInClient!!.getSignInIntent())
-            }
+            // val application = targetFragment.activity!!.application as YabauseApplication
+            FirebaseCrashlytics.getInstance().setUserId(username + "_" + currentUser.email)
 
             return
         } else {
-            if (authEmitter != null) {
-                authEmitter!!.onError(Throwable("Sigin in failed"))
-                authEmitter = null
-            }
-            username_ = null
-            photo_url_ = null
+            username = null
+            photoUrl = null
 
             // Sign in failed
             if (response == null) {
                 // User pressed back button
-                listener_.onShowMessage(org.devmiyax.yabasanshiro.R.string.sign_in_cancelled)
+                presenterListener.onShowMessage(org.devmiyax.yabasanshiro.R.string.sign_in_cancelled)
                 return
             }
 /*
             if (response.error!!.errorCode == MediaDrm.ErrorCodes.NO_NETWORK) {
-                listener_.onShowMessage(org.devmiyax.yabasanshiro.R.string.no_internet_connection)
+                presenterListener.onShowMessage(org.devmiyax.yabasanshiro.R.string.no_internet_connection)
                 return
             }
             if (response.error!!.errorCode == MediaDrm.ErrorCodes.UNKNOWN_ERROR) {
-                listener_.onShowMessage(org.devmiyax.yabasanshiro.R.string.unknown_error)
+                presenterListener.onShowMessage(org.devmiyax.yabasanshiro.R.string.unknown_error)
                 return
             }
 
  */
         }
-        if (authEmitter != null) {
-            authEmitter!!.onError(Throwable("Sigin in failed"))
-            authEmitter = null
-        }
-        listener_.onShowMessage(org.devmiyax.yabasanshiro.R.string.unknown_sign_in_response)
+        presenterListener.onShowMessage(org.devmiyax.yabasanshiro.R.string.unknown_sign_in_response)
     }
 
-    fun onPause(){
-        autoBackupManager.onPause()
+    fun onPause() {
     }
 
-    fun onResume(){
-        autoBackupManager.onResume()
+    fun onResume() {
+    }
+
+    fun isGameLimitReached(): Boolean {
+        if (YabauseApplication.isPro()) return false
+        if (isOnSubscription) return false
+        val gameCount = YabauseStorage.dao.getAll().size
+        return gameCount >= BuildConfig.MAX_FREE_GAMES
     }
 
     fun onSelectFile(uri: Uri) {
-        Log.i(TAG, "Uri: $uri")
+        if (isGameLimitReached()) {
+            YabauseApplication.checkDonated(targetFragment.requireActivity())
+            return
+        }
 
-        val cursor: Cursor? = target_.requireActivity().contentResolver.query(uri,
-            null, null, null, null)
+        Log.i(tag, "Uri: $uri")
+
+        val cursor: Cursor? =
+            targetFragment.requireActivity().contentResolver.query(
+                uri,
+                null,
+                null,
+                null,
+                null,
+            )
 
         cursor!!.moveToFirst()
         val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
@@ -374,42 +308,36 @@ class GameSelectPresenter(
 
             size = size / 1024 / 1024
 
-            val prefs: SharedPreferences = target_.requireActivity().getSharedPreferences("private",
-                AppCompatActivity.MODE_PRIVATE)
-            val count = prefs.getInt("InstallCount", 3)
+            val message =
+                targetFragment.getString(R.string.install_game_message) + " " + size + targetFragment.getString(R.string.install_game_message_after)
 
-            var message =
-                target_.getString(R.string.install_game_message) + " " + size + target_.getString(R.string.install_game_message_after)
-
-            if (BuildConfig.BUILD_TYPE != "pro") {
-                message += target_.getString(R.string.remaining_installation_count_is) + " " + count + "."
-            }
-
-            AlertDialog.Builder(
-                ContextThemeWrapper1(
-                target_.activity, R.style.Theme_AppCompat)
-            )
-                .setTitle(target_.getString(R.string.do_you_want_to_install))
+            AlertDialog
+                .Builder(
+                    ContextThemeWrapper1(
+                        targetFragment.activity,
+                        R.style.Theme_AppCompat,
+                    ),
+                ).setTitle(targetFragment.getString(R.string.do_you_want_to_install))
                 .setMessage(message)
                 .setPositiveButton(R.string.yes) { _, _ ->
                     selectStorage {
                         installGameFile(uri)
                     }
-                }
-                .setNegativeButton(R.string.no) { _, _ ->
-                    decrementInstallCount()
+                }.setNegativeButton(R.string.no) { _, _ ->
                     openGameFileDirect(uri)
-                }
-                .setCancelable(true)
+                }.setCancelable(true)
                 .show()
         } else if (path.lowercase(Locale.getDefault()).endsWith("zip") /*|| path.lowercase(Locale.getDefault()).endsWith("7z")*/) {
             selectStorage {
                 installZipGameFile(uri, path)
             }
         } else {
-            Toast.makeText(target_.requireContext(),
-                target_.getString(R.string.only_chd_is_supported_for_load_game),
-                Toast.LENGTH_LONG).show()
+            Toast
+                .makeText(
+                    targetFragment.requireContext(),
+                    targetFragment.getString(R.string.only_chd_is_supported_for_load_game),
+                    Toast.LENGTH_LONG,
+                ).show()
         }
         return
     }
@@ -425,20 +353,21 @@ class GameSelectPresenter(
             option += "Internal" + " (" + storage.getAvailableInternalMemorySize() + " free)"
             option += "External" + " (" + storage.getAvailableExternalMemorySize() + " free)"
 
-            AlertDialog.Builder(target_.requireActivity())
-                .setTitle(target_.getString(R.string.which_storage))
-                .setSingleChoiceItems(option, selectItem
+            AlertDialog
+                .Builder(targetFragment.requireActivity())
+                .setTitle(targetFragment.getString(R.string.which_storage))
+                .setSingleChoiceItems(
+                    option,
+                    selectItem,
                 ) { _, which ->
                     selectItem = which
-                }
-                .setPositiveButton(R.string.ok) { _, _ ->
+                }.setPositiveButton(R.string.ok) { _, _ ->
 
                     val editor = sharedPref.edit()
                     editor.putString("pref_install_location", selectItem.toString())
                     editor.apply()
                     onOk()
-                }
-                .setNegativeButton(R.string.cancel) { _, _ -> }
+                }.setNegativeButton(R.string.cancel) { _, _ -> }
                 .setCancelable(true)
                 .show()
         } else {
@@ -447,10 +376,10 @@ class GameSelectPresenter(
     }
 
     @Suppress("BlockingMethodInNonBlockingContext")
-    private fun openGameFileDirect(uri: Uri ) {
+    private fun openGameFileDirect(uri: Uri) {
         scope.launch {
             withContext(Dispatchers.Main) {
-                listener_.onShowDialog("Opening ...")
+                presenterListener.onShowDialog("Opening ...")
             }
 
             var parcelFileDescriptor: ParcelFileDescriptor? = null
@@ -458,7 +387,7 @@ class GameSelectPresenter(
             var apath = ""
             try {
                 parcelFileDescriptor =
-                    target_.requireActivity().contentResolver.openFileDescriptor(uri, "r")
+                    targetFragment.requireActivity().contentResolver.openFileDescriptor(uri, "r")
                 if (parcelFileDescriptor != null) {
                     val fd: Int = parcelFileDescriptor.fd
                     apath = "/proc/self/fd/$fd"
@@ -467,58 +396,47 @@ class GameSelectPresenter(
                 apath = ""
             }
             if (apath == "") {
-                Toast.makeText(target_.requireContext(), "Fail to open $uriString", Toast.LENGTH_LONG)
+                Toast
+                    .makeText(targetFragment.requireContext(), "Fail to open $uriString", Toast.LENGTH_LONG)
                     .show()
                 parcelFileDescriptor?.close()
                 withContext(Dispatchers.Main) {
-                    listener_.onDismissDialog()
+                    presenterListener.onDismissDialog()
                 }
                 return@launch
             }
 
             val gameinfo = GameInfo.genGameInfoFromCHD(apath)
             if (gameinfo != null) {
-
                 val bundle = Bundle()
                 bundle.putString(FirebaseAnalytics.Param.ITEM_ID, gameinfo.product_number)
                 bundle.putString(FirebaseAnalytics.Param.ITEM_NAME, gameinfo.game_title)
                 mFirebaseAnalytics.logEvent(
-                    "yab_start_game", bundle
+                    "yab_start_game",
+                    bundle,
                 )
                 parcelFileDescriptor!!.close()
-                val sharedPref = PreferenceManager.getDefaultSharedPreferences(target_.requireActivity())
-                sharedPref.edit().putString("last_play_Game",gameinfo.game_title).commit()
-                val intent = Intent(target_.requireActivity(), Yabause::class.java)
+                val sharedPref = PreferenceManager.getDefaultSharedPreferences(targetFragment.requireActivity())
+                sharedPref.edit().putString("last_play_Game", gameinfo.game_title).commit()
+                val intent = Intent(targetFragment.requireActivity(), Yabause::class.java)
                 intent.putExtra("org.uoyabause.android.FileNameUri", uri.toString())
                 intent.putExtra("org.uoyabause.android.gamecode", gameinfo.product_number)
                 yabauseActivityLauncher.launch(intent)
-
             } else {
-                Toast.makeText(target_.requireContext(), "Fail to open $apath", Toast.LENGTH_LONG).show()
+                Toast.makeText(targetFragment.requireContext(), "Fail to open $apath", Toast.LENGTH_LONG).show()
                 parcelFileDescriptor?.close()
             }
             withContext(Dispatchers.Main) {
-                listener_.onDismissDialog()
+                presenterListener.onDismissDialog()
             }
-        }
-    }
-
-    fun decrementInstallCount() {
-        val prefs = target_.requireActivity().getSharedPreferences("private",
-            MultiDexApplication.MODE_PRIVATE)
-        var InstallCount = prefs.getInt("InstallCount", 3)
-        InstallCount -= 1
-        if (InstallCount < 0) {
-            InstallCount = 0
-        }
-        with(prefs.edit()) {
-            putInt("InstallCount", InstallCount)
-            apply()
         }
     }
 
     @Throws(IOException::class)
-    fun copyFileO(sourceFile: FileInputStream, destFile: FileOutputStream) {
+    fun copyFileO(
+        sourceFile: FileInputStream,
+        destFile: FileOutputStream,
+    ) {
         var source: FileChannel? = null
         var destination: FileChannel? = null
         try {
@@ -531,10 +449,13 @@ class GameSelectPresenter(
         }
     }
 
-    fun installZipGameFile(uri: Uri, path: String) {
+    fun installZipGameFile(
+        uri: Uri,
+        path: String,
+    ) {
         GlobalScope.launch(Dispatchers.IO) {
             withContext(Dispatchers.Main) {
-                listener_.onShowDialog("Installing ...")
+                presenterListener.onShowDialog("Installing ...")
             }
 
             var zipFileName = ""
@@ -543,7 +464,7 @@ class GameSelectPresenter(
                 zipFileName = storage.getInstallDir().absolutePath + "/" + f.name
                 val fd = File(zipFileName)
                 val parcelFileDescriptor =
-                    target_.requireActivity().contentResolver.openFileDescriptor(uri, "r")
+                    targetFragment.requireActivity().contentResolver.openFileDescriptor(uri, "r")
                 val fileDescriptor: FileDescriptor = parcelFileDescriptor!!.fileDescriptor
                 FileInputStream(fileDescriptor).use { inputStream ->
                     FileOutputStream(fd).use { outputStream ->
@@ -559,7 +480,7 @@ class GameSelectPresenter(
                 var targetFileName = ""
 
                 withContext(Dispatchers.Main) {
-                    listener_.onUpdateDialogMessage("Extracting ${fd.name}")
+                    presenterListener.onUpdateDialogMessage("Extracting ${fd.name}")
                 }
 
                 val installDir = storage.getInstallDir()
@@ -571,7 +492,7 @@ class GameSelectPresenter(
 
                             // パストラバーサル攻撃を防止するための検証
                             if (!outputFile.canonicalPath.startsWith(installDir.canonicalPath)) {
-                                Log.e(TAG, "Entry is outside of the target dir: ${entry.name}")
+                                Log.e(tag, "Entry is outside of the target dir: ${entry.name}")
                                 return@forEach
                             }
 
@@ -595,13 +516,13 @@ class GameSelectPresenter(
                         }
                     }
                 } else if (zipFileName.lowercase(Locale.getDefault()).endsWith("7z")) {
-                    SevenZFile(File(zipFileName)).use { sz ->
+                    SevenZFile.builder().setFile(File(zipFileName)).get().use { sz ->
                         sz.entries.asSequence().forEach { entry ->
                             val outputFile = File(installDir, entry.name)
 
                             // パストラバーサル攻撃を防止するための検証
                             if (!outputFile.canonicalPath.startsWith(installDir.canonicalPath)) {
-                                Log.e(TAG, "Entry is outside of the target dir: ${entry.name}")
+                                Log.e(tag, "Entry is outside of the target dir: ${entry.name}")
                                 return@forEach
                             }
 
@@ -628,24 +549,29 @@ class GameSelectPresenter(
 
                 if (targetFileName.isNotEmpty()) {
                     withContext(Dispatchers.Main) {
-                        decrementInstallCount()
                         fileSelected(File(targetFileName))
                     }
                 } else {
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(target_.requireContext(),
-                            "ISO image is not found!!",
-                            Toast.LENGTH_LONG).show()
+                        Toast
+                            .makeText(
+                                targetFragment.requireContext(),
+                                "ISO image is not found!!",
+                                Toast.LENGTH_LONG,
+                            ).show()
                     }
-                    Log.e(TAG, "ISO image is not found!!")
+                    Log.e(tag, "ISO image is not found!!")
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(target_.requireContext(),
-                        "Fail to copy ${e.localizedMessage}",
-                        Toast.LENGTH_LONG).show()
+                    Toast
+                        .makeText(
+                            targetFragment.requireContext(),
+                            "Fail to copy ${e.localizedMessage}",
+                            Toast.LENGTH_LONG,
+                        ).show()
                 }
-                Log.e(TAG, "Fail to copy ${e.localizedMessage}")
+                Log.e(tag, "Fail to copy ${e.localizedMessage}")
             } finally {
                 val fd = File(zipFileName)
                 if (fd.isFile && fd.exists()) {
@@ -653,7 +579,7 @@ class GameSelectPresenter(
                 }
 
                 withContext(Dispatchers.Main) {
-                    listener_.onDismissDialog()
+                    presenterListener.onDismissDialog()
                 }
             }
         }
@@ -663,7 +589,7 @@ class GameSelectPresenter(
     fun installGameFile(uri: Uri) {
         scope.launch {
             withContext(Dispatchers.Main) {
-                listener_.onShowDialog("Installing ...")
+                presenterListener.onShowDialog("Installing ...")
             }
             try {
                 val parcelFileDescriptor1: ParcelFileDescriptor?
@@ -671,59 +597,64 @@ class GameSelectPresenter(
                 var apath = ""
                 try {
                     parcelFileDescriptor1 =
-                        target_.requireActivity().contentResolver.openFileDescriptor(uri, "r")
+                        targetFragment.requireActivity().contentResolver.openFileDescriptor(uri, "r")
                     if (parcelFileDescriptor1 != null) {
                         val fd: Int = parcelFileDescriptor1.fd
                         apath = "/proc/self/fd/$fd"
                     }
                 } catch (e: Exception) {
-                    Toast.makeText(target_.requireContext(),
-                        "Fail to open $uriString with ${e.localizedMessage}",
-                        Toast.LENGTH_LONG).show()
+                    Toast
+                        .makeText(
+                            targetFragment.requireContext(),
+                            "Fail to open $uriString with ${e.localizedMessage}",
+                            Toast.LENGTH_LONG,
+                        ).show()
                     withContext(Dispatchers.Main) {
-                        listener_.onDismissDialog()
+                        presenterListener.onDismissDialog()
                     }
                     return@launch
                 }
 
                 if (apath == "") {
-                    Toast.makeText(target_.requireContext(), "Fail to open $uriString", Toast.LENGTH_LONG)
+                    Toast
+                        .makeText(targetFragment.requireContext(), "Fail to open $uriString", Toast.LENGTH_LONG)
                         .show()
                     withContext(Dispatchers.Main) {
-                        listener_.onDismissDialog()
+                        presenterListener.onDismissDialog()
                     }
                     return@launch
                 }
 
                 val gameinfo = GameInfo.genGameInfoFromCHD(apath)
                 if (gameinfo != null) {
-
                     val bundle = Bundle()
                     bundle.putString(FirebaseAnalytics.Param.ITEM_ID, gameinfo.product_number)
                     bundle.putString(FirebaseAnalytics.Param.ITEM_NAME, gameinfo.game_title)
                     mFirebaseAnalytics.logEvent(
-                        "yab_start_game", bundle
+                        "yab_start_game",
+                        bundle,
                     )
 
-                    val sharedPref = PreferenceManager.getDefaultSharedPreferences(target_.requireActivity())
-                    sharedPref.edit().putString("last_play_Game",gameinfo.game_title).commit()
+                    val sharedPref = PreferenceManager.getDefaultSharedPreferences(targetFragment.requireActivity())
+                    sharedPref.edit().putString("last_play_Game", gameinfo.game_title).commit()
 
                     parcelFileDescriptor1!!.close()
                 } else {
-                    Toast.makeText(target_.requireContext(), "Fail to open $apath", Toast.LENGTH_LONG)
+                    Toast
+                        .makeText(targetFragment.requireContext(), "Fail to open $apath", Toast.LENGTH_LONG)
                         .show()
                     parcelFileDescriptor1?.close()
                     return@launch
                 }
 
                 withContext(Dispatchers.Main) {
-                    listener_.onUpdateDialogMessage("Installing ${gameinfo.game_title}")
+                    presenterListener.onUpdateDialogMessage("Installing ${gameinfo.game_title}")
                 }
 
                 val fd =
                     File(storage.getInstallDir().absolutePath + "/" + gameinfo.product_number + ".chd")
                 val parcelFileDescriptor =
-                    target_.requireActivity().contentResolver.openFileDescriptor(uri, "r")
+                    targetFragment.requireActivity().contentResolver.openFileDescriptor(uri, "r")
                 val fileDescriptor: FileDescriptor = parcelFileDescriptor!!.fileDescriptor
                 FileInputStream(fileDescriptor).use { inputStream ->
                     FileOutputStream(fd).use { outputStream ->
@@ -737,70 +668,65 @@ class GameSelectPresenter(
                     }
                 }
                 withContext(Dispatchers.Main) {
-
-                    decrementInstallCount()
-
                     fileSelected(fd)
                 }
                 parcelFileDescriptor.close()
             } catch (e: Exception) {
-
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(target_.requireContext(),
-                        "Fail to copy " + e.localizedMessage,
-                        Toast.LENGTH_LONG).show()
+                    Toast
+                        .makeText(
+                            targetFragment.requireContext(),
+                            "Fail to copy " + e.localizedMessage,
+                            Toast.LENGTH_LONG,
+                        ).show()
                 }
             } finally {
                 withContext(Dispatchers.Main) {
-                    listener_.onDismissDialog()
+                    presenterListener.onDismissDialog()
                 }
             }
         }
         return
     }
 
-    fun startGame(item: GameInfo, launcher : ActivityResultLauncher<Intent>) {
-
-        if( autoBackupManager.syncState != AutoBackupManager.BackupSyncState.IDLE){
-            val handler = Handler(Looper.getMainLooper())
-            handler.postDelayed({
-                startGame(item, launcher)
-            }, 1000) //
-            return;
-        }
-
+    fun startGame(
+        item: GameInfo,
+        launcher: ActivityResultLauncher<Intent>,
+    ) {
         GlobalScope.launch(Dispatchers.IO) {
             val c = Calendar.getInstance()
             item.lastplay_date = c.time
             YabauseStorage.dao.update(item)
         }
 
-        val application = target_.requireActivity().application as YabauseApplication
+        val application = targetFragment.requireActivity().application as YabauseApplication
         tracker = application.defaultTracker
         tracker?.send(
-            HitBuilders.EventBuilder()
+            HitBuilders
+                .EventBuilder()
                 .setCategory("Action")
                 .setAction(item.game_title)
-                .build()
+                .build(),
         )
         val bundle = Bundle()
         bundle.putString(FirebaseAnalytics.Param.ITEM_ID, item.product_number)
         bundle.putString(FirebaseAnalytics.Param.ITEM_NAME, item.game_title)
         mFirebaseAnalytics.logEvent(
-            "yab_start_game", bundle
+            "yab_start_game",
+            bundle,
         )
 
-        val sharedPref = PreferenceManager.getDefaultSharedPreferences(target_.requireActivity())
-        sharedPref.edit().putString("last_play_Game",item.game_title).commit()
+        val sharedPref = PreferenceManager.getDefaultSharedPreferences(targetFragment.requireActivity())
+        sharedPref.edit().putString("last_play_Game", item.game_title).commit()
 
         if (item.file_path.contains("content://") == true) {
-            val intent = Intent(target_.activity, Yabause::class.java)
+            val intent = Intent(targetFragment.activity, Yabause::class.java)
             intent.putExtra("org.uoyabause.android.FileNameUri", item.file_path)
             intent.putExtra("org.uoyabause.android.FileDir", item.iso_file_path)
             intent.putExtra("org.uoyabause.android.gamecode", item.product_number)
             launcher.launch(intent)
         } else {
-            val intent = Intent(target_.activity, Yabause::class.java)
+            val intent = Intent(targetFragment.activity, Yabause::class.java)
             intent.putExtra("org.uoyabause.android.FileNameEx", item.file_path)
             intent.putExtra("org.uoyabause.android.gamecode", item.product_number)
             launcher.launch(intent)
@@ -819,84 +745,104 @@ class GameSelectPresenter(
                     // Then try to use email if it exists
                     !auth.currentUser!!.email.isNullOrEmpty() -> {
                         // Use the part before @ in the email
-                        auth.currentUser!!.email!!.split("@").firstOrNull() ?: auth.currentUser!!.email
+                        auth.currentUser!!
+                            .email!!
+                            .split("@")
+                            .firstOrNull() ?: auth.currentUser!!.email
                     }
                     // Finally fall back to UID
                     else -> {
                         auth.currentUser!!.uid
                     }
                 }
-            } else null
+            } else {
+                null
+            }
         }
     val currentUserPhoto: Uri?
         get() {
             val auth = FirebaseAuth.getInstance()
             return if (auth.currentUser != null) {
                 auth.currentUser!!.photoUrl
-            } else null
+            } else {
+                null
+            }
         }
 
-    fun checkSignIn(  launcher : ActivityResultLauncher<Intent> ) {
-        if (target_.activity == null) {
+    fun checkSignIn(launcher: ActivityResultLauncher<Intent>) {
+        if (targetFragment.activity == null) {
             return // Activity has benn detached.
         }
-        val check_prefernce = PreferenceManager.getDefaultSharedPreferences(
-            target_.activity)
-        val do_not_ask = check_prefernce.getBoolean("pref_dont_ask_signin", false)
-        if (do_not_ask == true) {
+        val checkPreference =
+            PreferenceManager.getDefaultSharedPreferences(
+                targetFragment.requireActivity(),
+            )
+        val doNotAsk = checkPreference.getBoolean("pref_dont_ask_signin", false)
+        if (doNotAsk == true) {
             val auth = FirebaseAuth.getInstance()
             if (auth.currentUser != null) {
                 // Get username using the same logic as currentUserName
-                val username = when {
-                    !auth.currentUser!!.displayName.isNullOrEmpty() -> auth.currentUser!!.displayName
-                    !auth.currentUser!!.email.isNullOrEmpty() -> auth.currentUser!!.email!!.split("@").firstOrNull() ?: auth.currentUser!!.email
-                    else -> auth.currentUser!!.uid
-                }
+                val username =
+                    when {
+                        !auth.currentUser!!.displayName.isNullOrEmpty() -> auth.currentUser!!.displayName
+                        !auth.currentUser!!.email.isNullOrEmpty() ->
+                            auth.currentUser!!
+                                .email!!
+                                .split("@")
+                                .firstOrNull()
+                                ?: auth.currentUser!!.email
+                        else -> auth.currentUser!!.uid
+                    }
 
                 FirebaseCrashlytics.getInstance().setUserId(username + "_" + auth.currentUser!!.email)
                 mFirebaseAnalytics.setUserId(username + "_" + auth.currentUser!!.email)
                 mFirebaseAnalytics.setUserProperty("name", username + "_" + auth.currentUser!!.email)
-
-                autoBackupManager.startSubscribeBackupMemory(auth.currentUser!!)
             }
             return
         }
-        val view = target_.requireActivity()
-            .layoutInflater.inflate(R.layout.signin, null)
+        val view =
+            targetFragment
+                .requireActivity()
+                .layoutInflater
+                .inflate(R.layout.signin, null)
         val auth = FirebaseAuth.getInstance()
         if (auth.currentUser == null) {
-            val builder = AlertDialog.Builder(
-                ContextThemeWrapper1(
-                    target_.activity, R.style.Theme_AppCompat)
-            )
-            builder.setTitle(R.string.do_you_want_to_sign_in)
+            val builder =
+                com.google.android.material.dialog.MaterialAlertDialogBuilder(
+                    targetFragment.requireContext(),
+                )
+            builder
+                .setTitle(R.string.do_you_want_to_sign_in)
                 .setCancelable(false)
                 .setView(view)
-                .setPositiveButton(target_.resources.getString(R.string.accept)) { dialog, _ ->
+                .setPositiveButton(targetFragment.resources.getString(R.string.accept)) { dialog, _ ->
                     val cb = view.findViewById<View>(R.id.checkBox_never_ask) as CheckBox
-                    val sharedPrefwrite = PreferenceManager.getDefaultSharedPreferences(target_.activity)
+                    val sharedPrefwrite = PreferenceManager.getDefaultSharedPreferences(targetFragment.requireActivity())
                     val editor = sharedPrefwrite.edit()
                     editor.putBoolean("pref_dont_ask_signin", cb.isChecked)
                     editor.apply()
                     dialog.dismiss()
                     launcher.launch(
-                        AuthUI.getInstance()
+                        AuthUI
+                            .getInstance()
                             .createSignInIntentBuilder()
-                            .setTheme(R.style.Theme_AppCompat)
                             .setTosAndPrivacyPolicyUrls(
                                 "https://www.yabasanshiro.com/terms-of-use",
-                                "https://www.yabasanshiro.com/privacy")
-                            .setAvailableProviders(Arrays.asList(
-                                GoogleBuilder().build(),
-                                AppleBuilder().build()
-                            ))
-                            .build())
-                }
-                .setNegativeButton(target_.resources.getString(R.string.decline)) { dialog, _ ->
+                                "https://www.yabasanshiro.com/privacy",
+                            ).setAvailableProviders(
+                                listOf(
+                                    GoogleBuilder().build(),
+                                    AppleBuilder().build(),
+                                ),
+                            ).build(),
+                    )
+                }.setNegativeButton(targetFragment.resources.getString(R.string.decline)) { dialog, _ ->
                     val cb = view.findViewById<CheckBox>(R.id.checkBox_never_ask)
                     if (cb != null) {
-                        val sharedPrefwrite = PreferenceManager.getDefaultSharedPreferences(
-                            target_.activity)
+                        val sharedPrefwrite =
+                            PreferenceManager.getDefaultSharedPreferences(
+                                targetFragment.requireActivity(),
+                            )
                         val editor = sharedPrefwrite.edit()
                         editor.putBoolean("pref_dont_ask_signin", cb.isChecked)
                         editor.apply()
@@ -906,11 +852,17 @@ class GameSelectPresenter(
             builder.create().show()
         } else {
             // Get username using the same logic as currentUserName
-            val username = when {
-                !auth.currentUser!!.displayName.isNullOrEmpty() -> auth.currentUser!!.displayName
-                !auth.currentUser!!.email.isNullOrEmpty() -> auth.currentUser!!.email!!.split("@").firstOrNull() ?: auth.currentUser!!.email
-                else -> auth.currentUser!!.uid
-            }
+            val username =
+                when {
+                    !auth.currentUser!!.displayName.isNullOrEmpty() -> auth.currentUser!!.displayName
+                    !auth.currentUser!!.email.isNullOrEmpty() ->
+                        auth.currentUser!!
+                            .email!!
+                            .split("@")
+                            .firstOrNull()
+                            ?: auth.currentUser!!.email
+                    else -> auth.currentUser!!.uid
+                }
 
             FirebaseCrashlytics.getInstance().setUserId(username + "_" + auth.currentUser!!.email)
             mFirebaseAnalytics.setUserId(username + "_" + auth.currentUser!!.email)
@@ -919,80 +871,71 @@ class GameSelectPresenter(
     }
 
     fun fileSelected(file: File) {
-
-        if( autoBackupManager.syncState != AutoBackupManager.BackupSyncState.IDLE){
-            val handler = Handler(Looper.getMainLooper())
-            handler.postDelayed({
-                fileSelected(file)
-            }, 1000) //
-            return;
-        }
-
         val apath: String = file.absolutePath
         // save last selected dir
         val sharedPref =
-            PreferenceManager.getDefaultSharedPreferences(target_.requireActivity())
+            PreferenceManager.getDefaultSharedPreferences(targetFragment.requireActivity())
         val editor = sharedPref.edit()
         editor.putString("pref_last_dir", file.parent)
         editor.apply()
 
         GlobalScope.launch(Dispatchers.IO) {
-
             var gameinfo: GameInfo? = YabauseStorage.dao.findByFilePath(apath)
             if (gameinfo == null) {
-                gameinfo = when {
-                    apath.endsWith("CUE", ignoreCase = true) -> GameInfo.genGameInfoFromCUE(apath)
-                    apath.endsWith("MDS", ignoreCase = true) -> GameInfo.genGameInfoFromMDS(apath)
-                    apath.endsWith("CCD", ignoreCase = true) -> GameInfo.genGameInfoFromCCD(apath)
-                    apath.endsWith("CHD", ignoreCase = true) -> GameInfo.genGameInfoFromCHD(apath)
-                    else -> GameInfo.genGameInfoFromIso(apath)
-                }
+                gameinfo =
+                    when {
+                        apath.endsWith("CUE", ignoreCase = true) -> GameInfo.genGameInfoFromCUE(apath)
+                        apath.endsWith("MDS", ignoreCase = true) -> GameInfo.genGameInfoFromMDS(apath)
+                        apath.endsWith("CCD", ignoreCase = true) -> GameInfo.genGameInfoFromCCD(apath)
+                        apath.endsWith("CHD", ignoreCase = true) -> GameInfo.genGameInfoFromCHD(apath)
+                        else -> GameInfo.genGameInfoFromIso(apath)
+                    }
 
-                if( gameinfo != null ) {
+                if (gameinfo != null) {
                     gameinfo.updateState()
                     val c = Calendar.getInstance()
                     gameinfo.lastplay_date = c.time
                     YabauseStorage.dao.insertAll(gameinfo)
                 }
-
-            }else{
+            } else {
                 val c = Calendar.getInstance()
                 gameinfo.lastplay_date = c.time
                 YabauseStorage.dao.update(gameinfo)
             }
 
             if (gameinfo != null) {
-
                 withContext(Dispatchers.Main) {
-                    listener_.onLoadRows()
+                    presenterListener.onLoadRows()
                     val bundle = Bundle()
                     bundle.putString(FirebaseAnalytics.Param.ITEM_ID, gameinfo.product_number)
                     bundle.putString(FirebaseAnalytics.Param.ITEM_NAME, gameinfo.game_title)
                     mFirebaseAnalytics.logEvent(
-                        "yab_start_game", bundle
+                        "yab_start_game",
+                        bundle,
                     )
 
                     val sharedPref =
-                        PreferenceManager.getDefaultSharedPreferences(target_.requireActivity())
+                        PreferenceManager.getDefaultSharedPreferences(targetFragment.requireActivity())
                     sharedPref.edit().putString("last_play_Game", gameinfo.game_title).commit()
 
-                    val intent = Intent(target_.requireActivity(), Yabause::class.java)
+                    val intent = Intent(targetFragment.requireActivity(), Yabause::class.java)
                     intent.putExtra("org.uoyabause.android.FileNameEx", apath)
                     intent.putExtra("org.uoyabause.android.gamecode", gameinfo.product_number)
                     this@GameSelectPresenter.yabauseActivityLauncher.launch(intent)
                 }
-            }else{
+            } else {
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(target_.requireContext(),
-                        "Failed to decrypt $apath",
-                        Toast.LENGTH_LONG).show()
-                    Log.e(TAG, "Failed to decrypt $apath")
+                    Toast
+                        .makeText(
+                            targetFragment.requireContext(),
+                            "Failed to decrypt $apath",
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    Log.e(tag, "Failed to decrypt $apath")
                 }
-
             }
         }
     }
-
 
     companion object {
 //        const val RC_SIGN_IN = 123
@@ -1000,72 +943,10 @@ class GameSelectPresenter(
     }
 
     init {
-        target_ = target
-        listener_ = listener
-        mFirebaseAnalytics = FirebaseAnalytics.getInstance(target_.requireActivity())
-        autoBackupManager = AutoBackupManager(this)
+        targetFragment = target
+        presenterListener = listener
+        mFirebaseAnalytics = FirebaseAnalytics.getInstance(targetFragment.requireActivity())
     }
 
-    var isOnSubscription : Boolean
-        get() = autoBackupManager.isOnSubscription
-        set(value){
-            autoBackupManager.isOnSubscription = value
-        }
-
-    fun syncBackup(){
-        autoBackupManager.syncBackup()
-    }
-
-    fun rollBackMemory( downloadFilename : String, key : String ){
-        autoBackupManager.rollBackMemory(downloadFilename,key){
-
-        }
-    }
-
-    override fun enable(): Boolean {
-        val sharedPref = PreferenceManager.getDefaultSharedPreferences(target_.requireActivity())
-        return sharedPref.getBoolean("auto_backup",true)
-    }
-
-    override fun onFinish(
-        result: AutoBackupManager.SyncResult,
-        message: String,
-        onMainThread: () -> Unit
-    ) {
-        target_.activity?.runOnUiThread {
-            listener_.onFinishSyncBackUp(result, message)
-            onMainThread()
-        }
-    }
-
-    override fun onStartSyncBackUp(){
-        listener_.onStartSyncBackUp()
-    }
-
-    override fun getTitle() : String{
-        val sharedPref = PreferenceManager.getDefaultSharedPreferences(target_.requireActivity())
-        return sharedPref.getString("last_play_Game","")!!
-    }
-
-    override fun askConflict( onResult: ( result : AutoBackupManager.ConflictResult) -> Unit ) {
-        target_.activity?.runOnUiThread {
-            val builder =
-                AlertDialog.Builder(target_.requireContext())
-            builder.setTitle("Conflict detected")
-                .setMessage("Which do you want to use?")
-                //.setIcon(R.drawable.alert_icon)
-                .setPositiveButton("Local") { dialog, which ->
-                    onResult(AutoBackupManager.ConflictResult.LOCAL)
-                }
-                .setNegativeButton("Cloud") { dialog, which ->
-                    onResult(AutoBackupManager.ConflictResult.CLOUD)
-                }
-
-            val dialog = builder.create()
-            dialog.show()
-        }
-
-    }
-
-
+    var isOnSubscription: Boolean = false
 }
