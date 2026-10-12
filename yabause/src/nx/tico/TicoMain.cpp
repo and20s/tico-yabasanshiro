@@ -729,10 +729,43 @@ static void UpdateScreenMode()
 // Settings that apply while the game runs
 //==============================================================================
 
+// The controller each port has (Normal, 3D, LightGun), as the menu stores it.
+static int ControllerMode(int player)
+{
+    const std::string mode = TicoConfig::GetConfigValue(
+        player == 0 ? "controller_1_mode" : "controller_2_mode", "Normal");
+    if (mode == "3D")
+        return 1;
+    // the light gun only plugs into port 1
+    if (mode == "LightGun" && player == 0)
+        return 2;
+    return 0;
+}
+
+// Vulkan's VDP2 composite: Accurate (per-pixel) or Fast (the legacy path).
+// The core reads it every frame, so it changes while the game runs.
+static void ApplyVdp2Composite()
+{
+    if (!g_vulkan)
+        return;
+    const bool accurate = TicoConfig::GetConfigValue("vdp2_composite", "Accurate") != "Fast";
+    VIDCore->SetSettingValue(VDP_SETTING_VDP2_NEW_COMPOSITE, accurate ? 1 : 0);
+}
+
 static void ApplyLiveSettings()
 {
+    ApplyVdp2Composite();
     // paused: the main thread holds the renderer
     ApplyDisplaySettings();
+
+    // a new controller is plugged in right away, as the game would see it
+    const int modes[MAX_PLAYERS] = {ControllerMode(0), ControllerMode(1)};
+    if (modes[0] != g_padMode[0] || modes[1] != g_padMode[1])
+    {
+        g_padMode[0] = modes[0];
+        g_padMode[1] = modes[1];
+        InitPeripherals();
+    }
     if (TicoConfig::GetConfigValue("frame_skip", "enabled") == "enabled")
         EnableAutoFrameSkip();
     else
@@ -1039,6 +1072,7 @@ int main(int argc, char **argv)
                 VulkanOverlay(renderPass, commandBuffer);
             });
         ApplyDisplaySettings();
+        ApplyVdp2Composite();
     }
     else
     {

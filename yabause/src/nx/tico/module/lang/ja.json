@@ -33,5 +33,8 @@
   "settings_yabasanshiro_section_controllers": "コントローラー",
   "settings_yabasanshiro_controller_1": "コントローラー 1",
   "settings_yabasanshiro_controller_2": "コントローラー 2",
-  "settings_yabasanshiro_renderer": "レンダラー"
+  "settings_yabasanshiro_renderer": "レンダラー",
+  "settings_yabasanshiro_vdp2_composite": "VDP2合成",
+  "settings_yabasanshiro_section_sound": "サウンド",
+  "settings_yabasanshiro_scsp_sync": "1フレームあたりのサウンド同期"
 }

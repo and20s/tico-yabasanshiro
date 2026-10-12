@@ -33,5 +33,8 @@
   "settings_yabasanshiro_section_controllers": "手柄",
   "settings_yabasanshiro_controller_1": "手柄 1",
   "settings_yabasanshiro_controller_2": "手柄 2",
-  "settings_yabasanshiro_renderer": "渲染器"
+  "settings_yabasanshiro_renderer": "渲染器",
+  "settings_yabasanshiro_vdp2_composite": "VDP2 合成",
+  "settings_yabasanshiro_section_sound": "声音",
+  "settings_yabasanshiro_scsp_sync": "每帧声音同步次数"
 }

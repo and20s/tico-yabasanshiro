@@ -33,5 +33,8 @@
   "settings_yabasanshiro_section_controllers": "Manettes",
   "settings_yabasanshiro_controller_1": "Manette 1",
   "settings_yabasanshiro_controller_2": "Manette 2",
-  "settings_yabasanshiro_renderer": "Moteur de rendu"
+  "settings_yabasanshiro_renderer": "Moteur de rendu",
+  "settings_yabasanshiro_vdp2_composite": "Composition VDP2",
+  "settings_yabasanshiro_section_sound": "Son",
+  "settings_yabasanshiro_scsp_sync": "Synchronisations du son par image"
 }

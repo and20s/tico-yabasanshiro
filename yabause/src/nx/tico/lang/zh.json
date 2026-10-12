@@ -184,6 +184,7 @@
   "settings_yabasanshiro_rbg_resolution": "RBG 分辨率",
   "settings_yabasanshiro_renderer": "渲染器",
   "settings_yabasanshiro_rotate_screen": "旋转屏幕",
+  "settings_yabasanshiro_scsp_sync": "每帧声音同步次数",
   "settings_yabasanshiro_section_cartridge": "卡带",
   "settings_yabasanshiro_section_controllers": "手柄",
   "settings_yabasanshiro_section_cpu": "CPU",
@@ -193,6 +194,7 @@
   "settings_yabasanshiro_section_frame_rate": "帧率",
   "settings_yabasanshiro_section_orientation": "方向",
   "settings_yabasanshiro_section_rendering": "实验性功能 (可能会导致某些游戏崩溃)",
+  "settings_yabasanshiro_section_sound": "声音",
   "settings_yabasanshiro_section_viewport": "视口",
   "settings_yabasanshiro_sh2_cache": "SH2 缓存",
   "settings_yabasanshiro_show_fps": "显示帧率",
@@ -203,6 +205,7 @@
   "settings_yabasanshiro_tab_input": "输入",
   "settings_yabasanshiro_tab_performance": "性能",
   "settings_yabasanshiro_tab_video": "视频",
+  "settings_yabasanshiro_vdp2_composite": "VDP2 合成",
   "settings_yabasanshiro_video_filter": "视频滤镜",
   "settings_yabasanshiro_video_format": "视频格式"
 }

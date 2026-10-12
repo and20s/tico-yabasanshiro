@@ -166,7 +166,8 @@ namespace YabaSanshiro_Options
             x2 = 1,
             _720P = 2,
             _1080P = 3,
-            FitToEmulation = 4
+            FitToEmulation = 4,
+            x4 = 5 // RBG_RES_4x: appended after FitToEmulation in the core
         };
 
         inline const char *GetValue(Enum e)
@@ -183,6 +184,8 @@ namespace YabaSanshiro_Options
                 return "1080P";
             case Enum::FitToEmulation:
                 return "Fit to Emulation";
+            case Enum::x4:
+                return "4x";
             }
             return Default;
         }
@@ -199,6 +202,8 @@ namespace YabaSanshiro_Options
                 return Enum::_1080P;
             if (strcmp(v, "Fit to Emulation") == 0)
                 return Enum::FitToEmulation;
+            if (strcmp(v, "4x") == 0)
+                return Enum::x4;
             return Enum::Original;
         }
         inline int ToInt(Enum e) { return static_cast<int>(e); }
@@ -265,7 +270,9 @@ namespace YabaSanshiro_Options
         {
             PerspectiveCorrection = 0,
             CPUTessellation = 1,
-            GPUTessellation = 2
+            GPUTessellation = 2,
+            // Vulkan only: the OpenGL core falls back to GPU tessellation
+            ComputeRasterizer = 3
         };
 
         inline const char *GetValue(Enum e)
@@ -278,6 +285,8 @@ namespace YabaSanshiro_Options
                 return "CPU Tessellation";
             case Enum::GPUTessellation:
                 return "GPU Tessellation";
+            case Enum::ComputeRasterizer:
+                return "Compute Rasterizer";
             }
             return Default;
         }
@@ -290,6 +299,8 @@ namespace YabaSanshiro_Options
                 return Enum::PerspectiveCorrection;
             if (strcmp(v, "CPU Tessellation") == 0)
                 return Enum::CPUTessellation;
+            if (strcmp(v, "Compute Rasterizer") == 0)
+                return Enum::ComputeRasterizer;
             return Enum::GPUTessellation;
         }
         inline int ToInt(Enum e) { return static_cast<int>(e); }

@@ -184,6 +184,7 @@
   "settings_yabasanshiro_rbg_resolution": "RBG解像度",
   "settings_yabasanshiro_renderer": "レンダラー",
   "settings_yabasanshiro_rotate_screen": "画面回転",
+  "settings_yabasanshiro_scsp_sync": "1フレームあたりのサウンド同期",
   "settings_yabasanshiro_section_cartridge": "カートリッジ",
   "settings_yabasanshiro_section_controllers": "コントローラー",
   "settings_yabasanshiro_section_cpu": "CPU",
@@ -193,6 +194,7 @@
   "settings_yabasanshiro_section_frame_rate": "フレームレート",
   "settings_yabasanshiro_section_orientation": "画面方向",
   "settings_yabasanshiro_section_rendering": "試験的な機能 (一部のゲームがクラッシュする可能性があります)",
+  "settings_yabasanshiro_section_sound": "サウンド",
   "settings_yabasanshiro_section_viewport": "表示領域",
   "settings_yabasanshiro_sh2_cache": "SH2キャッシュ",
   "settings_yabasanshiro_show_fps": "FPS表示",
@@ -203,6 +205,7 @@
   "settings_yabasanshiro_tab_input": "入力",
   "settings_yabasanshiro_tab_performance": "パフォーマンス",
   "settings_yabasanshiro_tab_video": "ビデオ",
+  "settings_yabasanshiro_vdp2_composite": "VDP2合成",
   "settings_yabasanshiro_video_filter": "ビデオフィルター",
   "settings_yabasanshiro_video_format": "ビデオフォーマット"
 }

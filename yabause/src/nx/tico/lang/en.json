@@ -184,6 +184,7 @@
   "settings_yabasanshiro_rbg_resolution": "RBG Resolution",
   "settings_yabasanshiro_renderer": "Renderer",
   "settings_yabasanshiro_rotate_screen": "Rotate Screen",
+  "settings_yabasanshiro_scsp_sync": "Sound syncs per frame",
   "settings_yabasanshiro_section_cartridge": "Cartridge",
   "settings_yabasanshiro_section_controllers": "Controllers",
   "settings_yabasanshiro_section_cpu": "CPU",
@@ -193,6 +194,7 @@
   "settings_yabasanshiro_section_frame_rate": "Frame Rate",
   "settings_yabasanshiro_section_orientation": "Orientation",
   "settings_yabasanshiro_section_rendering": "Experimental features (May crash some games)",
+  "settings_yabasanshiro_section_sound": "Sound",
   "settings_yabasanshiro_section_viewport": "Viewport",
   "settings_yabasanshiro_sh2_cache": "SH2 Cache",
   "settings_yabasanshiro_show_fps": "Show FPS",
@@ -203,6 +205,7 @@
   "settings_yabasanshiro_tab_input": "Input",
   "settings_yabasanshiro_tab_performance": "Performance",
   "settings_yabasanshiro_tab_video": "Video",
+  "settings_yabasanshiro_vdp2_composite": "VDP2 composite",
   "settings_yabasanshiro_video_filter": "Video Filter",
   "settings_yabasanshiro_video_format": "Video Format"
 }

@@ -33,5 +33,8 @@
   "settings_yabasanshiro_section_controllers": "Контроллеры",
   "settings_yabasanshiro_controller_1": "Контроллер 1",
   "settings_yabasanshiro_controller_2": "Контроллер 2",
-  "settings_yabasanshiro_renderer": "Рендерер"
+  "settings_yabasanshiro_renderer": "Рендерер",
+  "settings_yabasanshiro_vdp2_composite": "Композиция VDP2",
+  "settings_yabasanshiro_section_sound": "Звук",
+  "settings_yabasanshiro_scsp_sync": "Синхронизаций звука за кадр"
 }

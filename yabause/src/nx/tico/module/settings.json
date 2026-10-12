@@ -95,6 +95,10 @@
                   "value": "2x"
                 },
                 {
+                  "label": "4x",
+                  "value": "4x"
+                },
+                {
                   "label": "720P",
                   "value": "720P"
                 },
@@ -151,9 +155,33 @@
                 {
                   "label": "GPU Tessellation",
                   "value": "GPU Tessellation"
+                },
+                {
+                  "label": "Compute Rasterizer (Vulkan)",
+                  "value": "Compute Rasterizer"
                 }
               ],
               "restart": true
+            },
+            {
+              "key": "vdp2_composite",
+              "label": "settings_yabasanshiro_vdp2_composite",
+              "type": "enum",
+              "default": "Accurate",
+              "choices": [
+                {
+                  "label": "Accurate (per-pixel)",
+                  "value": "Accurate"
+                },
+                {
+                  "label": "Fast",
+                  "value": "Fast"
+                }
+              ],
+              "depends_on": {
+                "key": "renderer",
+                "value": "vulkan"
+              }
             }
           ]
         },
@@ -378,6 +406,56 @@
               "restart": true
             }
           ]
+        },
+        {
+          "title": "settings_yabasanshiro_section_sound",
+          "options": [
+            {
+              "key": "scsp_sync",
+              "label": "settings_yabasanshiro_scsp_sync",
+              "type": "enum",
+              "default": "4",
+              "choices": [
+                {
+                  "label": "1",
+                  "value": "1"
+                },
+                {
+                  "label": "2",
+                  "value": "2"
+                },
+                {
+                  "label": "4",
+                  "value": "4"
+                },
+                {
+                  "label": "8",
+                  "value": "8"
+                },
+                {
+                  "label": "16",
+                  "value": "16"
+                },
+                {
+                  "label": "32",
+                  "value": "32"
+                },
+                {
+                  "label": "64",
+                  "value": "64"
+                },
+                {
+                  "label": "128",
+                  "value": "128"
+                },
+                {
+                  "label": "255",
+                  "value": "255"
+                }
+              ],
+              "restart": true
+            }
+          ]
         }
       ]
     },
@@ -405,8 +483,7 @@
                   "label": "Light Gun",
                   "value": "LightGun"
                 }
-              ],
-              "restart": true
+              ]
             },
             {
               "key": "controller_2_mode",
@@ -422,8 +499,7 @@
                   "label": "3D Pad",
                   "value": "3D"
                 }
-              ],
-              "restart": true
+              ]
             }
           ]
         }

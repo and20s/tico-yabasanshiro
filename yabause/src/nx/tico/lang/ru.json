@@ -183,6 +183,7 @@
   "settings_yabasanshiro_rbg_resolution": "Разрешение RBG",
   "settings_yabasanshiro_renderer": "Рендерер",
   "settings_yabasanshiro_rotate_screen": "Повернуть экран",
+  "settings_yabasanshiro_scsp_sync": "Синхронизаций звука за кадр",
   "settings_yabasanshiro_section_cartridge": "Картридж",
   "settings_yabasanshiro_section_controllers": "Контроллеры",
   "settings_yabasanshiro_section_cpu": "CPU",
@@ -192,6 +193,7 @@
   "settings_yabasanshiro_section_frame_rate": "Частота кадров",
   "settings_yabasanshiro_section_orientation": "Ориентация",
   "settings_yabasanshiro_section_rendering": "Экспериментальные функции (некоторые игры могут вылетать)",
+  "settings_yabasanshiro_section_sound": "Звук",
   "settings_yabasanshiro_section_viewport": "Область вывода",
   "settings_yabasanshiro_sh2_cache": "Кэш SH2",
   "settings_yabasanshiro_show_fps": "Показывать FPS",
@@ -202,6 +204,7 @@
   "settings_yabasanshiro_tab_input": "Ввод",
   "settings_yabasanshiro_tab_performance": "Производительность",
   "settings_yabasanshiro_tab_video": "Видео",
+  "settings_yabasanshiro_vdp2_composite": "Композиция VDP2",
   "settings_yabasanshiro_video_filter": "Видеофильтр",
   "settings_yabasanshiro_video_format": "Формат видео"
 }

@@ -33,5 +33,8 @@
   "settings_yabasanshiro_section_controllers": "Controllers",
   "settings_yabasanshiro_controller_1": "Controller 1",
   "settings_yabasanshiro_controller_2": "Controller 2",
-  "settings_yabasanshiro_renderer": "Renderer"
+  "settings_yabasanshiro_renderer": "Renderer",
+  "settings_yabasanshiro_vdp2_composite": "VDP2 composite",
+  "settings_yabasanshiro_section_sound": "Sound",
+  "settings_yabasanshiro_scsp_sync": "Sound syncs per frame"
 }

@@ -7,6 +7,7 @@
 #include "TicoLogger.h"
 #include <fstream>
 #include <sys/stat.h>
+#include <cstdlib>
 #include <cstring>
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -156,16 +157,21 @@ int YabaSanshiroConfig::GetFrameLimit() const
 
 int YabaSanshiroConfig::GetSCSPSync() const
 {
-    if (m_config.contains("scsp_sync") && m_config["scsp_sync"].is_number_integer())
+    // a number, or its text as the tico settings store it
+    int val = 4; // Android's default
+    if (m_config.contains("scsp_sync"))
     {
-        int val = m_config["scsp_sync"].get<int>();
-        if (val < 1)
-            val = 1;
-        if (val > 256)
-            val = 256;
-        return val;
+        const auto &v = m_config["scsp_sync"];
+        if (v.is_number_integer())
+            val = v.get<int>();
+        else if (v.is_string())
+            val = atoi(v.get<std::string>().c_str());
     }
-    return 1; // default
+    if (val < 1)
+        val = 1;
+    if (val > 255)
+        val = 255;
+    return val;
 }
 
 int YabaSanshiroConfig::GetFrameSkip() const
