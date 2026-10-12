@@ -495,6 +495,8 @@ static void GlGiveBack()
 // Vulkan (NVK)
 //==============================================================================
 
+extern "C" void nouveau_horizon_runtime_shutdown(void (*step)(const char *what));
+
 static Renderer *s_renderer = nullptr;
 static bool s_vulkanReady = false;
 
@@ -523,6 +525,10 @@ static void DeinitVulkan()
     s_vulkanReady = false;
     delete s_renderer;
     s_renderer = nullptr;
+    // Whatever the core leaked still references the driver, which keeps its
+    // nvmap handles and the pages behind them: the homebrew loader then fails
+    // to take the memory back (0xD401). Close the sessions regardless.
+    nouveau_horizon_runtime_shutdown(nullptr);
 }
 
 // The overlay's view of the render pass the renderer has open.
