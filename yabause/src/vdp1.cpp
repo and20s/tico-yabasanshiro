@@ -42,7 +42,6 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
     \brief VDP1 emulation functions.
 */
 
-
 #include <stdlib.h>
 #include "yabause.h"
 #include "vdp1.h"
@@ -61,130 +60,150 @@ using std::condition_variable;
 using std::mutex;
 namespace chrono = std::chrono;
 
-extern "C" {
-u8 * Vdp1Ram;
-u8 * Vdp1FrameBuffer[2];
-VideoInterface_struct *VIDCore = NULL;
-extern VideoInterface_struct *VIDCoreList[];
-extern YabEventQueue * rcv_evqueue;
-Vdp1 * Vdp1Regs;
-Vdp1External_struct Vdp1External = { 0 };
+// Atomic helpers for Vdp1External.current_frame – the VDP thread flips this
+// while the SH2 thread uses it as an array index into Vdp1FrameBuffer[].
+// A torn/reordered read could yield an OOB index (neither 0 nor 1).
+static inline int vdp1_current_frame_load(void)
+{
+   return __atomic_load_n(&Vdp1External.current_frame, __ATOMIC_ACQUIRE);
 }
 
-atomic<int> vdp1_clock{ 0 };
+extern "C"
+{
+   u8 *Vdp1Ram;
+   u8 *Vdp1FrameBuffer[2];
+   VideoInterface_struct *VIDCore = NULL;
+   extern VideoInterface_struct *VIDCoreList[];
+   extern YabEventQueue *rcv_evqueue;
+   Vdp1 *Vdp1Regs;
+   Vdp1External_struct Vdp1External = {0};
+}
+
+atomic<int> vdp1_clock{0};
 condition_variable vdp1_clock_cv;
 mutex vdp1_clock_mtx;
 
-
-void Vdp1_onHblank() {
+void Vdp1_onHblank()
+{
 #if 0
   {
     std::unique_lock<std::mutex> lk(vdp1_clock_mtx);
     vdp1_clock += 100;
   }
   if (Vdp1External.status == VDP1_STATUS_RUNNING) {
-#if defined(YAB_ASYNC_RENDERING)
-    vdp1_clock_cv.notify_one();
-#else
-    Vdp1DrawCommands(Vdp1Ram, Vdp1Regs, NULL);
-#endif
+    if (yabsys.UseAsyncRendering) {
+      vdp1_clock_cv.notify_one();
+    } else {
+      Vdp1DrawCommands(Vdp1Ram, Vdp1Regs, NULL);
+    }
   }
 #else
-  vdp1_clock += 100;
+   vdp1_clock += 100;
 #endif
 }
 
-
 //////////////////////////////////////////////////////////////////////////////
 
-extern "C" u8 FASTCALL Vdp1RamReadByte(u32 addr) {
+extern "C" u8 FASTCALL Vdp1RamReadByte(u32 addr)
+{
    addr &= 0x7FFFF;
    return T1ReadByte(Vdp1Ram, addr);
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
-extern "C" u16 FASTCALL Vdp1RamReadWord(u32 addr) {
-    addr &= 0x07FFFF;
-    return T1ReadWord(Vdp1Ram, addr);
+extern "C" u16 FASTCALL Vdp1RamReadWord(u32 addr)
+{
+   addr &= 0x07FFFF;
+   return T1ReadWord(Vdp1Ram, addr);
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
-extern "C" u32 FASTCALL Vdp1RamReadLong(u32 addr) {
+extern "C" u32 FASTCALL Vdp1RamReadLong(u32 addr)
+{
    addr &= 0x7FFFF;
    return T1ReadLong(Vdp1Ram, addr);
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
-extern "C" void FASTCALL Vdp1RamWriteByte(u32 addr, u8 val) {
+extern "C" void FASTCALL Vdp1RamWriteByte(u32 addr, u8 val)
+{
    addr &= 0x7FFFF;
    T1WriteByte(Vdp1Ram, addr, val);
    vdp1_clock = 0;
 }
 
 //////////////////////////////////////////////////////////////////////////////
-extern "C" void FASTCALL Vdp1RamWriteWord(u32 addr, u16 val) {
+extern "C" void FASTCALL Vdp1RamWriteWord(u32 addr, u16 val)
+{
    addr &= 0x7FFFF;
    T1WriteWord(Vdp1Ram, addr, val);
    vdp1_clock = 0;
 }
 
 //////////////////////////////////////////////////////////////////////////////
-extern "C" void FASTCALL Vdp1RamWriteLong(u32 addr, u32 val) {
+extern "C" void FASTCALL Vdp1RamWriteLong(u32 addr, u32 val)
+{
    addr &= 0x7FFFF;
-   //if(addr == 0x00000)
-   //LOG("Vdp1RamWriteLong @ %08X", CurrentSH2->regs.PC);
+   // if(addr == 0x00000)
+   // LOG("Vdp1RamWriteLong @ %08X", CurrentSH2->regs.PC);
    T1WriteLong(Vdp1Ram, addr, val);
    vdp1_clock = 0;
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
-extern "C" u8 FASTCALL Vdp1FrameBufferReadByte(u32 addr) {
+extern "C" u8 FASTCALL Vdp1FrameBufferReadByte(u32 addr)
+{
    addr &= 0x3FFFF;
-   //if (VIDCore->Vdp1ReadFrameBuffer && addr < 0x30000 ){
-   //  u8 val;
-   //  VdpLockVram();
-   //  VIDCore->Vdp1ReadFrameBuffer(0, addr, &val);
-   //  VdpUnLockVram();
-   //  return val;
-   //}
-   return T1ReadByte(Vdp1FrameBuffer[Vdp1External.current_frame], addr);
+   // if (VIDCore->Vdp1ReadFrameBuffer && addr < 0x30000 ){
+   //   u8 val;
+   //   VdpLockVram();
+   //   VIDCore->Vdp1ReadFrameBuffer(0, addr, &val);
+   //   VdpUnLockVram();
+   //   return val;
+   // }
+   return T1ReadByte(Vdp1FrameBuffer[vdp1_current_frame_load()], addr);
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
-extern "C" u16 FASTCALL Vdp1FrameBufferReadWord(u32 addr) {
+extern "C" u16 FASTCALL Vdp1FrameBufferReadWord(u32 addr)
+{
    addr &= 0x3FFFF;
-   if (VIDCore->Vdp1ReadFrameBuffer ){
-     u16 val;
-     VdpLockVram();
-     VIDCore->Vdp1ReadFrameBuffer(1, addr, &val);
-     VdpUnLockVram();
-     return val;
-   } 
-   return T1ReadWord(Vdp1FrameBuffer[Vdp1External.current_frame], addr);
-}
-
-//////////////////////////////////////////////////////////////////////////////
-
-extern "C" u32 FASTCALL Vdp1FrameBufferReadLong(u32 addr) {
-   addr &= 0x3FFFF;
-   if (VIDCore->Vdp1ReadFrameBuffer ){
-     u32 val;
-     VdpLockVram();
-     VIDCore->Vdp1ReadFrameBuffer(2, addr, &val);
-     VdpUnLockVram();
-     return val;
+   if (VIDCore->Vdp1ReadFrameBuffer)
+   {
+      u16 val;
+      VdpLockVram();
+      VIDCore->Vdp1ReadFrameBuffer(1, addr, &val);
+      VdpUnLockVram();
+      return val;
    }
-   return T1ReadLong(Vdp1FrameBuffer[Vdp1External.current_frame], addr);
+   return T1ReadWord(Vdp1FrameBuffer[vdp1_current_frame_load()], addr);
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
-extern "C" void FASTCALL Vdp1FrameBufferWriteByte(u32 addr, u8 val) {
+extern "C" u32 FASTCALL Vdp1FrameBufferReadLong(u32 addr)
+{
+   addr &= 0x3FFFF;
+   if (VIDCore->Vdp1ReadFrameBuffer)
+   {
+      u32 val;
+      VdpLockVram();
+      VIDCore->Vdp1ReadFrameBuffer(2, addr, &val);
+      VdpUnLockVram();
+      return val;
+   }
+   return T1ReadLong(Vdp1FrameBuffer[vdp1_current_frame_load()], addr);
+}
+
+//////////////////////////////////////////////////////////////////////////////
+
+extern "C" void FASTCALL Vdp1FrameBufferWriteByte(u32 addr, u8 val)
+{
    addr &= 0x3FFFF;
 
    if (VIDCore->Vdp1WriteFrameBuffer)
@@ -194,12 +213,13 @@ extern "C" void FASTCALL Vdp1FrameBufferWriteByte(u32 addr, u8 val) {
       VdpUnLockVram();
    }
 
-   T1WriteByte(Vdp1FrameBuffer[Vdp1External.current_frame], addr, val);
+   T1WriteByte(Vdp1FrameBuffer[vdp1_current_frame_load()], addr, val);
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
-extern "C" void FASTCALL Vdp1FrameBufferWriteWord(u32 addr, u16 val) {
+extern "C" void FASTCALL Vdp1FrameBufferWriteWord(u32 addr, u16 val)
+{
    addr &= 0x3FFFF;
 
    if (VIDCore->Vdp1WriteFrameBuffer)
@@ -209,12 +229,13 @@ extern "C" void FASTCALL Vdp1FrameBufferWriteWord(u32 addr, u16 val) {
       VdpUnLockVram();
    }
 
-   T1WriteWord(Vdp1FrameBuffer[Vdp1External.current_frame], addr, val);
+   T1WriteWord(Vdp1FrameBuffer[vdp1_current_frame_load()], addr, val);
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
-extern "C" void FASTCALL Vdp1FrameBufferWriteLong(u32 addr, u32 val) {
+extern "C" void FASTCALL Vdp1FrameBufferWriteLong(u32 addr, u32 val)
+{
    addr &= 0x3FFFF;
 
    if (VIDCore->Vdp1WriteFrameBuffer)
@@ -224,18 +245,19 @@ extern "C" void FASTCALL Vdp1FrameBufferWriteLong(u32 addr, u32 val) {
       VdpUnLockVram();
    }
 
-   T1WriteLong(Vdp1FrameBuffer[Vdp1External.current_frame], addr, val);
+   T1WriteLong(Vdp1FrameBuffer[vdp1_current_frame_load()], addr, val);
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
 //////////////////////////////////////////////////////////////////////////////
 
-extern "C" int Vdp1Init(void) {
-   if ((Vdp1Regs = (Vdp1 *) malloc(sizeof(Vdp1))) == NULL)
+extern "C" int Vdp1Init(void)
+{
+   if ((Vdp1Regs = (Vdp1 *)malloc(sizeof(Vdp1))) == NULL)
       return -1;
 
-   memset(Vdp1Regs, 0, sizeof(Vdp1Regs));      
+   memset(Vdp1Regs, 0, sizeof(Vdp1Regs));
 
    if ((Vdp1Ram = T1MemoryInit(0x80000)) == NULL)
       return -1;
@@ -245,7 +267,7 @@ extern "C" int Vdp1Init(void) {
       return -1;
 
    if ((Vdp1FrameBuffer[1] = T1MemoryInit(0x40000)) == NULL)
-     return -1;
+      return -1;
 
    Vdp1External.status = VDP1_STATUS_IDLE;
    Vdp1External.disptoggle = 1;
@@ -259,7 +281,8 @@ extern "C" int Vdp1Init(void) {
 
 //////////////////////////////////////////////////////////////////////////////
 
-extern "C" void Vdp1DeInit(void) {
+extern "C" void Vdp1DeInit(void)
+{
    if (Vdp1Regs)
       free(Vdp1Regs);
    Vdp1Regs = NULL;
@@ -271,7 +294,7 @@ extern "C" void Vdp1DeInit(void) {
    if (Vdp1FrameBuffer[0])
       T1MemoryDeInit(Vdp1FrameBuffer[0]);
    if (Vdp1FrameBuffer[1])
-     T1MemoryDeInit(Vdp1FrameBuffer[1]);
+      T1MemoryDeInit(Vdp1FrameBuffer[1]);
 
    Vdp1FrameBuffer[0] = NULL;
    Vdp1FrameBuffer[1] = NULL;
@@ -279,7 +302,8 @@ extern "C" void Vdp1DeInit(void) {
 
 //////////////////////////////////////////////////////////////////////////////
 
-extern "C" int VideoInit(int coreid) {
+extern "C" int VideoInit(int coreid)
+{
    return VideoChangeCore(coreid);
 }
 
@@ -324,7 +348,8 @@ extern "C" int VideoChangeCore(int coreid)
 
 //////////////////////////////////////////////////////////////////////////////
 
-extern "C" void VideoDeInit(void) {
+extern "C" void VideoDeInit(void)
+{
    if (VIDCore)
       VIDCore->DeInit();
    VIDCore = NULL;
@@ -332,14 +357,15 @@ extern "C" void VideoDeInit(void) {
 
 //////////////////////////////////////////////////////////////////////////////
 
-extern "C" void Vdp1Reset(void) {
-  
+extern "C" void Vdp1Reset(void)
+{
+
    Vdp1Regs->PTMR = 0;
    Vdp1Regs->MODR = 0x1000; // VDP1 Version 1
-   //Vdp1Regs->TVMR = 0; // undefined when reset
-   //Vdp1Regs->EWDR = 0; // undefined when reset
-   //Vdp1Regs->EWLR = 0; // undefined when reset
-   //Vdp1Regs->EWRR = 0; // undefined when reset
+   // Vdp1Regs->TVMR = 0; // undefined when reset
+   // Vdp1Regs->EWDR = 0; // undefined when reset
+   // Vdp1Regs->EWLR = 0; // undefined when reset
+   // Vdp1Regs->EWRR = 0; // undefined when reset
    Vdp1Regs->ENDR = 0;
    VIDCore->Vdp1Reset();
 
@@ -356,19 +382,19 @@ extern "C" void Vdp1Reset(void) {
    T1WriteWord(Vdp1Ram, 0x40000, 0x8000);
 
    vdp1_clock = 0;
-
 }
 
-extern "C" int VideoSetSetting( int type, int value )
+extern "C" int VideoSetSetting(int type, int value)
 {
-	if (VIDCore) VIDCore->SetSettingValue( type, value );
-	return 0;
+   if (VIDCore)
+      VIDCore->SetSettingValue(type, value);
+   return 0;
 }
-
 
 //////////////////////////////////////////////////////////////////////////////
 
-extern "C" u8 FASTCALL Vdp1ReadByte(u32 addr) {
+extern "C" u8 FASTCALL Vdp1ReadByte(u32 addr)
+{
    addr &= 0xFF;
    LOG("trying to byte-read a Vdp1 register\n");
    return 0;
@@ -376,32 +402,36 @@ extern "C" u8 FASTCALL Vdp1ReadByte(u32 addr) {
 
 //////////////////////////////////////////////////////////////////////////////
 
-extern "C" u16 FASTCALL Vdp1ReadWord(u32 addr) {
+extern "C" u16 FASTCALL Vdp1ReadWord(u32 addr)
+{
    addr &= 0xFF;
-   switch(addr) {
-      case 0x10:
-        FRAMELOG("[VDP1] Read EDSR %X line = %d\n", Vdp1Regs->EDSR, yabsys.LineCount);
-        return Vdp1Regs->EDSR;
-      case 0x12:
-        FRAMELOG("[VDP1] Read LOPR %X line = %d\n", Vdp1Regs->LOPR, yabsys.LineCount);
-        return Vdp1Regs->LOPR;
-      case 0x14:
-        FRAMELOG("[VDP1] Read COPR %X line = %d\n", Vdp1Regs->COPR, yabsys.LineCount);
-        return Vdp1Regs->COPR;
-      case 0x16: {
-        u16 mode = 0x1000 | ((Vdp1Regs->PTMR & 2) << 7) | ((Vdp1Regs->FBCR & 0x1E) << 3) | (Vdp1Regs->TVMR & 0xF);
-        FRAMELOG("[VDP1] Read MODR %X line = %d\n", mode, yabsys.LineCount);
-        return mode;
-      }
-      default:
-         LOG("[VDP1] trying to read a Vdp1 write-only register\n");
+   switch (addr)
+   {
+   case 0x10:
+      FRAMELOG("[VDP1] Read EDSR %X line = %d\n", Vdp1Regs->EDSR, yabsys.LineCount);
+      return Vdp1Regs->EDSR;
+   case 0x12:
+      FRAMELOG("[VDP1] Read LOPR %X line = %d\n", Vdp1Regs->LOPR, yabsys.LineCount);
+      return Vdp1Regs->LOPR;
+   case 0x14:
+      FRAMELOG("[VDP1] Read COPR %X line = %d\n", Vdp1Regs->COPR, yabsys.LineCount);
+      return Vdp1Regs->COPR;
+   case 0x16:
+   {
+      u16 mode = 0x1000 | ((Vdp1Regs->PTMR & 2) << 7) | ((Vdp1Regs->FBCR & 0x1E) << 3) | (Vdp1Regs->TVMR & 0xF);
+      FRAMELOG("[VDP1] Read MODR %X line = %d\n", mode, yabsys.LineCount);
+      return mode;
+   }
+   default:
+      LOG("[VDP1] trying to read a Vdp1 write-only register\n");
    }
    return 0;
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
-extern "C" u32 FASTCALL Vdp1ReadLong(u32 addr) {
+extern "C" u32 FASTCALL Vdp1ReadLong(u32 addr)
+{
    addr &= 0xFF;
    LOG("trying to long-read a Vdp1 register - %08X\n", addr);
    return 0;
@@ -409,138 +439,159 @@ extern "C" u32 FASTCALL Vdp1ReadLong(u32 addr) {
 
 //////////////////////////////////////////////////////////////////////////////
 
-extern "C" void FASTCALL Vdp1WriteByte(u32 addr, UNUSED u8 val) {
+extern "C" void FASTCALL Vdp1WriteByte(u32 addr, UNUSED u8 val)
+{
    addr &= 0xFF;
    LOG("trying to byte-write a Vdp1 register - %08X\n", addr);
 }
 
-extern YabEventQueue * vdp1_rcv_evqueue;
+extern YabEventQueue *vdp1_rcv_evqueue;
 
 //////////////////////////////////////////////////////////////////////////////
 
-extern "C" void FASTCALL Vdp1WriteWord(u32 addr, u16 val) {
-  addr &= 0xFF;
-  switch(addr) {
-    case 0x0:
+extern "C" void FASTCALL Vdp1WriteWord(u32 addr, u16 val)
+{
+   addr &= 0xFF;
+   switch (addr)
+   {
+   case 0x0:
       Vdp1Regs->TVMR = val;
       FRAMELOG("[VDP1] Write VBE=%d line = %d", (Vdp1Regs->TVMR >> 3) & 0x01, yabsys.LineCount);
-    break;
-    case 0x2:
-      //FRAMELOG("[VDP1] Write FCM=%d FCT=%d line = %d", (val & 0x02) >> 1, (val & 0x01), yabsys.LineCount);
+      break;
+   case 0x2:
+      // FRAMELOG("[VDP1] Write FCM=%d FCT=%d line = %d", (val & 0x02) >> 1, (val & 0x01), yabsys.LineCount);
 
       Vdp1Regs->FBCR = val;
-      
+
       FRAMELOG("[VDP1] Write FBCR %X line = %d @ %08X", Vdp1Regs->FBCR, yabsys.LineCount, CurrentSH2->regs.PC);
 
-      if ((Vdp1Regs->FBCR & 3) == 3) {
-        //FRAMELOG("[VDP1] FCBR swtich to manual change");
-        Vdp1External.manualchange = 1;
+      if ((Vdp1Regs->FBCR & 3) == 3)
+      {
+         // FRAMELOG("[VDP1] FCBR swtich to manual change");
+         Vdp1External.manualchange = 1;
       }
-      else if ((Vdp1Regs->FBCR & 3) == 2) {
-        //FRAMELOG("[VDP1] FBCR swtich to manual erase");
-        Vdp1External.manualerase = 1;
+      else if ((Vdp1Regs->FBCR & 3) == 2)
+      {
+         // FRAMELOG("[VDP1] FBCR swtich to manual erase");
+         Vdp1External.manualerase = 1;
       }
       break;
-    case 0x4:
+   case 0x4:
       FRAMELOG("[VDP1] Write PTMR %X line = %d @ %08X", val, yabsys.LineCount, CurrentSH2->regs.PC);
-      //Vdp1Regs->COPR = 0;
-      //printf("COPR = 0 at %d\n", __LINE__);
+      // Vdp1Regs->COPR = 0;
+      // printf("COPR = 0 at %d\n", __LINE__);
       Vdp1Regs->PTMR = val;
-#if YAB_ASYNC_RENDERING
-      if (val == 1){ 
-        FRAMELOG("[VDP1] VDPEV_DIRECT_DRAW %d/%d", YaGetQueueSize(vdp1_rcv_evqueue), yabsys.LineCount);
-        if ( YaGetQueueSize(vdp1_rcv_evqueue) > 0){
-          yabsys.wait_line_count = -1;
-          do{
-            YabWaitEventQueue(vdp1_rcv_evqueue);
-          } while (YaGetQueueSize(vdp1_rcv_evqueue) != 0);
-        }
-        Vdp1Regs->EDSR >>= 1;
-        yabsys.wait_line_count = yabsys.LineCount + 50;
-        yabsys.wait_line_count %= yabsys.MaxLineCount;
-        if (yabsys.wait_line_count == 5) { yabsys.wait_line_count = 4; }
-        FRAMELOG("SET DIRECT WAIT %d", yabsys.wait_line_count);
-        YabAddEventQueue(evqueue,VDPEV_DIRECT_DRAW); 
-        YabThreadYield();
+      if (yabsys.UseAsyncRendering)
+      {
+         if (val == 1)
+         {
+            FRAMELOG("[VDP1] VDPEV_DIRECT_DRAW %d/%d", YaGetQueueSize(vdp1_rcv_evqueue), yabsys.LineCount);
+            if (YaGetQueueSize(vdp1_rcv_evqueue) > 0)
+            {
+               yabsys.wait_line_count = -1;
+               do
+               {
+                  YabWaitEventQueue(vdp1_rcv_evqueue);
+               } while (YaGetQueueSize(vdp1_rcv_evqueue) != 0);
+            }
+            Vdp1Regs->EDSR >>= 1;
+            yabsys.wait_line_count = yabsys.LineCount + 50;
+            yabsys.wait_line_count %= yabsys.MaxLineCount;
+            if (yabsys.wait_line_count == 5)
+            {
+               yabsys.wait_line_count = 4;
+            }
+            FRAMELOG("SET DIRECT WAIT %d", yabsys.wait_line_count);
+            YabAddEventQueue(evqueue, VDPEV_DIRECT_DRAW);
+            YabThreadYield();
+         }
       }
-#else
-    if (val == 1){
-      FRAMELOG("VDP1: VDPEV_DIRECT_DRAW\n");
-      Vdp1Regs->EDSR >>= 1;
-      Vdp1Draw();
-      VIDCore->Vdp1DrawEnd();
-      yabsys.wait_line_count = yabsys.LineCount + 50;
-      yabsys.wait_line_count %= yabsys.MaxLineCount;
-      //if (yabsys.wait_line_count == 2) { yabsys.wait_line_count = 3; } // it should not be the same line with render.
-      FRAMELOG("VDP1: end line is %d", yabsys.wait_line_count);
-    }
-#endif
-         break;
-      case 0x6:
-         Vdp1Regs->EWDR = val;
-         break;
-      case 0x8:
-         Vdp1Regs->EWLR = val;
-         break;
-      case 0xA:
-         Vdp1Regs->EWRR = val;
-         break;
-      case 0xC:
-         Vdp1Regs->ENDR = val;
-         Vdp1External.status = VDP1_STATUS_IDLE;
-         yabsys.wait_line_count = -1;
-         LOG("Force to stop Vdp1\n", addr);
-         break;
-      default:
-         LOG("trying to write a Vdp1 read-only register - %08X\n", addr);
+      else
+      {
+         if (val == 1)
+         {
+            FRAMELOG("VDP1: VDPEV_DIRECT_DRAW\n");
+            Vdp1Regs->EDSR >>= 1;
+            Vdp1Draw();
+            VIDCore->Vdp1DrawEnd();
+            yabsys.wait_line_count = yabsys.LineCount + 50;
+            yabsys.wait_line_count %= yabsys.MaxLineCount;
+            // if (yabsys.wait_line_count == 2) { yabsys.wait_line_count = 3; } // it should not be the same line with render.
+            FRAMELOG("VDP1: end line is %d", yabsys.wait_line_count);
+         }
+      }
+      break;
+   case 0x6:
+      Vdp1Regs->EWDR = val;
+      break;
+   case 0x8:
+      Vdp1Regs->EWLR = val;
+      break;
+   case 0xA:
+      Vdp1Regs->EWRR = val;
+      break;
+   case 0xC:
+      Vdp1Regs->ENDR = val;
+      Vdp1External.status = VDP1_STATUS_IDLE;
+      yabsys.wait_line_count = -1;
+      LOG("Force to stop Vdp1\n", addr);
+      break;
+   default:
+      LOG("trying to write a Vdp1 read-only register - %08X\n", addr);
    }
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
-extern "C" void FASTCALL Vdp1WriteLong(u32 addr, UNUSED u32 val) {
+extern "C" void FASTCALL Vdp1WriteLong(u32 addr, UNUSED u32 val)
+{
    addr &= 0xFF;
    LOG("trying to long-write a Vdp1 register - %08X\n", addr);
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
-extern "C" void Vdp1DrawCommands(u8 * ram, Vdp1 * regs, u8* back_framebuffer)
+extern "C" void Vdp1DrawCommands(u8 *ram, Vdp1 *regs, u8 *back_framebuffer)
 {
-  std::unique_lock<std::mutex> lk(vdp1_clock_mtx);
-  LOG("VDP1: DrawCommands - %08X\n", regs->addr);
-  regs->COPR = regs->addr >> 3;
-  if (regs->addr > 0x7FFFF) {
-    Vdp1External.status = VDP1_STATUS_IDLE;
-    LOG("VDP1: Address error - %08X\n", regs->addr);
-    return; // address error
-  }
-   u16 command = T1ReadWord(ram, regs->addr );
-   if (command & 0x8000) {
-     Vdp1External.status = VDP1_STATUS_IDLE;
-     LOG("VDP1: Imidiate Finish - %08X\n", regs->addr);
-     return;
+   std::unique_lock<std::mutex> lk(vdp1_clock_mtx);
+   LOG("VDP1: DrawCommands - %08X\n", regs->addr);
+   regs->COPR = regs->addr >> 3;
+   if (regs->addr > 0x7FFFF)
+   {
+      Vdp1External.status = VDP1_STATUS_IDLE;
+      LOG("VDP1: Address error - %08X\n", regs->addr);
+      return; // address error
+   }
+   u16 command = T1ReadWord(ram, regs->addr);
+   if (command & 0x8000)
+   {
+      Vdp1External.status = VDP1_STATUS_IDLE;
+      LOG("VDP1: Imidiate Finish - %08X\n", regs->addr);
+      return;
    }
 
    int command_count = 0;
    u32 returnAddr = 0xffffffff;
 
-   while (!(command & 0x8000) && command_count < 4096) { // fix me
+   while (!(command & 0x8000) && command_count < 4096)
+   { // fix me
       regs->COPR = regs->addr >> 3;
       u32 to = 0;
 #if 0
-#if defined(YAB_ASYNC_RENDERING)
-      vdp1_clock_cv.wait_for(lk, chrono::milliseconds(1000), [] { return (vdp1_clock > 0); });
-#else
-      if (vdp1_clock <= 0) {
-        return;
+      if (yabsys.UseAsyncRendering) {
+        vdp1_clock_cv.wait_for(lk, chrono::milliseconds(1000), [] { return (vdp1_clock > 0); });
+      } else {
+        if (vdp1_clock <= 0) {
+          return;
+        }
       }
-#endif
       vdp1_clock -= 10;
 #endif
       // First, process the command
-      if (!(command & 0x4000)) { // if (!skip)
-         switch (command & 0x000F) {
+      if (!(command & 0x4000))
+      { // if (!skip)
+         switch (command & 0x000F)
+         {
          case 0: // normal sprite draw
             VIDCore->Vdp1NormalSpriteDraw(ram, regs, back_framebuffer);
             break;
@@ -562,7 +613,7 @@ extern "C" void Vdp1DrawCommands(u8 * ram, Vdp1 * regs, u8* back_framebuffer)
          case 6: // line draw
             VIDCore->Vdp1LineDraw(ram, regs, back_framebuffer);
             break;
-         case 8: // user clipping coordinates
+         case 8:  // user clipping coordinates
          case 11: // undocumented mirror
             VIDCore->Vdp1UserClipping(ram, regs);
             break;
@@ -582,28 +633,31 @@ extern "C" void Vdp1DrawCommands(u8 * ram, Vdp1 * regs, u8* back_framebuffer)
          }
       }
 
-	  // Force to quit internal command error( This technic(?) is used by BATSUGUN )
-	  if (regs->EDSR & 0x02){
-		  regs->LOPR = regs->addr >> 3;
-		  regs->COPR = regs->addr >> 3;
-        Vdp1External.status = VDP1_STATUS_IDLE;
-        VDP1LOG("VDP1: Force to quit internal command error %x\n", command);
-		  return;
-	  }
+      // Force to quit internal command error( This technic(?) is used by BATSUGUN )
+      if (regs->EDSR & 0x02)
+      {
+         regs->LOPR = regs->addr >> 3;
+         regs->COPR = regs->addr >> 3;
+         Vdp1External.status = VDP1_STATUS_IDLE;
+         VDP1LOG("VDP1: Force to quit internal command error %x\n", command);
+         return;
+      }
 
       // Next, determine where to go next
-      switch ((command & 0x3000) >> 12) {
+      switch ((command & 0x3000) >> 12)
+      {
       case 0: // NEXT, jump to following table
          regs->addr += 0x20;
          break;
       case 1: // ASSIGN, jump to CMDLINK
          regs->addr = T1ReadWord(ram, regs->addr + 2) * 8;
 
-         // Badd adress. it causes infinity loop 
-         if (regs->addr == 0) {
-           LOG("VDP1: BAD jump to 0, forced to finish");
-           Vdp1External.status = VDP1_STATUS_IDLE;
-           return;
+         // Badd adress. it causes infinity loop
+         if (regs->addr == 0)
+         {
+            LOG("VDP1: BAD jump to 0, forced to finish");
+            Vdp1External.status = VDP1_STATUS_IDLE;
+            return;
          }
 
          break;
@@ -611,55 +665,63 @@ extern "C" void Vdp1DrawCommands(u8 * ram, Vdp1 * regs, u8* back_framebuffer)
          if (returnAddr == 0xFFFFFFFF)
             returnAddr = regs->addr + 0x20;
          regs->addr = T1ReadWord(ram, regs->addr + 2) * 8;
-         // Badd adress. it causes infinity loop 
-         if (regs->addr == 0) {
-           LOG("VDP1: BAD jump to 0, forced to finish");
-           Vdp1External.status = VDP1_STATUS_IDLE;
-           return;
+         // Badd adress. it causes infinity loop
+         if (regs->addr == 0)
+         {
+            LOG("VDP1: BAD jump to 0, forced to finish");
+            Vdp1External.status = VDP1_STATUS_IDLE;
+            return;
          }
          break;
       case 3: // RETURN, return from subroutine
-         if (returnAddr != 0xFFFFFFFF) {
+         if (returnAddr != 0xFFFFFFFF)
+         {
             regs->addr = returnAddr;
             returnAddr = 0xFFFFFFFF;
          }
          else
             regs->addr += 0x20;
-         // Badd adress. it causes infinity loop 
-         if (regs->addr == 0) {
-           LOG("VDP1: BAD jump to 0, forced to finish");
-           Vdp1External.status = VDP1_STATUS_IDLE;
-           return;
+         // Badd adress. it causes infinity loop
+         if (regs->addr == 0)
+         {
+            LOG("VDP1: BAD jump to 0, forced to finish");
+            Vdp1External.status = VDP1_STATUS_IDLE;
+            return;
          }
          break;
       }
 
       command = T1ReadWord(ram, regs->addr & 0x7FFFF);
       command_count++;
-      if (command & 0x8000) {
-        LOG("VDP1: Command Finished! count = %d @ %08X line=%d", command_count, regs->addr, yabsys.LineCount);
-		  regs->LOPR = regs->addr >> 3;
-		  regs->COPR = regs->addr >> 3;
-        Vdp1External.status = VDP1_STATUS_IDLE;
+      if (command & 0x8000)
+      {
+         LOG("VDP1: Command Finished! count = %d @ %08X line=%d", command_count, regs->addr, yabsys.LineCount);
+         regs->LOPR = regs->addr >> 3;
+         regs->COPR = regs->addr >> 3;
+         Vdp1External.status = VDP1_STATUS_IDLE;
       }
    }
 
-   if (Vdp1External.status == VDP1_STATUS_RUNNING) {
-     LOG("VDP1: Readched to max comand count = %d", command_count);
+   if (Vdp1External.status == VDP1_STATUS_RUNNING)
+   {
+      LOG("VDP1: Readched to max comand count = %d", command_count);
    }
 }
 
-//ensure that registers are set correctly 
-extern "C" void Vdp1FakeDrawCommands(u8 * ram, Vdp1 * regs)
+// ensure that registers are set correctly
+extern "C" void Vdp1FakeDrawCommands(u8 *ram, Vdp1 *regs)
 {
    u16 command = T1ReadWord(ram, regs->addr);
    u32 commandCounter = 0;
    u32 returnAddr = 0xffffffff;
 
-   while (!(command & 0x8000) && commandCounter < 2000) { // fix me
+   while (!(command & 0x8000) && commandCounter < 2000)
+   { // fix me
       // First, process the command
-      if (!(command & 0x4000)) { // if (!skip)
-         switch (command & 0x000F) {
+      if (!(command & 0x4000))
+      { // if (!skip)
+         switch (command & 0x000F)
+         {
          case 0: // normal sprite draw
          case 1: // scaled sprite draw
          case 2: // distorted sprite draw
@@ -670,7 +732,7 @@ extern "C" void Vdp1FakeDrawCommands(u8 * ram, Vdp1 * regs)
          case 6: // line draw
          case 7: // undocumented polyline draw mirror
             break;
-         case 8: // user clipping coordinates
+         case 8:  // user clipping coordinates
          case 11: // undocumented mirror
             VIDCore->Vdp1UserClipping(ram, regs);
             break;
@@ -690,7 +752,8 @@ extern "C" void Vdp1FakeDrawCommands(u8 * ram, Vdp1 * regs)
       }
 
       // Next, determine where to go next
-      switch ((command & 0x3000) >> 12) {
+      switch ((command & 0x3000) >> 12)
+      {
       case 0: // NEXT, jump to following table
          regs->addr += 0x20;
          break;
@@ -704,7 +767,8 @@ extern "C" void Vdp1FakeDrawCommands(u8 * ram, Vdp1 * regs)
          regs->addr = T1ReadWord(ram, regs->addr + 2) * 8;
          break;
       case 3: // RETURN, return from subroutine
-         if (returnAddr != 0xFFFFFFFF) {
+         if (returnAddr != 0xFFFFFFFF)
+         {
             regs->addr = returnAddr;
             returnAddr = 0xFFFFFFFF;
          }
@@ -718,36 +782,39 @@ extern "C" void Vdp1FakeDrawCommands(u8 * ram, Vdp1 * regs)
    }
 }
 
+int Vdp1GenerateCCode()
+{
 
-int Vdp1GenerateCCode() {
+   FILE *regfp = fopen_utf8("v1reg.c", "w");
+   fprintf(regfp, "short v1reg[] = { \n");
+   fprintf(regfp, "0x%04X,\n", Vdp1Regs->TVMR);
+   fprintf(regfp, "0x%04X,\n", Vdp1Regs->FBCR);
+   fprintf(regfp, "0x%04X,\n", Vdp1Regs->PTMR);
+   fprintf(regfp, "0x%04X,\n", Vdp1Regs->EWDR);
+   fprintf(regfp, "0x%04X,\n", Vdp1Regs->EWLR);
+   fprintf(regfp, "0x%04X\n", Vdp1Regs->ENDR);
+   fprintf(regfp, "};\n");
+   fclose(regfp);
 
-  FILE * regfp = fopen_utf8("v1reg.c", "w");
-  fprintf(regfp, "short v1reg[] = { \n");
-    fprintf(regfp, "0x%04X,\n", Vdp1Regs->TVMR);
-    fprintf(regfp, "0x%04X,\n", Vdp1Regs->FBCR);
-    fprintf(regfp, "0x%04X,\n", Vdp1Regs->PTMR);
-    fprintf(regfp, "0x%04X,\n", Vdp1Regs->EWDR);
-    fprintf(regfp, "0x%04X,\n", Vdp1Regs->EWLR);
-    fprintf(regfp, "0x%04X\n", Vdp1Regs->ENDR);
-  fprintf(regfp, "};\n");
-  fclose(regfp);
+   FILE *ramfp = fopen_utf8("v1ram.c", "w");
+   fprintf(ramfp, "short v1ram[] = { \n");
+   for (int i = 0; i < 0x80000; i += 2)
+   {
+      u16 data = Vdp1RamReadWord(i);
+      fprintf(ramfp, "0x%04X", data);
+      if (i != 0 && (i % 16) == 0)
+      {
+         fprintf(ramfp, ",\n");
+      }
+      else
+      {
+         fprintf(ramfp, ",");
+      }
+   }
+   fprintf(ramfp, "};\n");
+   fclose(ramfp);
 
-  FILE * ramfp = fopen_utf8("v1ram.c", "w");
-  fprintf(ramfp, "short v1ram[] = { \n");
-  for (int i = 0; i < 0x80000; i+=2) {
-    u16 data = Vdp1RamReadWord(i);
-    fprintf(ramfp, "0x%04X", data);
-    if (i != 0 && (i % 16) == 0) {
-      fprintf(ramfp, ",\n");
-    }
-    else {
-      fprintf(ramfp, ",");
-    }
-  }
-  fprintf(ramfp, "};\n");
-  fclose(ramfp);
-
-  return 0;
+   return 0;
 }
 
 #if _DEBUG
@@ -757,53 +824,55 @@ int g_vdp1_debug_dmp = 0;
 extern "C" void Vdp1Draw(void)
 {
 #if _DEBUG
-  if (g_vdp1_debug_dmp == 1) {
-    Vdp1GenerateCCode();
-    g_vdp1_debug_dmp = 0;
-    vdp2ReqDump();
-  }
+   if (g_vdp1_debug_dmp == 1)
+   {
+      Vdp1GenerateCCode();
+      g_vdp1_debug_dmp = 0;
+      vdp2ReqDump();
+   }
 #endif
 
-  FRAMELOG("Vdp1Draw");
+   FRAMELOG("Vdp1Draw");
    if (!Vdp1External.disptoggle)
    {
       Vdp1NoDraw();
       return;
    }
 
-   if (Vdp1External.status == VDP1_STATUS_IDLE) {
-     Vdp1Regs->addr = 0;
-     // beginning of a frame
-     // BEF <- CEF
-     // CEF <- 0
-     //Vdp1Regs->EDSR >>= 1;
-     /* this should be done after a frame change or a plot trigger */
-     Vdp1Regs->COPR = 0;
-     //printf("COPR = %d at %d\n", Vdp1Regs->COPR, __LINE__);
+   if (Vdp1External.status == VDP1_STATUS_IDLE)
+   {
+      Vdp1Regs->addr = 0;
+      // beginning of a frame
+      // BEF <- CEF
+      // CEF <- 0
+      // Vdp1Regs->EDSR >>= 1;
+      /* this should be done after a frame change or a plot trigger */
+      Vdp1Regs->COPR = 0;
+      // printf("COPR = %d at %d\n", Vdp1Regs->COPR, __LINE__);
    }
 
    Vdp1External.status = VDP1_STATUS_RUNNING;
    VIDCore->Vdp1DrawStart();
 
-   //printf("COPR = %d at %d\n", Vdp1Regs->COPR, __LINE__);
+   // printf("COPR = %d at %d\n", Vdp1Regs->COPR, __LINE__);
 
-   //VIDCore->Vdp1DrawEnd();
+   // VIDCore->Vdp1DrawEnd();
 
    // we set two bits to 1
-   //Vdp1Regs->EDSR |= 2;
-   //Vdp1Regs->COPR = Vdp1Regs->addr >> 3;
-   //ScuSendDrawEnd();
+   // Vdp1Regs->EDSR |= 2;
+   // Vdp1Regs->COPR = Vdp1Regs->addr >> 3;
+   // ScuSendDrawEnd();
    FRAMELOG("Vdp1Draw end at %d line EDSR=%02X", yabsys.LineCount, Vdp1Regs->EDSR);
-
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
-extern "C" void Vdp1NoDraw(void) {
+extern "C" void Vdp1NoDraw(void)
+{
    // beginning of a frame (ST-013-R3-061694 page 53)
    // BEF <- CEF
    // CEF <- 0
-   //Vdp1Regs->EDSR >>= 1;
+   // Vdp1Regs->EDSR >>= 1;
    /* this should be done after a frame change or a plot trigger */
    Vdp1Regs->COPR = 0;
 
@@ -816,8 +885,9 @@ extern "C" void Vdp1NoDraw(void) {
 
 //////////////////////////////////////////////////////////////////////////////
 
-extern "C" void FASTCALL Vdp1ReadCommand(vdp1cmd_struct *cmd, u32 addr, u8* ram) {
-  addr &= 0x7FFFF;
+extern "C" void FASTCALL Vdp1ReadCommand(vdp1cmd_struct *cmd, u32 addr, u8 *ram)
+{
+   addr &= 0x7FFFF;
    cmd->CMDCTRL = T1ReadWord(ram, addr);
    cmd->CMDLINK = T1ReadWord(ram, addr + 0x2);
    cmd->CMDPMOD = T1ReadWord(ram, addr + 0x4);
@@ -840,10 +910,10 @@ extern "C" void FASTCALL Vdp1ReadCommand(vdp1cmd_struct *cmd, u32 addr, u8* ram)
 extern "C" int Vdp1SaveState(FILE *fp)
 {
    int offset;
-   IOCheck_struct check = { 0, 0 };
+   IOCheck_struct check = {0, 0};
 #ifdef IMPROVED_SAVESTATES
    int i = 0;
-   u16 back_framebuffer[0x20000] = { 0 };
+   u16 back_framebuffer[0x20000] = {0};
 #endif
 
    offset = StateWriteHeader(fp, "VDP1", 1);
@@ -856,14 +926,14 @@ extern "C" int Vdp1SaveState(FILE *fp)
 
 #ifdef IMPROVED_SAVESTATES
 
-   void(*Vdp1ReadFrameBuffer)(u32 type, u32 addr, void * out) = VIDCore->Vdp1ReadFrameBuffer;
-   void(*Vdp1WriteFrameBuffer)(u32 type, u32 addr, u32 val) = VIDCore->Vdp1WriteFrameBuffer;
+   void (*Vdp1ReadFrameBuffer)(u32 type, u32 addr, void *out) = VIDCore->Vdp1ReadFrameBuffer;
+   void (*Vdp1WriteFrameBuffer)(u32 type, u32 addr, u32 val) = VIDCore->Vdp1WriteFrameBuffer;
 
    VIDCore->Vdp1ReadFrameBuffer = NULL;
    VIDCore->Vdp1WriteFrameBuffer = NULL;
 
    for (i = 0; i < 0x20000; i++)
-      back_framebuffer[i] = Vdp1FrameBufferReadWord(i<<1);
+      back_framebuffer[i] = Vdp1FrameBufferReadWord(i << 1);
 
    VIDCore->Vdp1ReadFrameBuffer = Vdp1ReadFrameBuffer;
    VIDCore->Vdp1WriteFrameBuffer = Vdp1WriteFrameBuffer;
@@ -877,10 +947,10 @@ extern "C" int Vdp1SaveState(FILE *fp)
 
 extern "C" int Vdp1LoadState(FILE *fp, UNUSED int version, int size)
 {
-   IOCheck_struct check = { 0, 0 };
+   IOCheck_struct check = {0, 0};
 #ifdef IMPROVED_SAVESTATES
    int i = 0;
-   u16 back_framebuffer[0x20000] = { 0 };
+   u16 back_framebuffer[0x20000] = {0};
 #endif
 
    // Read registers
@@ -891,8 +961,8 @@ extern "C" int Vdp1LoadState(FILE *fp, UNUSED int version, int size)
 
 #ifdef IMPROVED_SAVESTATES
 
-   void(*Vdp1ReadFrameBuffer)(u32 type, u32 addr, void * out) = VIDCore->Vdp1ReadFrameBuffer;
-   void(*Vdp1WriteFrameBuffer)(u32 type, u32 addr, u32 val) = VIDCore->Vdp1WriteFrameBuffer;
+   void (*Vdp1ReadFrameBuffer)(u32 type, u32 addr, void *out) = VIDCore->Vdp1ReadFrameBuffer;
+   void (*Vdp1WriteFrameBuffer)(u32 type, u32 addr, u32 val) = VIDCore->Vdp1WriteFrameBuffer;
 
    VIDCore->Vdp1ReadFrameBuffer = NULL;
    VIDCore->Vdp1WriteFrameBuffer = NULL;
@@ -900,7 +970,7 @@ extern "C" int Vdp1LoadState(FILE *fp, UNUSED int version, int size)
    yread(&check, (void *)back_framebuffer, 0x40000, 1, fp);
 
    for (i = 0; i < 0x20000; i++)
-      Vdp1FrameBufferWriteWord(i<<1, back_framebuffer[i]);
+      Vdp1FrameBufferWriteWord(i << 1, back_framebuffer[i]);
 
    VIDCore->Vdp1ReadFrameBuffer = Vdp1ReadFrameBuffer;
    VIDCore->Vdp1WriteFrameBuffer = Vdp1WriteFrameBuffer;
@@ -930,32 +1000,33 @@ u32 Vdp1DebugGetCommandNumberAddr(u32 number)
       // Determine where to go next
       switch ((command & 0x3000) >> 12)
       {
-         case 0: // NEXT, jump to following table
+      case 0: // NEXT, jump to following table
+         addr += 0x20;
+         break;
+      case 1: // ASSIGN, jump to CMDLINK
+         addr = T1ReadWord(Vdp1Ram, addr + 2) * 8;
+         break;
+      case 2: // CALL, call a subroutine
+         if (returnAddr == 0xFFFFFFFF)
+            returnAddr = addr + 0x20;
+
+         addr = T1ReadWord(Vdp1Ram, addr + 2) * 8;
+         break;
+      case 3: // RETURN, return from subroutine
+         if (returnAddr != 0xFFFFFFFF)
+         {
+            addr = returnAddr;
+            returnAddr = 0xFFFFFFFF;
+         }
+         else
             addr += 0x20;
-            break;
-         case 1: // ASSIGN, jump to CMDLINK
-            addr = T1ReadWord(Vdp1Ram, addr + 2) * 8;
-            break;
-         case 2: // CALL, call a subroutine
-            if (returnAddr == 0xFFFFFFFF)
-               returnAddr = addr + 0x20;
-	
-            addr = T1ReadWord(Vdp1Ram, addr + 2) * 8;
-            break;
-         case 3: // RETURN, return from subroutine
-            if (returnAddr != 0xFFFFFFFF) {
-               addr = returnAddr;
-               returnAddr = 0xFFFFFFFF;
-            }
-            else
-               addr += 0x20;
-            break;
+         break;
       }
 
       if (addr > 0x7FFE0)
          return 0xFFFFFFFF;
       command = T1ReadWord(Vdp1Ram, addr);
-      commandCounter++;    
+      commandCounter++;
    }
 
    if (commandCounter == number)
@@ -981,32 +1052,32 @@ char *Vdp1DebugGetCommandNumberName(u32 number)
       // Figure out command name
       switch (command & 0x000F)
       {
-         case 0:
-            return "Normal Sprite";
-         case 1:
-            return "Scaled Sprite";
-         case 2:
-            return "Distorted Sprite";
-         case 3:
-            return "Distorted Sprite *";
-         case 4:
-            return "Polygon";
-         case 5:
-            return "Polyline";
-         case 6:
-            return "Line";
-         case 7:
-            return "Polyline *";
-         case 8:
-            return "User Clipping Coordinates";
-         case 9:
-            return "System Clipping Coordinates";
-         case 10:
-            return "Local Coordinates";
-         case 11:
-            return "User Clipping Coordinates *";
-         default:
-             return "Bad command";
+      case 0:
+         return "Normal Sprite";
+      case 1:
+         return "Scaled Sprite";
+      case 2:
+         return "Distorted Sprite";
+      case 3:
+         return "Distorted Sprite *";
+      case 4:
+         return "Polygon";
+      case 5:
+         return "Polyline";
+      case 6:
+         return "Line";
+      case 7:
+         return "Polyline *";
+      case 8:
+         return "User Clipping Coordinates";
+      case 9:
+         return "System Clipping Coordinates";
+      case 10:
+         return "Local Coordinates";
+      case 11:
+         return "User Clipping Coordinates *";
+      default:
+         return "Bad command";
       }
    }
    else
@@ -1043,104 +1114,105 @@ void Vdp1DebugCommand(u32 number, char *outstring)
 
    switch (cmd.CMDCTRL & 0x000F)
    {
-      case 0:
-         AddString(outstring, "Normal Sprite\r\n");
-         AddString(outstring, "x = %d, y = %d\r\n", cmd.CMDXA, cmd.CMDYA);
-         break;
-      case 1:
-         AddString(outstring, "Scaled Sprite\r\n");
+   case 0:
+      AddString(outstring, "Normal Sprite\r\n");
+      AddString(outstring, "x = %d, y = %d\r\n", cmd.CMDXA, cmd.CMDYA);
+      break;
+   case 1:
+      AddString(outstring, "Scaled Sprite\r\n");
 
-         AddString(outstring, "Zoom Point: ");
+      AddString(outstring, "Zoom Point: ");
 
-         switch ((cmd.CMDCTRL >> 8) & 0xF)
-         {
-            case 0x0:
-               AddString(outstring, "Only two coordinates\r\n");
-               break;
-            case 0x5:
-               AddString(outstring, "Upper-left\r\n");
-               break;
-            case 0x6:
-               AddString(outstring, "Upper-center\r\n");
-               break;
-            case 0x7:
-               AddString(outstring, "Upper-right\r\n");
-               break;
-            case 0x9:
-               AddString(outstring, "Center-left\r\n");
-               break;
-            case 0xA:
-               AddString(outstring, "Center-center\r\n");
-               break;
-            case 0xB:
-               AddString(outstring, "Center-right\r\n");
-               break;
-            case 0xC:
-               AddString(outstring, "Lower-left\r\n");
-               break;
-            case 0xE:
-               AddString(outstring, "Lower-center\r\n");
-               break;
-            case 0xF:
-               AddString(outstring, "Lower-right\r\n");
-               break;
-            default: break;
-         }
-
-         if (((cmd.CMDCTRL >> 8) & 0xF) == 0)
-         {
-            AddString(outstring, "xa = %d, ya = %d, xc = %d, yc = %d\r\n", cmd.CMDXA, cmd.CMDYA, cmd.CMDXC, cmd.CMDYC);
-         }
-         else
-         {
-            AddString(outstring, "xa = %d, ya = %d, xb = %d, yb = %d\r\n", cmd.CMDXA, cmd.CMDYA, cmd.CMDXB, cmd.CMDYB);
-         }
-
+      switch ((cmd.CMDCTRL >> 8) & 0xF)
+      {
+      case 0x0:
+         AddString(outstring, "Only two coordinates\r\n");
          break;
-      case 2:
-         AddString(outstring, "Distorted Sprite\r\n");
-         AddString(outstring, "x1 = %d, y1 = %d, x2 = %d, y2 = %d\r\n", cmd.CMDXA, cmd.CMDYA, cmd.CMDXB, cmd.CMDYB);
-         AddString(outstring, "x3 = %d, y3 = %d, x4 = %d, y4 = %d\r\n", cmd.CMDXC, cmd.CMDYC, cmd.CMDXD, cmd.CMDYD);
+      case 0x5:
+         AddString(outstring, "Upper-left\r\n");
          break;
-      case 3:
-         AddString(outstring, "Distorted Sprite *\r\n");
-         AddString(outstring, "x1 = %d, y1 = %d, x2 = %d, y2 = %d\r\n", cmd.CMDXA, cmd.CMDYA, cmd.CMDXB, cmd.CMDYB);
-         AddString(outstring, "x3 = %d, y3 = %d, x4 = %d, y4 = %d\r\n", cmd.CMDXC, cmd.CMDYC, cmd.CMDXD, cmd.CMDYD);
+      case 0x6:
+         AddString(outstring, "Upper-center\r\n");
          break;
-      case 4:
-         AddString(outstring, "Polygon\r\n");
-         AddString(outstring, "x1 = %d, y1 = %d, x2 = %d, y2 = %d\r\n", cmd.CMDXA, cmd.CMDYA, cmd.CMDXB, cmd.CMDYB);
-         AddString(outstring, "x3 = %d, y3 = %d, x4 = %d, y4 = %d\r\n", cmd.CMDXC, cmd.CMDYC, cmd.CMDXD, cmd.CMDYD);
+      case 0x7:
+         AddString(outstring, "Upper-right\r\n");
          break;
-      case 5:
-         AddString(outstring, "Polyline\r\n");
-         AddString(outstring, "x1 = %d, y1 = %d, x2 = %d, y2 = %d\r\n", cmd.CMDXA, cmd.CMDYA, cmd.CMDXB, cmd.CMDYB);
-         AddString(outstring, "x3 = %d, y3 = %d, x4 = %d, y4 = %d\r\n", cmd.CMDXC, cmd.CMDYC, cmd.CMDXD, cmd.CMDYD);
+      case 0x9:
+         AddString(outstring, "Center-left\r\n");
          break;
-      case 6:
-         AddString(outstring, "Line\r\n");
-         AddString(outstring, "x1 = %d, y1 = %d, x2 = %d, y2 = %d\r\n", cmd.CMDXA, cmd.CMDYA, cmd.CMDXB, cmd.CMDYB);
+      case 0xA:
+         AddString(outstring, "Center-center\r\n");
          break;
-      case 7:
-         AddString(outstring, "Polyline *\r\n");
-         AddString(outstring, "x1 = %d, y1 = %d, x2 = %d, y2 = %d\r\n", cmd.CMDXA, cmd.CMDYA, cmd.CMDXB, cmd.CMDYB);
-         AddString(outstring, "x3 = %d, y3 = %d, x4 = %d, y4 = %d\r\n", cmd.CMDXC, cmd.CMDYC, cmd.CMDXD, cmd.CMDYD);
+      case 0xB:
+         AddString(outstring, "Center-right\r\n");
          break;
-      case 8:
-         AddString(outstring, "User Clipping\r\n");
-         AddString(outstring, "x1 = %d, y1 = %d, x2 = %d, y2 = %d\r\n", cmd.CMDXA, cmd.CMDYA, cmd.CMDXC, cmd.CMDYC);
+      case 0xC:
+         AddString(outstring, "Lower-left\r\n");
          break;
-      case 9:
-         AddString(outstring, "System Clipping\r\n");
-         AddString(outstring, "x1 = 0, y1 = 0, x2 = %d, y2 = %d\r\n", cmd.CMDXC, cmd.CMDYC);
+      case 0xE:
+         AddString(outstring, "Lower-center\r\n");
          break;
-      case 10:
-         AddString(outstring, "Local Coordinates\r\n");
-         AddString(outstring, "x = %d, y = %d\r\n", cmd.CMDXA, cmd.CMDYA);
+      case 0xF:
+         AddString(outstring, "Lower-right\r\n");
          break;
       default:
-         AddString(outstring, "Invalid command\r\n");
-         return;
+         break;
+      }
+
+      if (((cmd.CMDCTRL >> 8) & 0xF) == 0)
+      {
+         AddString(outstring, "xa = %d, ya = %d, xc = %d, yc = %d\r\n", cmd.CMDXA, cmd.CMDYA, cmd.CMDXC, cmd.CMDYC);
+      }
+      else
+      {
+         AddString(outstring, "xa = %d, ya = %d, xb = %d, yb = %d\r\n", cmd.CMDXA, cmd.CMDYA, cmd.CMDXB, cmd.CMDYB);
+      }
+
+      break;
+   case 2:
+      AddString(outstring, "Distorted Sprite\r\n");
+      AddString(outstring, "x1 = %d, y1 = %d, x2 = %d, y2 = %d\r\n", cmd.CMDXA, cmd.CMDYA, cmd.CMDXB, cmd.CMDYB);
+      AddString(outstring, "x3 = %d, y3 = %d, x4 = %d, y4 = %d\r\n", cmd.CMDXC, cmd.CMDYC, cmd.CMDXD, cmd.CMDYD);
+      break;
+   case 3:
+      AddString(outstring, "Distorted Sprite *\r\n");
+      AddString(outstring, "x1 = %d, y1 = %d, x2 = %d, y2 = %d\r\n", cmd.CMDXA, cmd.CMDYA, cmd.CMDXB, cmd.CMDYB);
+      AddString(outstring, "x3 = %d, y3 = %d, x4 = %d, y4 = %d\r\n", cmd.CMDXC, cmd.CMDYC, cmd.CMDXD, cmd.CMDYD);
+      break;
+   case 4:
+      AddString(outstring, "Polygon\r\n");
+      AddString(outstring, "x1 = %d, y1 = %d, x2 = %d, y2 = %d\r\n", cmd.CMDXA, cmd.CMDYA, cmd.CMDXB, cmd.CMDYB);
+      AddString(outstring, "x3 = %d, y3 = %d, x4 = %d, y4 = %d\r\n", cmd.CMDXC, cmd.CMDYC, cmd.CMDXD, cmd.CMDYD);
+      break;
+   case 5:
+      AddString(outstring, "Polyline\r\n");
+      AddString(outstring, "x1 = %d, y1 = %d, x2 = %d, y2 = %d\r\n", cmd.CMDXA, cmd.CMDYA, cmd.CMDXB, cmd.CMDYB);
+      AddString(outstring, "x3 = %d, y3 = %d, x4 = %d, y4 = %d\r\n", cmd.CMDXC, cmd.CMDYC, cmd.CMDXD, cmd.CMDYD);
+      break;
+   case 6:
+      AddString(outstring, "Line\r\n");
+      AddString(outstring, "x1 = %d, y1 = %d, x2 = %d, y2 = %d\r\n", cmd.CMDXA, cmd.CMDYA, cmd.CMDXB, cmd.CMDYB);
+      break;
+   case 7:
+      AddString(outstring, "Polyline *\r\n");
+      AddString(outstring, "x1 = %d, y1 = %d, x2 = %d, y2 = %d\r\n", cmd.CMDXA, cmd.CMDYA, cmd.CMDXB, cmd.CMDYB);
+      AddString(outstring, "x3 = %d, y3 = %d, x4 = %d, y4 = %d\r\n", cmd.CMDXC, cmd.CMDYC, cmd.CMDXD, cmd.CMDYD);
+      break;
+   case 8:
+      AddString(outstring, "User Clipping\r\n");
+      AddString(outstring, "x1 = %d, y1 = %d, x2 = %d, y2 = %d\r\n", cmd.CMDXA, cmd.CMDYA, cmd.CMDXC, cmd.CMDYC);
+      break;
+   case 9:
+      AddString(outstring, "System Clipping\r\n");
+      AddString(outstring, "x1 = 0, y1 = 0, x2 = %d, y2 = %d\r\n", cmd.CMDXC, cmd.CMDYC);
+      break;
+   case 10:
+      AddString(outstring, "Local Coordinates\r\n");
+      AddString(outstring, "x = %d, y = %d\r\n", cmd.CMDXA, cmd.CMDYA);
+      break;
+   default:
+      AddString(outstring, "Invalid command\r\n");
+      return;
    }
 
    // Only Sprite commands use CMDSRCA, CMDSIZE
@@ -1152,20 +1224,21 @@ void Vdp1DebugCommand(u32 number, char *outstring)
 
       switch ((cmd.CMDCTRL >> 4) & 0x3)
       {
-         case 0:
-            AddString(outstring, "Normal\r\n");
-            break;
-         case 1:
-            AddString(outstring, "Reversed horizontal\r\n");
-            break;
-         case 2:
-            AddString(outstring, "Reversed vertical\r\n");
-            break;
-         case 3:
-            AddString(outstring, "Reversed horizontal and vertical\r\n");
-            break;
-         default: break;
-      }      
+      case 0:
+         AddString(outstring, "Normal\r\n");
+         break;
+      case 1:
+         AddString(outstring, "Reversed horizontal\r\n");
+         break;
+      case 2:
+         AddString(outstring, "Reversed vertical\r\n");
+         break;
+      case 3:
+         AddString(outstring, "Reversed horizontal and vertical\r\n");
+         break;
+      default:
+         break;
+      }
    }
 
    // Only draw commands use CMDPMOD
@@ -1213,67 +1286,69 @@ void Vdp1DebugCommand(u32 number, char *outstring)
 
       switch ((cmd.CMDPMOD >> 3) & 0x7)
       {
-         case 0:
-            AddString(outstring, "4 BPP(16 color bank)\r\n");
-            AddString(outstring, "Color bank: %08X\r\n", (cmd.CMDCOLR << 3));
-            break;
-         case 1:
-            AddString(outstring, "4 BPP(16 color LUT)\r\n");
-            AddString(outstring, "Color lookup table: %08X\r\n", (cmd.CMDCOLR << 3));
-            break;
-         case 2:
-            AddString(outstring, "8 BPP(64 color bank)\r\n");
-            AddString(outstring, "Color bank: %08X\r\n", (cmd.CMDCOLR << 3));
-            break;
-         case 3:
-            AddString(outstring, "8 BPP(128 color bank)\r\n");
-            AddString(outstring, "Color bank: %08X\r\n", (cmd.CMDCOLR << 3));
-            break;
-         case 4:
-            AddString(outstring, "8 BPP(256 color bank)\r\n");
-            AddString(outstring, "Color bank: %08X\r\n", (cmd.CMDCOLR << 3));
-            break;
-         case 5:
-            AddString(outstring, "15 BPP(RGB)\r\n");
+      case 0:
+         AddString(outstring, "4 BPP(16 color bank)\r\n");
+         AddString(outstring, "Color bank: %08X\r\n", (cmd.CMDCOLR << 3));
+         break;
+      case 1:
+         AddString(outstring, "4 BPP(16 color LUT)\r\n");
+         AddString(outstring, "Color lookup table: %08X\r\n", (cmd.CMDCOLR << 3));
+         break;
+      case 2:
+         AddString(outstring, "8 BPP(64 color bank)\r\n");
+         AddString(outstring, "Color bank: %08X\r\n", (cmd.CMDCOLR << 3));
+         break;
+      case 3:
+         AddString(outstring, "8 BPP(128 color bank)\r\n");
+         AddString(outstring, "Color bank: %08X\r\n", (cmd.CMDCOLR << 3));
+         break;
+      case 4:
+         AddString(outstring, "8 BPP(256 color bank)\r\n");
+         AddString(outstring, "Color bank: %08X\r\n", (cmd.CMDCOLR << 3));
+         break;
+      case 5:
+         AddString(outstring, "15 BPP(RGB)\r\n");
 
-            // Only non-textured commands
-            if (cmd.CMDCTRL & 0x0004)
-            {
-               AddString(outstring, "Non-textured color: %04X\r\n", cmd.CMDCOLR);
-            }
-            break;
-         default: break;
+         // Only non-textured commands
+         if (cmd.CMDCTRL & 0x0004)
+         {
+            AddString(outstring, "Non-textured color: %04X\r\n", cmd.CMDCOLR);
+         }
+         break;
+      default:
+         break;
       }
 
       AddString(outstring, "Color Calc. mode: ");
 
       switch (cmd.CMDPMOD & 0x7)
       {
-         case 0:
-            AddString(outstring, "Replace\r\n");
-            break;
-         case 1:
-            AddString(outstring, "Cannot overwrite/Shadow\r\n");
-            break;
-         case 2:
-            AddString(outstring, "Half-luminance\r\n");
-            break;
-         case 3:
-            AddString(outstring, "Replace/Half-transparent\r\n");
-            break;
-         case 4:
-            AddString(outstring, "Gouraud Shading\r\n");
-            AddString(outstring, "Gouraud Shading Table = %08X\r\n", ((unsigned int)cmd.CMDGRDA) << 3);
-            break;
-         case 6:
-            AddString(outstring, "Gouraud Shading + Half-luminance\r\n");
-            AddString(outstring, "Gouraud Shading Table = %08X\r\n", ((unsigned int)cmd.CMDGRDA) << 3);
-            break;
-         case 7:
-            AddString(outstring, "Gouraud Shading/Gouraud Shading + Half-transparent\r\n");
-            AddString(outstring, "Gouraud Shading Table = %08X\r\n", ((unsigned int)cmd.CMDGRDA) << 3);
-            break;
-         default: break;
+      case 0:
+         AddString(outstring, "Replace\r\n");
+         break;
+      case 1:
+         AddString(outstring, "Cannot overwrite/Shadow\r\n");
+         break;
+      case 2:
+         AddString(outstring, "Half-luminance\r\n");
+         break;
+      case 3:
+         AddString(outstring, "Replace/Half-transparent\r\n");
+         break;
+      case 4:
+         AddString(outstring, "Gouraud Shading\r\n");
+         AddString(outstring, "Gouraud Shading Table = %08X\r\n", ((unsigned int)cmd.CMDGRDA) << 3);
+         break;
+      case 6:
+         AddString(outstring, "Gouraud Shading + Half-luminance\r\n");
+         AddString(outstring, "Gouraud Shading Table = %08X\r\n", ((unsigned int)cmd.CMDGRDA) << 3);
+         break;
+      case 7:
+         AddString(outstring, "Gouraud Shading/Gouraud Shading + Half-transparent\r\n");
+         AddString(outstring, "Gouraud Shading Table = %08X\r\n", ((unsigned int)cmd.CMDGRDA) << 3);
+         break;
+      default:
+         break;
       }
    }
 }
@@ -1281,39 +1356,40 @@ void Vdp1DebugCommand(u32 number, char *outstring)
 //////////////////////////////////////////////////////////////////////////////
 
 #if defined WORDS_BIGENDIAN
-#define SAT2YAB1(alpha,temp)		(alpha | (temp & 0x7C00) << 1 | (temp & 0x3E0) << 14 | (temp & 0x1F) << 27)
+#define SAT2YAB1(alpha, temp) (alpha | (temp & 0x7C00) << 1 | (temp & 0x3E0) << 14 | (temp & 0x1F) << 27)
 #else
-#define SAT2YAB1(alpha,temp)		(alpha << 24 | (temp & 0x1F) << 3 | (temp & 0x3E0) << 6 | (temp & 0x7C00) << 9)
+#define SAT2YAB1(alpha, temp) (alpha << 24 | (temp & 0x1F) << 3 | (temp & 0x3E0) << 6 | (temp & 0x7C00) << 9)
 #endif
 
 #if defined WORDS_BIGENDIAN
-#define SAT2YAB2(alpha,dot1,dot2)       (((dot2 & 0xFF) << 24) | ((dot2 & 0xFF00) << 8) | ((dot1 & 0xFF) << 8) | alpha)
+#define SAT2YAB2(alpha, dot1, dot2) (((dot2 & 0xFF) << 24) | ((dot2 & 0xFF00) << 8) | ((dot1 & 0xFF) << 8) | alpha)
 #else
-#define SAT2YAB2(alpha,dot1,dot2)       (alpha << 24 | ((dot1 & 0xFF) << 16) | (dot2 & 0xFF00) | (dot2 & 0xFF))
+#define SAT2YAB2(alpha, dot1, dot2) (alpha << 24 | ((dot1 & 0xFF) << 16) | (dot2 & 0xFF00) | (dot2 & 0xFF))
 #endif
 
 static u32 ColorRamGetColor(u32 colorindex)
 {
-   switch(Vdp2Internal.ColorMode)
+   switch (Vdp2Internal.ColorMode)
    {
-      case 0:
-      case 1:
-      {
-         u32 tmp;
-         colorindex <<= 1;
-         tmp = T2ReadWord(Vdp2ColorRam, colorindex & 0xFFF);
-         return SAT2YAB1(0xFF, tmp);
-      }
-      case 2:
-      {
-         u32 tmp1, tmp2;
-         colorindex <<= 2;
-         colorindex &= 0xFFF;
-         tmp1 = T2ReadWord(Vdp2ColorRam, colorindex);
-         tmp2 = T2ReadWord(Vdp2ColorRam, colorindex+2);
-         return SAT2YAB2(0xFF, tmp1, tmp2);
-      }
-      default: break;
+   case 0:
+   case 1:
+   {
+      u32 tmp;
+      colorindex <<= 1;
+      tmp = T2ReadWord(Vdp2ColorRam, colorindex & 0xFFF);
+      return SAT2YAB1(0xFF, tmp);
+   }
+   case 2:
+   {
+      u32 tmp1, tmp2;
+      colorindex <<= 2;
+      colorindex &= 0xFFF;
+      tmp1 = T2ReadWord(Vdp2ColorRam, colorindex);
+      tmp2 = T2ReadWord(Vdp2ColorRam, colorindex + 2);
+      return SAT2YAB2(0xFF, tmp1, tmp2);
+   }
+   default:
+      break;
    }
 
    return 0;
@@ -1345,7 +1421,7 @@ static INLINE int DoEndcode(int count, u32 *charAddr, u32 **textdata, int width,
    {
       float divisor = (float)(8 / pixelsize);
 
-      if(divisor != 0)
+      if (divisor != 0)
          charAddr[0] += (int)((float)(width - xoff + oddpixel) / divisor);
       memset(textdata[0], 0, sizeof(u32) * (width - xoff));
       textdata[0] += (width - xoff);
@@ -1369,9 +1445,9 @@ u32 *Vdp1DebugTexture(u32 number, int *w, int *h)
    u32 dot;
    u8 SPD;
    u32 alpha;
-   u32 *textdata;   
-   int isendcode=0;
-   int code=0;
+   u32 *textdata;
+   int isendcode = 0;
+   int code = 0;
    int ret;
 
    if ((addr = Vdp1DebugGetCommandNumberAddr(number)) == 0xFFFFFFFF)
@@ -1391,47 +1467,47 @@ u32 *Vdp1DebugTexture(u32 number, int *w, int *h)
 
    switch (cmd.CMDCTRL & 0x000F)
    {
-      case 0: // Normal Sprite
-      case 1: // Scaled Sprite
-      case 2: // Distorted Sprite
-      case 3: // Distorted Sprite *
-         w[0] = (cmd.CMDSIZE & 0x3F00) >> 5;
-         h[0] = cmd.CMDSIZE & 0xFF;
+   case 0: // Normal Sprite
+   case 1: // Scaled Sprite
+   case 2: // Distorted Sprite
+   case 3: // Distorted Sprite *
+      w[0] = (cmd.CMDSIZE & 0x3F00) >> 5;
+      h[0] = cmd.CMDSIZE & 0xFF;
 
-         if ((texture = (u32 *)malloc(sizeof(u32) * w[0] * h[0])) == NULL)
-            return NULL;
-
-         if (!(cmd.CMDPMOD & 0x80))
-         {
-            isendcode = 1;
-            code = 0;
-         }
-         else
-            isendcode = 0;
-         break;
-      case 4: // Polygon
-      case 5: // Polyline
-      case 6: // Line
-      case 7: // Polyline *
-         // Do 1x1 pixel
-         w[0] = 1;
-         h[0] = 1;
-         if ((texture = (u32 *)malloc(sizeof(u32))) == NULL)
-            return NULL;
-
-         if (cmd.CMDCOLR & 0x8000)
-            texture[0] = SAT2YAB1(0xFF, cmd.CMDCOLR);
-         else
-            texture[0] = ColorRamGetColor(cmd.CMDCOLR);
-
-         return texture;
-      case 8: // User Clipping
-      case 9: // System Clipping
-      case 10: // Local Coordinates
-      case 11: // User Clipping *
+      if ((texture = (u32 *)malloc(sizeof(u32) * w[0] * h[0])) == NULL)
          return NULL;
-      default: // Invalid command
+
+      if (!(cmd.CMDPMOD & 0x80))
+      {
+         isendcode = 1;
+         code = 0;
+      }
+      else
+         isendcode = 0;
+      break;
+   case 4: // Polygon
+   case 5: // Polyline
+   case 6: // Line
+   case 7: // Polyline *
+      // Do 1x1 pixel
+      w[0] = 1;
+      h[0] = 1;
+      if ((texture = (u32 *)malloc(sizeof(u32))) == NULL)
          return NULL;
+
+      if (cmd.CMDCOLR & 0x8000)
+         texture[0] = SAT2YAB1(0xFF, cmd.CMDCOLR);
+      else
+         texture[0] = ColorRamGetColor(cmd.CMDCOLR);
+
+      return texture;
+   case 8:  // User Clipping
+   case 9:  // System Clipping
+   case 10: // Local Coordinates
+   case 11: // User Clipping *
+      return NULL;
+   default: // Invalid command
+      return NULL;
    }
 
    charAddr = cmd.CMDSRCA * 8;
@@ -1439,208 +1515,220 @@ u32 *Vdp1DebugTexture(u32 number, int *w, int *h)
    alpha = 0xFF;
    textdata = texture;
 
-   switch((cmd.CMDPMOD >> 3) & 0x7)
+   switch ((cmd.CMDPMOD >> 3) & 0x7)
    {
-      case 0:
+   case 0:
+   {
+      // 4 bpp Bank mode
+      u32 colorBank = cmd.CMDCOLR;
+      u32 colorOffset = (Vdp2Regs->CRAOFB & 0x70) << 4;
+      u16 i;
+
+      for (i = 0; i < h[0]; i++)
       {
-         // 4 bpp Bank mode
-         u32 colorBank = cmd.CMDCOLR;
-         u32 colorOffset = (Vdp2Regs->CRAOFB & 0x70) << 4;
-         u16 i;
-
-         for(i = 0;i < h[0];i++)
+         u16 j;
+         j = 0;
+         while (j < w[0])
          {
-            u16 j;
-            j = 0;
-            while(j < w[0])
+            dot = T1ReadByte(Vdp1Ram, charAddr & 0x7FFFF);
+
+            // Pixel 1
+            if (isendcode && (ret = CheckEndcode(dot >> 4, 0xF, &code)) > 0)
             {
-               dot = T1ReadByte(Vdp1Ram, charAddr & 0x7FFFF);
-
-               // Pixel 1
-               if (isendcode && (ret = CheckEndcode(dot >> 4, 0xF, &code)) > 0)
-               {
-                  if (DoEndcode(ret, &charAddr, &textdata, w[0], j, 0, 4))
-                     break;
-               }
-               else
-               {
-                  if (((dot >> 4) == 0) && !SPD) *textdata++ = 0;
-                  else *textdata++ = ColorRamGetColor(((dot >> 4) | colorBank) + colorOffset);
-               }
-
-               j += 1;
-
-               // Pixel 2
-               if (isendcode && (ret = CheckEndcode(dot & 0xF, 0xF, &code)) > 0)
-               {
-                  if (DoEndcode(ret, &charAddr, &textdata, w[0], j, 1, 4))
-                     break;
-               }
-               else
-               {
-                  if (((dot & 0xF) == 0) && !SPD) *textdata++ = 0;
-                  else *textdata++ = ColorRamGetColor(((dot & 0xF) | colorBank) + colorOffset);
-               }
-
-               j += 1;
-               charAddr += 1;
+               if (DoEndcode(ret, &charAddr, &textdata, w[0], j, 0, 4))
+                  break;
             }
-         }
-         break;
-      }
-      case 1:
-      {
-         // 4 bpp LUT mode
-         u32 temp;
-         u32 colorLut = cmd.CMDCOLR * 8;
-         u16 i;
-
-         for(i = 0;i < h[0];i++)
-         {
-            u16 j;
-            j = 0;
-            while(j < w[0])
+            else
             {
-               dot = T1ReadByte(Vdp1Ram, charAddr & 0x7FFFF);
+               if (((dot >> 4) == 0) && !SPD)
+                  *textdata++ = 0;
+               else
+                  *textdata++ = ColorRamGetColor(((dot >> 4) | colorBank) + colorOffset);
+            }
 
-               if (isendcode && (ret = CheckEndcode(dot >> 4, 0xF, &code)) > 0)
-               {
-                  if (DoEndcode(ret, &charAddr, &textdata, w[0], j, 0, 4))
-                     break;
-               }
+            j += 1;
+
+            // Pixel 2
+            if (isendcode && (ret = CheckEndcode(dot & 0xF, 0xF, &code)) > 0)
+            {
+               if (DoEndcode(ret, &charAddr, &textdata, w[0], j, 1, 4))
+                  break;
+            }
+            else
+            {
+               if (((dot & 0xF) == 0) && !SPD)
+                  *textdata++ = 0;
+               else
+                  *textdata++ = ColorRamGetColor(((dot & 0xF) | colorBank) + colorOffset);
+            }
+
+            j += 1;
+            charAddr += 1;
+         }
+      }
+      break;
+   }
+   case 1:
+   {
+      // 4 bpp LUT mode
+      u32 temp;
+      u32 colorLut = cmd.CMDCOLR * 8;
+      u16 i;
+
+      for (i = 0; i < h[0]; i++)
+      {
+         u16 j;
+         j = 0;
+         while (j < w[0])
+         {
+            dot = T1ReadByte(Vdp1Ram, charAddr & 0x7FFFF);
+
+            if (isendcode && (ret = CheckEndcode(dot >> 4, 0xF, &code)) > 0)
+            {
+               if (DoEndcode(ret, &charAddr, &textdata, w[0], j, 0, 4))
+                  break;
+            }
+            else
+            {
+               if (((dot >> 4) == 0) && !SPD)
+                  *textdata++ = 0;
                else
                {
-                  if (((dot >> 4) == 0) && !SPD)
-                     *textdata++ = 0;
+                  temp = T1ReadWord(Vdp1Ram, ((dot >> 4) * 2 + colorLut) & 0x7FFFF);
+                  if (temp & 0x8000)
+                     *textdata++ = SAT2YAB1(0xFF, temp);
                   else
-                  {
-                     temp = T1ReadWord(Vdp1Ram, ((dot >> 4) * 2 + colorLut) & 0x7FFFF);
-                     if (temp & 0x8000)
-                        *textdata++ = SAT2YAB1(0xFF, temp);
-                     else
-                        *textdata++ = ColorRamGetColor(temp);
-                  }
+                     *textdata++ = ColorRamGetColor(temp);
                }
+            }
 
-               j += 1;
+            j += 1;
 
-               if (isendcode && (ret = CheckEndcode(dot & 0xF, 0xF, &code)) > 0)
-               {
-                  if (DoEndcode(ret, &charAddr, &textdata, w[0], j, 1, 4))
-                     break;
-               }
+            if (isendcode && (ret = CheckEndcode(dot & 0xF, 0xF, &code)) > 0)
+            {
+               if (DoEndcode(ret, &charAddr, &textdata, w[0], j, 1, 4))
+                  break;
+            }
+            else
+            {
+               if (((dot & 0xF) == 0) && !SPD)
+                  *textdata++ = 0;
                else
                {
-                  if (((dot & 0xF) == 0) && !SPD)
-                     *textdata++ = 0;
+                  temp = T1ReadWord(Vdp1Ram, ((dot & 0xF) * 2 + colorLut) & 0x7FFFF);
+                  if (temp & 0x8000)
+                     *textdata++ = SAT2YAB1(0xFF, temp);
                   else
-                  {
-                     temp = T1ReadWord(Vdp1Ram, ((dot & 0xF) * 2 + colorLut) & 0x7FFFF);
-                     if (temp & 0x8000)
-                        *textdata++ = SAT2YAB1(0xFF, temp);
-                     else
-                        *textdata++ = ColorRamGetColor(temp);
-                  }
+                     *textdata++ = ColorRamGetColor(temp);
                }
-
-               j += 1;
-
-               charAddr += 1;
             }
+
+            j += 1;
+
+            charAddr += 1;
          }
-         break;
       }
-      case 2:
+      break;
+   }
+   case 2:
+   {
+      // 8 bpp(64 color) Bank mode
+      u32 colorBank = cmd.CMDCOLR;
+      u32 colorOffset = (Vdp2Regs->CRAOFB & 0x70) << 4;
+
+      u16 i, j;
+
+      for (i = 0; i < h[0]; i++)
       {
-         // 8 bpp(64 color) Bank mode
-         u32 colorBank = cmd.CMDCOLR;
-         u32 colorOffset = (Vdp2Regs->CRAOFB & 0x70) << 4;
-
-         u16 i, j;
-
-         for(i = 0;i < h[0];i++)
+         for (j = 0; j < w[0]; j++)
          {
-            for(j = 0;j < w[0];j++)
-            {
-               dot = T1ReadByte(Vdp1Ram, charAddr & 0x7FFFF) & 0x3F;
-               charAddr++;
+            dot = T1ReadByte(Vdp1Ram, charAddr & 0x7FFFF) & 0x3F;
+            charAddr++;
 
-               if ((dot == 0) && !SPD) *textdata++ = 0;
-               else *textdata++ = ColorRamGetColor((dot | colorBank) + colorOffset);
+            if ((dot == 0) && !SPD)
+               *textdata++ = 0;
+            else
+               *textdata++ = ColorRamGetColor((dot | colorBank) + colorOffset);
+         }
+      }
+      break;
+   }
+   case 3:
+   {
+      // 8 bpp(128 color) Bank mode
+      u32 colorBank = cmd.CMDCOLR;
+      u32 colorOffset = (Vdp2Regs->CRAOFB & 0x70) << 4;
+      u16 i, j;
+
+      for (i = 0; i < h[0]; i++)
+      {
+         for (j = 0; j < w[0]; j++)
+         {
+            dot = T1ReadByte(Vdp1Ram, charAddr & 0x7FFFF) & 0x7F;
+            charAddr++;
+
+            if ((dot == 0) && !SPD)
+               *textdata++ = 0;
+            else
+               *textdata++ = ColorRamGetColor((dot | colorBank) + colorOffset);
+         }
+      }
+      break;
+   }
+   case 4:
+   {
+      // 8 bpp(256 color) Bank mode
+      u32 colorBank = cmd.CMDCOLR;
+      u32 colorOffset = (Vdp2Regs->CRAOFB & 0x70) << 4;
+      u16 i, j;
+
+      for (i = 0; i < h[0]; i++)
+      {
+         for (j = 0; j < w[0]; j++)
+         {
+            dot = T1ReadByte(Vdp1Ram, charAddr & 0x7FFFF);
+            charAddr++;
+
+            if ((dot == 0) && !SPD)
+               *textdata++ = 0;
+            else
+               *textdata++ = ColorRamGetColor((dot | colorBank) + colorOffset);
+         }
+      }
+      break;
+   }
+   case 5:
+   {
+      // 16 bpp Bank mode
+      u16 i, j;
+
+      for (i = 0; i < h[0]; i++)
+      {
+         for (j = 0; j < w[0]; j++)
+         {
+            dot = T1ReadWord(Vdp1Ram, charAddr & 0x7FFFF);
+
+            if (isendcode && (ret = CheckEndcode(dot, 0x7FFF, &code)) > 0)
+            {
+               if (DoEndcode(ret, &charAddr, &textdata, w[0], j, 0, 16))
+                  break;
             }
-         }
-         break;
-      }
-      case 3:
-      {
-         // 8 bpp(128 color) Bank mode
-         u32 colorBank = cmd.CMDCOLR;
-         u32 colorOffset = (Vdp2Regs->CRAOFB & 0x70) << 4;
-         u16 i, j;
-
-         for(i = 0;i < h[0];i++)
-         {
-            for(j = 0;j < w[0];j++)
+            else
             {
-               dot = T1ReadByte(Vdp1Ram, charAddr & 0x7FFFF) & 0x7F;
-               charAddr++;
-
-               if ((dot == 0) && !SPD) *textdata++ = 0;
-               else *textdata++ = ColorRamGetColor((dot | colorBank) + colorOffset);
-            }
-         }
-         break;
-      }
-      case 4:
-      {
-         // 8 bpp(256 color) Bank mode
-         u32 colorBank = cmd.CMDCOLR;
-         u32 colorOffset = (Vdp2Regs->CRAOFB & 0x70) << 4;
-         u16 i, j;
-
-         for(i = 0;i < h[0];i++)
-         {
-            for(j = 0;j < w[0];j++)
-            {
-               dot = T1ReadByte(Vdp1Ram, charAddr & 0x7FFFF);
-               charAddr++;
-
-               if ((dot == 0) && !SPD) *textdata++ = 0;
-               else *textdata++ = ColorRamGetColor((dot | colorBank) + colorOffset);
-            }
-         }
-         break;
-      }
-      case 5:
-      {
-         // 16 bpp Bank mode
-         u16 i, j;
-
-         for(i = 0;i < h[0];i++)
-         {
-            for(j = 0;j < w[0];j++)
-            {
-               dot = T1ReadWord(Vdp1Ram, charAddr & 0x7FFFF);
-
-               if (isendcode && (ret = CheckEndcode(dot, 0x7FFF, &code)) > 0)
-               {
-                  if (DoEndcode(ret, &charAddr, &textdata, w[0], j, 0, 16))
-                     break;
-               }
+               // if (!(dot & 0x8000) && (Vdp2Regs->SPCTL & 0x20)) printf("mixed mode\n");
+               if (!(dot & 0x8000) && !SPD)
+                  *textdata++ = 0;
                else
-               {
-                  //if (!(dot & 0x8000) && (Vdp2Regs->SPCTL & 0x20)) printf("mixed mode\n");
-                  if (!(dot & 0x8000) && !SPD) *textdata++ = 0;
-                  else *textdata++ = SAT2YAB1(0xFF, dot);
-               }
-
-               charAddr += 2;
+                  *textdata++ = SAT2YAB1(0xFF, dot);
             }
+
+            charAddr += 2;
          }
-         break;
       }
-      default:
-         break;
+      break;
+   }
+   default:
+      break;
    }
 
    return texture;
@@ -1658,70 +1746,69 @@ void ToggleVDP1(void)
 //////////////////////////////////////////////////////////////////////////////
 int VIDDummyInit(void);
 void VIDDummyDeInit(void);
-void VIDDummyResize(int, int, unsigned int, unsigned int, int, int );
+void VIDDummyResize(int, int, unsigned int, unsigned int, int, int);
 int VIDDummyIsFullscreen(void);
 int VIDDummyVdp1Reset(void);
 void VIDDummyVdp1DrawStart(void);
 void VIDDummyVdp1DrawEnd(void);
-void VIDDummyVdp1NormalSpriteDraw(u8 * ram, Vdp1 * regs, u8* back_framebuffer);
-void VIDDummyVdp1ScaledSpriteDraw(u8 * ram, Vdp1 * regs, u8* back_framebuffer);
-void VIDDummyVdp1DistortedSpriteDraw(u8 * ram, Vdp1 * regs, u8* back_framebuffer);
-void VIDDummyVdp1PolygonDraw(u8 * ram, Vdp1 * regs, u8* back_framebuffer);
-void VIDDummyVdp1PolylineDraw(u8 * ram, Vdp1 * regs, u8* back_framebuffer);
-void VIDDummyVdp1LineDraw(u8 * ram, Vdp1 * regs, u8* back_framebuffer);
-void VIDDummyVdp1UserClipping(u8 * ram, Vdp1 * regs);
-void VIDDummyVdp1SystemClipping(u8 * ram, Vdp1 * regs);
-void VIDDummyVdp1LocalCoordinate(u8 * ram, Vdp1 * regs);
+void VIDDummyVdp1NormalSpriteDraw(u8 *ram, Vdp1 *regs, u8 *back_framebuffer);
+void VIDDummyVdp1ScaledSpriteDraw(u8 *ram, Vdp1 *regs, u8 *back_framebuffer);
+void VIDDummyVdp1DistortedSpriteDraw(u8 *ram, Vdp1 *regs, u8 *back_framebuffer);
+void VIDDummyVdp1PolygonDraw(u8 *ram, Vdp1 *regs, u8 *back_framebuffer);
+void VIDDummyVdp1PolylineDraw(u8 *ram, Vdp1 *regs, u8 *back_framebuffer);
+void VIDDummyVdp1LineDraw(u8 *ram, Vdp1 *regs, u8 *back_framebuffer);
+void VIDDummyVdp1UserClipping(u8 *ram, Vdp1 *regs);
+void VIDDummyVdp1SystemClipping(u8 *ram, Vdp1 *regs);
+void VIDDummyVdp1LocalCoordinate(u8 *ram, Vdp1 *regs);
 int VIDDummyVdp2Reset(void);
 void VIDDummyVdp2DrawStart(void);
 void VIDDummyVdp2DrawEnd(void);
 void VIDDummyVdp2DrawScreens(void);
 void VIDDummyGetGlSize(int *width, int *height);
-void VIDDummVdp1ReadFrameBuffer(u32 type, u32 addr, void * out);
+void VIDDummVdp1ReadFrameBuffer(u32 type, u32 addr, void *out);
 void VIDDummVdp1WriteFrameBuffer(u32 type, u32 addr, u32 val);
-void VIDDummSetFilterMode(int typei,int a ){};
+void VIDDummSetFilterMode(int typei, int a) {};
 void VIDDummErase(int i) {};
-void VIDDummSync(){};
-void VIDDummyGetNativeResolution(int *width, int * height, int *interlace);
+void VIDDummSync() {};
+void VIDDummyGetNativeResolution(int *width, int *height, int *interlace);
 void VIDDummyVdp2DispOff(void);
 void VIDDummyOnUpdateColorRamWord(u32 addr) {};
-void VIDDummyVulkanGetScreenshot(void ** outbuf, int * width, int * height) { return; }
+void VIDDummyVulkanGetScreenshot(void **outbuf, int *width, int *height) { return; }
 
 VideoInterface_struct VIDDummy = {
-	VIDCORE_DUMMY,
-	"Dummy Video Interface",
-	VIDDummyInit,
-	VIDDummyDeInit,
-	VIDDummyResize,
-	VIDDummyIsFullscreen,
-	VIDDummyVdp1Reset,
-	VIDDummyVdp1DrawStart,
-	VIDDummyVdp1DrawEnd,
-	VIDDummyVdp1NormalSpriteDraw,
-	VIDDummyVdp1ScaledSpriteDraw,
-	VIDDummyVdp1DistortedSpriteDraw,
-	VIDDummyVdp1PolygonDraw,
-	VIDDummyVdp1PolylineDraw,
-	VIDDummyVdp1LineDraw,
-	VIDDummyVdp1UserClipping,
-	VIDDummyVdp1SystemClipping,
-	VIDDummyVdp1LocalCoordinate,
-	VIDDummVdp1ReadFrameBuffer,
-	VIDDummVdp1WriteFrameBuffer,
-  VIDDummSync,
-  VIDDummSync,
-	VIDDummyVdp2Reset,
-	VIDDummyVdp2DrawStart,
-	VIDDummyVdp2DrawEnd,
-	VIDDummyVdp2DrawScreens,
-	VIDDummyGetGlSize,
-	VIDDummSetFilterMode,
-	VIDDummSync,
-	VIDDummyGetNativeResolution,
-	VIDDummyVdp2DispOff,
-  VIDDummyOnUpdateColorRamWord,
-  VIDDummyVulkanGetScreenshot
-};
+    VIDCORE_DUMMY,
+    "Dummy Video Interface",
+    VIDDummyInit,
+    VIDDummyDeInit,
+    VIDDummyResize,
+    VIDDummyIsFullscreen,
+    VIDDummyVdp1Reset,
+    VIDDummyVdp1DrawStart,
+    VIDDummyVdp1DrawEnd,
+    VIDDummyVdp1NormalSpriteDraw,
+    VIDDummyVdp1ScaledSpriteDraw,
+    VIDDummyVdp1DistortedSpriteDraw,
+    VIDDummyVdp1PolygonDraw,
+    VIDDummyVdp1PolylineDraw,
+    VIDDummyVdp1LineDraw,
+    VIDDummyVdp1UserClipping,
+    VIDDummyVdp1SystemClipping,
+    VIDDummyVdp1LocalCoordinate,
+    VIDDummVdp1ReadFrameBuffer,
+    VIDDummVdp1WriteFrameBuffer,
+    VIDDummSync,
+    VIDDummSync,
+    VIDDummyVdp2Reset,
+    VIDDummyVdp2DrawStart,
+    VIDDummyVdp2DrawEnd,
+    VIDDummyVdp2DrawScreens,
+    VIDDummyGetGlSize,
+    VIDDummSetFilterMode,
+    VIDDummSync,
+    VIDDummyGetNativeResolution,
+    VIDDummyVdp2DispOff,
+    VIDDummyOnUpdateColorRamWord,
+    VIDDummyVulkanGetScreenshot};
 
 //////////////////////////////////////////////////////////////////////////////
 
@@ -1770,55 +1857,55 @@ void VIDDummyVdp1DrawEnd(void)
 
 //////////////////////////////////////////////////////////////////////////////
 
-void VIDDummyVdp1NormalSpriteDraw(u8 * ram, Vdp1 * regs, u8* back_framebuffer)
+void VIDDummyVdp1NormalSpriteDraw(u8 *ram, Vdp1 *regs, u8 *back_framebuffer)
 {
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
-void VIDDummyVdp1ScaledSpriteDraw(u8 * ram, Vdp1 * regs, u8* back_framebuffer)
+void VIDDummyVdp1ScaledSpriteDraw(u8 *ram, Vdp1 *regs, u8 *back_framebuffer)
 {
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
-void VIDDummyVdp1DistortedSpriteDraw(u8 * ram, Vdp1 * regs, u8* back_framebuffer)
+void VIDDummyVdp1DistortedSpriteDraw(u8 *ram, Vdp1 *regs, u8 *back_framebuffer)
 {
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
-void VIDDummyVdp1PolygonDraw(u8 * ram, Vdp1 * regs, u8* back_framebuffer)
+void VIDDummyVdp1PolygonDraw(u8 *ram, Vdp1 *regs, u8 *back_framebuffer)
 {
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
-void VIDDummyVdp1PolylineDraw(u8 * ram, Vdp1 * regs, u8* back_framebuffer)
+void VIDDummyVdp1PolylineDraw(u8 *ram, Vdp1 *regs, u8 *back_framebuffer)
 {
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
-void VIDDummyVdp1LineDraw(u8 * ram, Vdp1 * regs, u8* back_framebuffer)
+void VIDDummyVdp1LineDraw(u8 *ram, Vdp1 *regs, u8 *back_framebuffer)
 {
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
-void VIDDummyVdp1UserClipping(u8 * ram, Vdp1 * regs)
+void VIDDummyVdp1UserClipping(u8 *ram, Vdp1 *regs)
 {
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
-void VIDDummyVdp1SystemClipping(u8 * ram, Vdp1 * regs)
+void VIDDummyVdp1SystemClipping(u8 *ram, Vdp1 *regs)
 {
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
-void VIDDummyVdp1LocalCoordinate(u8 * ram, Vdp1 * regs)
+void VIDDummyVdp1LocalCoordinate(u8 *ram, Vdp1 *regs)
 {
 }
 
@@ -1857,7 +1944,7 @@ void VIDDummyGetGlSize(int *width, int *height)
 
 //////////////////////////////////////////////////////////////////////////////
 
-void VIDDummVdp1ReadFrameBuffer(u32 type, u32 addr, void * out)
+void VIDDummVdp1ReadFrameBuffer(u32 type, u32 addr, void *out)
 {
 }
 
@@ -1869,7 +1956,7 @@ void VIDDummVdp1WriteFrameBuffer(u32 type, u32 addr, u32 val)
 
 //////////////////////////////////////////////////////////////////////////////
 
-void VIDDummyGetNativeResolution(int *width, int * height, int * interlace)
+void VIDDummyGetNativeResolution(int *width, int *height, int *interlace)
 {
    *width = 0;
    *height = 0;

@@ -41,11 +41,15 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
     \brief Memory access functions.
 */
 
-#ifdef PSP  // see FIXME in T1MemoryInit()
-# include <stdint.h>
+#ifdef PSP // see FIXME in T1MemoryInit()
+#include <stdint.h>
+#endif
+#if defined(NX)
+#include <malloc.h> // memalign for cache-aligned allocations
 #endif
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <ctype.h>
 
@@ -66,9 +70,9 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 #include "yui.h"
 #include "movie.h"
 
-//#ifdef HAVE_LIBGL
-//#define USE_OPENGL
-//#endif
+// #ifdef HAVE_LIBGL
+// #define USE_OPENGL
+// #endif
 
 #ifdef USE_OPENGL
 #include "ygl.h"
@@ -79,12 +83,12 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 
 #if CACHE_ENABLE
 #else
-u8 FASTCALL MappedMemoryReadByteNocache(u32 addr, u32 * cycle){ return MappedMemoryReadByte(addr, NULL); }
-u16 FASTCALL MappedMemoryReadWordNocache(u32 addr, u32 * cycle){ return MappedMemoryReadWord(addr, NULL); }
-u32 FASTCALL MappedMemoryReadLongNocache(u32 addr, u32 * cycle){ return MappedMemoryReadLong(addr, NULL); }
-void FASTCALL MappedMemoryWriteByteNocache(u32 addr, u8 val, u32 * cycle){ MappedMemoryWriteByte(addr,val, NULL);  }
-void FASTCALL MappedMemoryWriteWordNocache(u32 addr, u16 val, u32 * cycle){ MappedMemoryWriteWord(addr, val, NULL); }
-void FASTCALL MappedMemoryWriteLongNocache(u32 addr, u32 val, u32 * cycle){ MappedMemoryWriteLong(addr, val, NULL); }
+u8 FASTCALL MappedMemoryReadByteNocache(u32 addr, u32 *cycle) { return MappedMemoryReadByte(addr, NULL); }
+u16 FASTCALL MappedMemoryReadWordNocache(u32 addr, u32 *cycle) { return MappedMemoryReadWord(addr, NULL); }
+u32 FASTCALL MappedMemoryReadLongNocache(u32 addr, u32 *cycle) { return MappedMemoryReadLong(addr, NULL); }
+void FASTCALL MappedMemoryWriteByteNocache(u32 addr, u8 val, u32 *cycle) { MappedMemoryWriteByte(addr, val, NULL); }
+void FASTCALL MappedMemoryWriteWordNocache(u32 addr, u16 val, u32 *cycle) { MappedMemoryWriteWord(addr, val, NULL); }
+void FASTCALL MappedMemoryWriteLongNocache(u32 addr, u32 val, u32 *cycle) { MappedMemoryWriteLong(addr, val, NULL); }
 #endif
 
 //////////////////////////////////////////////////////////////////////////////
@@ -112,13 +116,55 @@ u8 BupRamWritten;
 
 #if defined(NX)
 
-void * YabMemMap(char * filename, u32 size ) {
-   return malloc(size);
+// Store filename + size for saving on YabFreeMap
+static char *nx_memmap_filename = NULL;
+static u32   nx_memmap_size = 0;
+static void *nx_memmap_ptr = NULL;
+
+void *YabMemMap(char *filename, u32 size)
+{
+   // Page-aligned allocation for better TLB/cache performance on large
+   // Saturn memory regions (High WRAM 1MB, Low WRAM 1MB, VDP VRAM, etc.)
+   void *p = memalign(0x1000, size);
+   if (!p)
+      return NULL;
+
+   memset(p, 0, size);
+
+   // Load existing file contents if available
+   FILE *fp = fopen(filename, "rb");
+   if (fp)
+   {
+      fread(p, 1, size, fp);
+      fclose(fp);
+   }
+
+   // Store for YabFreeMap to save back
+   nx_memmap_filename = strdup(filename);
+   nx_memmap_size = size;
+   nx_memmap_ptr = p;
+
+   return p;
 }
 
-void YabFreeMap(void * p) {
-  free(p);
-} 
+void YabFreeMap(void *p)
+{
+   // Save contents back to file before freeing
+   if (p && p == nx_memmap_ptr && nx_memmap_filename)
+   {
+      FILE *fp = fopen(nx_memmap_filename, "wb");
+      if (fp)
+      {
+         fwrite(p, 1, nx_memmap_size, fp);
+         fclose(fp);
+      }
+      free(nx_memmap_filename);
+      nx_memmap_filename = NULL;
+   }
+   nx_memmap_ptr = NULL;
+   nx_memmap_size = 0;
+   free(p); // memalign'd memory is freed with free()
+}
 
 #elif defined(__GNUC__) && !defined(_WINDOWS)
 
@@ -131,121 +177,135 @@ void YabFreeMap(void * p) {
 
 static u32 mmapsize = 0;
 
-void * YabMemMap(char * filename, u32 size ) {
+void *YabMemMap(char *filename, u32 size)
+{
 
-  struct stat sb;
-  off_t len;
-  char *p;
-  int fd;
+   struct stat sb;
+   off_t len;
+   char *p;
+   int fd;
 
-  fd = open(filename, O_RDWR);
-  if (fd ==-1) {
-    LOG("YabMemMap: open failed");
-    return NULL;
+   fd = open(filename, O_RDWR);
+   if (fd == -1)
+   {
+      LOG("YabMemMap: open failed");
+      return NULL;
    }
 
-  if (fstat(fd, &sb) ==-1) {
-    LOG("YabMemMap: fstat failed");
-    return NULL;
-  }
+   if (fstat(fd, &sb) == -1)
+   {
+      LOG("YabMemMap: fstat failed");
+      return NULL;
+   }
 
-  //if (!S_ISREG(sb.st_mode)) {
-  //  yprintf("YabMemMap: %s is not a file\n", filename);
-  //  return NULL;
-  //}
+   // if (!S_ISREG(sb.st_mode)) {
+   //   yprintf("YabMemMap: %s is not a file\n", filename);
+   //   return NULL;
+   // }
 
-  p = mmap(0, sb.st_size, PROT_READ| PROT_WRITE, MAP_SHARED, fd, 0);
-  if (p == MAP_FAILED) {
-    LOG("YabMemMap: mmap failed");
-    return NULL;
-  }
+   p = mmap(0, sb.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+   if (p == MAP_FAILED)
+   {
+      LOG("YabMemMap: mmap failed");
+      return NULL;
+   }
 
-  if (close(fd) == -1) {
-    LOG("YabMemMap: close failed");
-    return NULL;
-  }
+   if (close(fd) == -1)
+   {
+      LOG("YabMemMap: close failed");
+      return NULL;
+   }
 
-  mmapsize = sb.st_size;
-  return p;
+   mmapsize = sb.st_size;
+   return p;
 }
 
-void YabFreeMap(void * p) {
-  munmap(p, mmapsize);
+void YabFreeMap(void *p)
+{
+   munmap(p, mmapsize);
 }
-
 
 #elif defined(_WINDOWS)
 
 #include <windows.h>
 HANDLE hFMWrite = INVALID_HANDLE_VALUE;
 HANDLE hFile = INVALID_HANDLE_VALUE;
-void * YabMemMap(char * filename, u32 size ) {
+void *YabMemMap(char *filename, u32 size)
+{
 
-  struct stat sb;
-  off_t len;
-  char *p;
-  int fd;
+   struct stat sb;
+   off_t len;
+   char *p;
+   int fd;
 
-  hFile = CreateFileA(
-    filename, 
-    GENERIC_READ|GENERIC_WRITE, 
-    FILE_SHARE_READ,
-    0, 
-    OPEN_EXISTING, 
-    FILE_ATTRIBUTE_NORMAL,
-    0);
-  if (INVALID_HANDLE_VALUE == hFile) {
-    DWORD errorMessageID = GetLastError();
-    LPSTR messageBuffer = NULL;
-    size_t size = FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-      NULL, errorMessageID, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&messageBuffer, 0, NULL);
-    LOG(messageBuffer);
-    return NULL;
-  }
+   hFile = CreateFileA(
+       filename,
+       GENERIC_READ | GENERIC_WRITE,
+       FILE_SHARE_READ,
+       0,
+       OPEN_EXISTING,
+       FILE_ATTRIBUTE_NORMAL,
+       0);
+   if (INVALID_HANDLE_VALUE == hFile)
+   {
+      DWORD errorMessageID = GetLastError();
+      LPSTR messageBuffer = NULL;
+      size_t size = FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                                   NULL, errorMessageID, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&messageBuffer, 0, NULL);
+      LOG(messageBuffer);
+      return NULL;
+   }
 
-  hFMWrite = CreateFileMapping(
-    hFile,
-    NULL,
-    PAGE_READWRITE,
-    0,
-    size,
-    "BACKUP");
-  if (hFMWrite == INVALID_HANDLE_VALUE)
-    return NULL;
+   hFMWrite = CreateFileMapping(
+       hFile,
+       NULL,
+       PAGE_READWRITE,
+       0,
+       size,
+       "BACKUP");
+   if (hFMWrite == INVALID_HANDLE_VALUE)
+      return NULL;
 
-  return MapViewOfFile(hFMWrite, FILE_MAP_ALL_ACCESS, 0, 0, size);
+   return MapViewOfFile(hFMWrite, FILE_MAP_ALL_ACCESS, 0, 0, size);
 }
 
-void YabFreeMap(void * p) {
-  UnmapViewOfFile(p);
-  CloseHandle(hFMWrite);
-  CloseHandle(hFile);
-  hFMWrite = NULL;
+void YabFreeMap(void *p)
+{
+   UnmapViewOfFile(p);
+   CloseHandle(hFMWrite);
+   CloseHandle(hFile);
+   hFMWrite = NULL;
 }
 
 #else
-void * YabMemMap(char * filename) {
-  return NULL;
+void *YabMemMap(char *filename)
+{
+   return NULL;
 }
 #endif
 
-
 //////////////////////////////////////////////////////////////////////////////
 
-u8 * T1MemoryInit(u32 size)
+u8 *T1MemoryInit(u32 size)
 {
-#ifdef PSP  // FIXME: could be ported to all arches, but requires stdint.h
-            //        for uintptr_t
-   u8 * base;
-   u8 * mem;
+#ifdef PSP // FIXME: could be ported to all arches, but requires stdint.h
+           //        for uintptr_t
+   u8 *base;
+   u8 *mem;
 
    if ((base = calloc((size * sizeof(u8)) + sizeof(u8 *) + 64, 1)) == NULL)
       return NULL;
 
    mem = base + sizeof(u8 *);
-   mem = mem + (64 - ((uintptr_t) mem & 63));
+   mem = mem + (64 - ((uintptr_t)mem & 63));
    *(u8 **)(mem - sizeof(u8 *)) = base; // Save base pointer below memory block
 
+   return mem;
+#elif defined(NX)
+   // 64-byte aligned for ARM Cortex-A57 cache-line size
+   u8 *mem = (u8 *)memalign(64, size);
+   if (mem)
+      memset(mem, 0, size);
    return mem;
 #else
    return calloc(size, sizeof(u8));
@@ -254,7 +314,7 @@ u8 * T1MemoryInit(u32 size)
 
 //////////////////////////////////////////////////////////////////////////////
 
-void T1MemoryDeInit(u8 * mem)
+void T1MemoryDeInit(u8 *mem)
 {
 #ifdef PSP
    if (mem)
@@ -266,14 +326,14 @@ void T1MemoryDeInit(u8 * mem)
 
 //////////////////////////////////////////////////////////////////////////////
 
-T3Memory * T3MemoryInit(u32 size)
+T3Memory *T3MemoryInit(u32 size)
 {
-   T3Memory * mem;
+   T3Memory *mem;
 
-   if ((mem = (T3Memory *) calloc(1, sizeof(T3Memory))) == NULL)
+   if ((mem = (T3Memory *)calloc(1, sizeof(T3Memory))) == NULL)
       return NULL;
 
-   if ((mem->base_mem = (u8 *) calloc(size, sizeof(u8))) == NULL)
+   if ((mem->base_mem = (u8 *)calloc(size, sizeof(u8))) == NULL)
    {
       free(mem);
       return NULL;
@@ -286,7 +346,7 @@ T3Memory * T3MemoryInit(u32 size)
 
 //////////////////////////////////////////////////////////////////////////////
 
-void T3MemoryDeInit(T3Memory * mem)
+void T3MemoryDeInit(T3Memory *mem)
 {
    free(mem->base_mem);
    free(mem);
@@ -294,14 +354,14 @@ void T3MemoryDeInit(T3Memory * mem)
 
 //////////////////////////////////////////////////////////////////////////////
 
-Dummy * DummyInit(UNUSED u32 s)
+Dummy *DummyInit(UNUSED u32 s)
 {
    return NULL;
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
-void DummyDeInit(UNUSED Dummy * d)
+void DummyDeInit(UNUSED Dummy *d)
 {
 }
 
@@ -496,25 +556,28 @@ static u8 FASTCALL BupRamMemoryReadByte(u32 addr)
     return fgetc(pbackup);
   }
 #endif
-  if (yabsys.extend_backup ) {
+   if (yabsys.extend_backup)
+   {
 
-     //if( yabsys.emulatebios == 1 ) {
-        addr = (addr&0x0FFFFFFF) - tweak_backup_file_addr;
-        if (addr >= tweak_backup_file_size) {
-           return 0;
-        }
-     //}else{
-    //    addr = (addr&0x0000FFFF );
-    //    if (addr >= tweak_backup_file_size) {
-    //       return 0;
-    //    }
-     //}
-  }
-  else {
-    addr = addr & 0x0000FFFF;
-  }
-  //printf("BupRamMemoryReadByte %08X\n",addr);
-  return T1ReadByte(BupRam, addr);
+      // if( yabsys.emulatebios == 1 ) {
+      addr = (addr & 0x0FFFFFFF) - tweak_backup_file_addr;
+      if (addr >= tweak_backup_file_size)
+      {
+         return 0;
+      }
+      //}else{
+      //    addr = (addr&0x0000FFFF );
+      //    if (addr >= tweak_backup_file_size) {
+      //       return 0;
+      //    }
+      //}
+   }
+   else
+   {
+      addr = addr & 0x0000FFFF;
+   }
+   // printf("BupRamMemoryReadByte %08X\n",addr);
+   return T1ReadByte(BupRam, addr);
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -553,24 +616,27 @@ static void FASTCALL BupRamMemoryWriteByte(u32 addr, u8 val)
     BupRamWritten = 1;  
   }
 #endif
-  if (yabsys.extend_backup ) {
-     //if( yabsys.emulatebios == 1 ) {
-        addr = (addr&0x0FFFFFFF) - tweak_backup_file_addr;
-        if (addr >= tweak_backup_file_size) {
-           return;
-        }
-     //}else{
-     //   addr = (addr&0x0000FFFF );
-     //   if (addr >= tweak_backup_file_size) {
-     //      return;
-     //   }
-     //}
-  }
-  else {
-    addr = addr & 0x0000FFFF;
-  }
-  //printf("BupRamMemoryWriteByte %08X\n",addr);
-  T1WriteByte(BupRam, addr|0x1, val);
+   if (yabsys.extend_backup)
+   {
+      // if( yabsys.emulatebios == 1 ) {
+      addr = (addr & 0x0FFFFFFF) - tweak_backup_file_addr;
+      if (addr >= tweak_backup_file_size)
+      {
+         return;
+      }
+      //}else{
+      //   addr = (addr&0x0000FFFF );
+      //   if (addr >= tweak_backup_file_size) {
+      //      return;
+      //   }
+      //}
+   }
+   else
+   {
+      addr = addr & 0x0000FFFF;
+   }
+   // printf("BupRamMemoryWriteByte %08X\n",addr);
+   T1WriteByte(BupRam, addr | 0x1, val);
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -596,7 +662,7 @@ static void FillMemoryArea(unsigned short start, unsigned short end,
 {
    int i;
 
-   for (i=start; i < (end+1); i++)
+   for (i = start; i < (end + 1); i++)
    {
       ReadByteList[i] = r8func;
       ReadWordList[i] = r16func;
@@ -613,194 +679,206 @@ void MappedMemoryInit()
 {
    // Initialize everyting to unhandled to begin with
    FillMemoryArea(0x000, 0xFFF, &UnhandledMemoryReadByte,
-                                &UnhandledMemoryReadWord,
-                                &UnhandledMemoryReadLong,
-                                &UnhandledMemoryWriteByte,
-                                &UnhandledMemoryWriteWord,
-                                &UnhandledMemoryWriteLong);
+                  &UnhandledMemoryReadWord,
+                  &UnhandledMemoryReadLong,
+                  &UnhandledMemoryWriteByte,
+                  &UnhandledMemoryWriteWord,
+                  &UnhandledMemoryWriteLong);
 
    // Fill the rest
    FillMemoryArea(0x000, 0x00F, &BiosRomMemoryReadByte,
-                                &BiosRomMemoryReadWord,
-                                &BiosRomMemoryReadLong,
-                                &BiosRomMemoryWriteByte,
-                                &BiosRomMemoryWriteWord,
-                                &BiosRomMemoryWriteLong);
+                  &BiosRomMemoryReadWord,
+                  &BiosRomMemoryReadLong,
+                  &BiosRomMemoryWriteByte,
+                  &BiosRomMemoryWriteWord,
+                  &BiosRomMemoryWriteLong);
    FillMemoryArea(0x010, 0x017, &SmpcReadByte,
-                                &SmpcReadWord,
-                                &SmpcReadLong,
-                                &SmpcWriteByte,
-                                &SmpcWriteWord,
-                                &SmpcWriteLong);
+                  &SmpcReadWord,
+                  &SmpcReadLong,
+                  &SmpcWriteByte,
+                  &SmpcWriteWord,
+                  &SmpcWriteLong);
    FillMemoryArea(0x018, 0x01F, &BupRamMemoryReadByte,
-                                &BupRamMemoryReadWord,
-                                &BupRamMemoryReadLong,
-                                &BupRamMemoryWriteByte,
-                                &BupRamMemoryWriteWord,
-                                &BupRamMemoryWriteLong);
+                  &BupRamMemoryReadWord,
+                  &BupRamMemoryReadLong,
+                  &BupRamMemoryWriteByte,
+                  &BupRamMemoryWriteWord,
+                  &BupRamMemoryWriteLong);
    FillMemoryArea(0x020, 0x02F, &LowWramMemoryReadByte,
-                                &LowWramMemoryReadWord,
-                                &LowWramMemoryReadLong,
-                                &LowWramMemoryWriteByte,
-                                &LowWramMemoryWriteWord,
-                                &LowWramMemoryWriteLong);
+                  &LowWramMemoryReadWord,
+                  &LowWramMemoryReadLong,
+                  &LowWramMemoryWriteByte,
+                  &LowWramMemoryWriteWord,
+                  &LowWramMemoryWriteLong);
    FillMemoryArea(0x100, 0x17F, &UnhandledMemoryReadByte,
-                                &UnhandledMemoryReadWord,
-                                &UnhandledMemoryReadLong,
-                                &UnhandledMemoryWriteByte,
-                                &SSH2InputCaptureWriteWord,
-                                &UnhandledMemoryWriteLong);
+                  &UnhandledMemoryReadWord,
+                  &UnhandledMemoryReadLong,
+                  &UnhandledMemoryWriteByte,
+                  &SSH2InputCaptureWriteWord,
+                  &UnhandledMemoryWriteLong);
    FillMemoryArea(0x180, 0x1FF, &UnhandledMemoryReadByte,
-                                &UnhandledMemoryReadWord,
-                                &UnhandledMemoryReadLong,
-                                &UnhandledMemoryWriteByte,
-                                &MSH2InputCaptureWriteWord,
-                                &UnhandledMemoryWriteLong);
+                  &UnhandledMemoryReadWord,
+                  &UnhandledMemoryReadLong,
+                  &UnhandledMemoryWriteByte,
+                  &MSH2InputCaptureWriteWord,
+                  &UnhandledMemoryWriteLong);
    FillMemoryArea(0x200, 0x3FF, CartridgeArea->Cs0ReadByte,
-                                CartridgeArea->Cs0ReadWord,
-                                CartridgeArea->Cs0ReadLong,
-                                CartridgeArea->Cs0WriteByte,
-                                CartridgeArea->Cs0WriteWord,
-                                CartridgeArea->Cs0WriteLong);
+                  CartridgeArea->Cs0ReadWord,
+                  CartridgeArea->Cs0ReadLong,
+                  CartridgeArea->Cs0WriteByte,
+                  CartridgeArea->Cs0WriteWord,
+                  CartridgeArea->Cs0WriteLong);
    FillMemoryArea(0x400, 0x4FF, &Cs1ReadByte,
-                                &Cs1ReadWord,
-                                &Cs1ReadLong,
-                                &Cs1WriteByte,
-                                &Cs1WriteWord,
-                                &Cs1WriteLong);
+                  &Cs1ReadWord,
+                  &Cs1ReadLong,
+                  &Cs1WriteByte,
+                  &Cs1WriteWord,
+                  &Cs1WriteLong);
    FillMemoryArea(0x580, 0x58F, &Cs2ReadByte,
-                                &Cs2ReadWord,
-                                &Cs2ReadLong,
-                                &Cs2WriteByte,
-                                &Cs2WriteWord,
-                                &Cs2WriteLong);
+                  &Cs2ReadWord,
+                  &Cs2ReadLong,
+                  &Cs2WriteByte,
+                  &Cs2WriteWord,
+                  &Cs2WriteLong);
    FillMemoryArea(0x5A0, 0x5AF, &SoundRamReadByte,
-                                &SoundRamReadWord,
-                                &SoundRamReadLong,
-                                &SoundRamWriteByte,
-                                &SoundRamWriteWord,
-                                &SoundRamWriteLong);
+                  &SoundRamReadWord,
+                  &SoundRamReadLong,
+                  &SoundRamWriteByte,
+                  &SoundRamWriteWord,
+                  &SoundRamWriteLong);
    FillMemoryArea(0x5B0, 0x5BF, &scsp_r_b,
-                                &scsp_r_w,
-                                &scsp_r_d,
-                                &scsp_w_b,
-                                &scsp_w_w,
-                                &scsp_w_d);
+                  &scsp_r_w,
+                  &scsp_r_d,
+                  &scsp_w_b,
+                  &scsp_w_w,
+                  &scsp_w_d);
    FillMemoryArea(0x5C0, 0x5C7, &Vdp1RamReadByte,
-                                &Vdp1RamReadWord,
-                                &Vdp1RamReadLong,
-                                &Vdp1RamWriteByte,
-                                &Vdp1RamWriteWord,
-                                &Vdp1RamWriteLong);
+                  &Vdp1RamReadWord,
+                  &Vdp1RamReadLong,
+                  &Vdp1RamWriteByte,
+                  &Vdp1RamWriteWord,
+                  &Vdp1RamWriteLong);
    FillMemoryArea(0x5C8, 0x5CF, &Vdp1FrameBufferReadByte,
-                                &Vdp1FrameBufferReadWord,
-                                &Vdp1FrameBufferReadLong,
-                                &Vdp1FrameBufferWriteByte,
-                                &Vdp1FrameBufferWriteWord,
-                                &Vdp1FrameBufferWriteLong);
+                  &Vdp1FrameBufferReadWord,
+                  &Vdp1FrameBufferReadLong,
+                  &Vdp1FrameBufferWriteByte,
+                  &Vdp1FrameBufferWriteWord,
+                  &Vdp1FrameBufferWriteLong);
    FillMemoryArea(0x5D0, 0x5D7, &Vdp1ReadByte,
-                                &Vdp1ReadWord,
-                                &Vdp1ReadLong,
-                                &Vdp1WriteByte,
-                                &Vdp1WriteWord,
-                                &Vdp1WriteLong);
+                  &Vdp1ReadWord,
+                  &Vdp1ReadLong,
+                  &Vdp1WriteByte,
+                  &Vdp1WriteWord,
+                  &Vdp1WriteLong);
    FillMemoryArea(0x5E0, 0x5EF, &Vdp2RamReadByte,
-                                &Vdp2RamReadWord,
-                                &Vdp2RamReadLong,
-                                &Vdp2RamWriteByte,
-                                &Vdp2RamWriteWord,
-                                &Vdp2RamWriteLong);
+                  &Vdp2RamReadWord,
+                  &Vdp2RamReadLong,
+                  &Vdp2RamWriteByte,
+                  &Vdp2RamWriteWord,
+                  &Vdp2RamWriteLong);
    FillMemoryArea(0x5F0, 0x5F7, &Vdp2ColorRamReadByte,
-                                &Vdp2ColorRamReadWord,
-                                &Vdp2ColorRamReadLong,
-                                &Vdp2ColorRamWriteByte,
-                                &Vdp2ColorRamWriteWord,
-                                &Vdp2ColorRamWriteLong);
+                  &Vdp2ColorRamReadWord,
+                  &Vdp2ColorRamReadLong,
+                  &Vdp2ColorRamWriteByte,
+                  &Vdp2ColorRamWriteWord,
+                  &Vdp2ColorRamWriteLong);
    FillMemoryArea(0x5F8, 0x5FB, &Vdp2ReadByte,
-                                &Vdp2ReadWord,
-                                &Vdp2ReadLong,
-                                &Vdp2WriteByte,
-                                &Vdp2WriteWord,
-                                &Vdp2WriteLong);
+                  &Vdp2ReadWord,
+                  &Vdp2ReadLong,
+                  &Vdp2WriteByte,
+                  &Vdp2WriteWord,
+                  &Vdp2WriteLong);
    FillMemoryArea(0x5FE, 0x5FE, &ScuReadByte,
-                                &ScuReadWord,
-                                &ScuReadLong,
-                                &ScuWriteByte,
-                                &ScuWriteWord,
-                                &ScuWriteLong);
+                  &ScuReadWord,
+                  &ScuReadLong,
+                  &ScuWriteByte,
+                  &ScuWriteWord,
+                  &ScuWriteLong);
    FillMemoryArea(0x600, 0x610, &HighWramMemoryReadByte,
-                                &HighWramMemoryReadWord,
-                                &HighWramMemoryReadLong,
-                                &HighWramMemoryWriteByte,
-                                &HighWramMemoryWriteWord,
-                                &HighWramMemoryWriteLong);
-   FillMemoryArea( ((tweak_backup_file_addr >> 16) & 0xFFF) , 0x7ff, &BupRamMemoryReadByte,
-     &BupRamMemoryReadWord,
-     &BupRamMemoryReadLong,
-     &BupRamMemoryWriteByte,
-     &BupRamMemoryWriteWord,
-     &BupRamMemoryWriteLong);
+                  &HighWramMemoryReadWord,
+                  &HighWramMemoryReadLong,
+                  &HighWramMemoryWriteByte,
+                  &HighWramMemoryWriteWord,
+                  &HighWramMemoryWriteLong);
+   FillMemoryArea(((tweak_backup_file_addr >> 16) & 0xFFF), 0x7ff, &BupRamMemoryReadByte,
+                  &BupRamMemoryReadWord,
+                  &BupRamMemoryReadLong,
+                  &BupRamMemoryWriteByte,
+                  &BupRamMemoryWriteWord,
+                  &BupRamMemoryWriteLong);
 }
 
 #if 0
 #define GET_MEM_CYCLE_W *cycle = 0;
 #define GET_MEM_CYCLE_R *cycle = 0;
 #else
-INLINE int getVramCycle(u32 addr) {
-  if (yabsys.LineCount >= yabsys.VBlankLineCount) { 
-    return 16;
-  }
-  if ((addr & 0x000F0000) < 0x00040000) {
-    return Vdp2External.cpu_cycle_a;
-  }
-  else {
-    return Vdp2External.cpu_cycle_b;
-  }
-  return 16;
+INLINE int getVramCycle(u32 addr)
+{
+   if (yabsys.LineCount >= yabsys.VBlankLineCount)
+   {
+      return 16;
+   }
+   if ((addr & 0x000F0000) < 0x00040000)
+   {
+      return Vdp2External.cpu_cycle_a;
+   }
+   else
+   {
+      return Vdp2External.cpu_cycle_b;
+   }
+   return 16;
 }
 
 const int clock_shift = 1;
 
+u32 getMemClock(u32 addr)
+{
 
-u32 getMemClock(u32 addr) {
-  
-  addr = addr & 0xDFFFFFFF;
+   addr = addr & 0xDFFFFFFF;
 
-  // CPU bus 1
-  if (addr >= 0x06000000 && addr < 0x06100000) {
-    return (16 >> clock_shift);
-  }
-  else if (addr >= 0x000000 && addr < 0x00300000) {
-    return 22 >> clock_shift;
-  }
+   // CPU bus 1
+   if (addr >= 0x06000000 && addr < 0x06100000)
+   {
+      return (16 >> clock_shift);
+   }
+   else if (addr >= 0x000000 && addr < 0x00300000)
+   {
+      return 22 >> clock_shift;
+   }
 
-  // A bus 
-  else if (addr >= 0x02000000 && addr < 0x05800000) {
-    return 80 >> clock_shift;
-  }
-
-  // B bus
-  else if (addr >= 0x05A00000 && addr < 0x05E00000) {
-    return 80 >> clock_shift;
-  }
-  else if (addr >= 0x05e00000 && addr < 0x05E80000) {
-    if (yabsys.LineCount >= yabsys.VBlankLineCount) {
+   // A bus
+   else if (addr >= 0x02000000 && addr < 0x05800000)
+   {
       return 80 >> clock_shift;
-    }
-    if ((addr & 0x000F0000) < 0x00040000) {
-      return Vdp2External.cpu_cycle_a >> clock_shift;
-    }
-    else {
-      return Vdp2External.cpu_cycle_b >> clock_shift;
-    }
-    return 80 >> clock_shift;
-  }
-  else if (addr >= 0x05f00000 && addr < 0x060000000) {
-    return 16 >> clock_shift;
-  }
-  return 0;
-}
+   }
 
+   // B bus
+   else if (addr >= 0x05A00000 && addr < 0x05E00000)
+   {
+      return 80 >> clock_shift;
+   }
+   else if (addr >= 0x05e00000 && addr < 0x05E80000)
+   {
+      if (yabsys.LineCount >= yabsys.VBlankLineCount)
+      {
+         return 80 >> clock_shift;
+      }
+      if ((addr & 0x000F0000) < 0x00040000)
+      {
+         return Vdp2External.cpu_cycle_a >> clock_shift;
+      }
+      else
+      {
+         return Vdp2External.cpu_cycle_b >> clock_shift;
+      }
+      return 80 >> clock_shift;
+   }
+   else if (addr >= 0x05f00000 && addr < 0x060000000)
+   {
+      return 16 >> clock_shift;
+   }
+   return 0;
+}
 
 #endif
 
@@ -847,141 +925,67 @@ inline u32 getMemCycle(u32 addr) {
 
 //////////////////////////////////////////////////////////////////////////////
 #if CACHE_ENABLE
-u8 FASTCALL MappedMemoryReadByte(u32 addr, u32 * cycle){
-	return cache_memory_read_b(&CurrentSH2->onchip.cache, addr, cycle);
+u8 FASTCALL MappedMemoryReadByte(u32 addr, u32 *cycle)
+{
+   return cache_memory_read_b(&CurrentSH2->onchip.cache, addr, cycle);
 }
-u8 FASTCALL MappedMemoryReadByteNocache(u32 addr, u32 * cycle)
+u8 FASTCALL MappedMemoryReadByteNocache(u32 addr, u32 *cycle)
 #else
-u8 FASTCALL MappedMemoryReadByte(u32 addr, u32 * cycle)
+u8 FASTCALL MappedMemoryReadByte(u32 addr, u32 *cycle)
 #endif
 {
-  if (cycle != NULL) { 
-    *cycle = getMemClock(addr);
-  }
-
-   switch (addr >> 29)
+   if (cycle != NULL)
    {
-      case 0x0:
-      case 0x1:
-      case 0x4:
-      {
-         // Cache/Non-Cached
-         u8 rtn = ReadByteList[(addr >> 16) & 0xFFF](addr);
-         //if( (addr&0xF0000000) == 0x20000000 ){
-         // LOG("[%s] %zu-byte read address=0x%08x value=0x%x\n", CurrentSH2->isslave ? "SH2-S" : "SH2-M", 1, addr, rtn);
-         //}
-         return rtn;
-
-      }
-
-      case 0x2:
-      case 0x5:
-      {
-        // Purge Area
-        return 0xFF;
-      }
-
-
-      //case 0x4:
-      case 0x6:
-         // Data Array
-         return DataArrayReadByte(addr);
-      case 0x7:
-      {
-         if (addr >= 0xFFFFFE00)
-         {
-            // Onchip modules
-            addr &= 0x1FF;
-            return OnchipReadByte(addr);
-         }
-         else if (addr >= 0xFFFF8000 && addr < 0xFFFFC000)
-         {
-            // ???
-         }
-         else
-         {
-            // Garbage data
-         }
-         break;
-      }
-      default:
-      {
-         return UnhandledMemoryReadByte(addr);
-      }
+      *cycle = getMemClock(addr);
    }
 
-   return 0;
-}
-
-
-//////////////////////////////////////////////////////////////////////////////
-#if CACHE_ENABLE
-u16 MappedMemoryReadInst(u32 addr, u32 * cycle) {
-  return cache_memory_read_w(&CurrentSH2->onchip.cache, addr, cycle, 1);
-}
-u16 FASTCALL MappedMemoryReadWord(u32 addr, u32 * cycle){
-	return cache_memory_read_w(&CurrentSH2->onchip.cache, addr, cycle, 0);
-}
-u16 FASTCALL MappedMemoryReadWordNocache(u32 addr, u32 * cycle)
-#else
-u16 MappedMemoryReadInst(u32 addr, u32 * cycle) {
-  return MappedMemoryReadWord(addr,cycle);
-}
-u16 FASTCALL MappedMemoryReadWord(u32 addr, u32 * cycle)
-#endif
-{
-  if (cycle != NULL) {
-    *cycle = getMemClock(addr);
-  }
-
    switch (addr >> 29)
    {
-      case 0x0:
-      case 0x1:
-      case 0x4:
-      {
-         // Cache/Non-Cached
-         u16 rtn = ReadWordList[(addr >> 16) & 0xFFF](addr);
-         //if( (addr&0xF0000000) == 0x20000000 ){
-         //  LOG("[%s] %zu-byte read address=0x%08x value=0x%x\n", CurrentSH2->isslave ? "SH2-S" : "SH2-M", 2, addr, rtn);
-         //}
-         return rtn;
-      }
+   case 0x0:
+   case 0x1:
+   case 0x4:
+   {
+      // Cache/Non-Cached
+      u8 rtn = ReadByteList[(addr >> 16) & 0xFFF](addr);
+      // if( (addr&0xF0000000) == 0x20000000 ){
+      //  LOG("[%s] %zu-byte read address=0x%08x value=0x%x\n", CurrentSH2->isslave ? "SH2-S" : "SH2-M", 1, addr, rtn);
+      // }
+      return rtn;
+   }
 
-      case 0x2:
-      case 0x5:
-      {
-        // Purge Area
-        return 0xFFFF;
-      }
+   case 0x2:
+   case 0x5:
+   {
+      // Purge Area
+      return 0xFF;
+   }
 
-
-      //case 0x4:
-      case 0x6:
-         // Data Array
-         return DataArrayReadWord(addr);
-      case 0x7:
+   // case 0x4:
+   case 0x6:
+      // Data Array
+      return DataArrayReadByte(addr);
+   case 0x7:
+   {
+      if (addr >= 0xFFFFFE00)
       {
-         if (addr >= 0xFFFFFE00)
-         {
-            // Onchip modules
-            addr &= 0x1FF;
-            return OnchipReadWord(addr);
-         }
-         else if (addr >= 0xFFFF8000 && addr < 0xFFFFC000)
-         {
-            // ???
-         }
-         else
-         {
-            // Garbage data
-         }
-         break;
+         // Onchip modules
+         addr &= 0x1FF;
+         return OnchipReadByte(addr);
       }
-      default:
+      else if (addr >= 0xFFFF8000 && addr < 0xFFFFC000)
       {
-         return UnhandledMemoryReadWord(addr);
+         // ???
       }
+      else
+      {
+         // Garbage data
+      }
+      break;
+   }
+   default:
+   {
+      return UnhandledMemoryReadByte(addr);
+   }
    }
 
    return 0;
@@ -989,207 +993,289 @@ u16 FASTCALL MappedMemoryReadWord(u32 addr, u32 * cycle)
 
 //////////////////////////////////////////////////////////////////////////////
 #if CACHE_ENABLE
-u32 FASTCALL MappedMemoryReadLong(u32 addr, u32 * cycle){
-	return cache_memory_read_l(&CurrentSH2->onchip.cache, addr,cycle);
+u16 MappedMemoryReadInst(u32 addr, u32 *cycle)
+{
+   return cache_memory_read_w(&CurrentSH2->onchip.cache, addr, cycle, 1);
 }
-u32 FASTCALL MappedMemoryReadLongNocache(u32 addr, u32 * cycle)
+u16 FASTCALL MappedMemoryReadWord(u32 addr, u32 *cycle)
+{
+   return cache_memory_read_w(&CurrentSH2->onchip.cache, addr, cycle, 0);
+}
+u16 FASTCALL MappedMemoryReadWordNocache(u32 addr, u32 *cycle)
 #else
-u32 FASTCALL MappedMemoryReadLong(u32 addr, u32 * cycle)
+u16 MappedMemoryReadInst(u32 addr, u32 *cycle)
+{
+   return MappedMemoryReadWord(addr, cycle);
+}
+u16 FASTCALL MappedMemoryReadWord(u32 addr, u32 *cycle)
 #endif
 {
-
-  if (cycle != NULL) {
-    *cycle = getMemClock(addr);
-  }
+   if (cycle != NULL)
+   {
+      *cycle = getMemClock(addr);
+   }
 
    switch (addr >> 29)
    {
-      case 0x0:
-      case 0x1:
-      case 0x4:
-      {
-         // Cache/Non-Cached
-         u32 rtn = ReadLongList[(addr >> 16) & 0xFFF](addr);
-         //if( (addr&0xF0000000) == 0x20000000 ){
-         //   LOG("[%s] %zu-byte read address=0x%08x value=0x%x\n", CurrentSH2->isslave ? "SH2-S" : "SH2-M", 4, addr, rtn);
-         //}
-         return rtn;
-      }
+   case 0x0:
+   case 0x1:
+   case 0x4:
+   {
+      // Cache/Non-Cached
+      u16 rtn = ReadWordList[(addr >> 16) & 0xFFF](addr);
+      // if( (addr&0xF0000000) == 0x20000000 ){
+      //   LOG("[%s] %zu-byte read address=0x%08x value=0x%x\n", CurrentSH2->isslave ? "SH2-S" : "SH2-M", 2, addr, rtn);
+      // }
+      return rtn;
+   }
 
-      case 0x2:
-      case 0x5:
-      {
-        // Purge Area
-        return 0xFFFFFFFF;
-      }
+   case 0x2:
+   case 0x5:
+   {
+      // Purge Area
+      return 0xFFFF;
+   }
 
-      case 0x3:
+   // case 0x4:
+   case 0x6:
+      // Data Array
+      return DataArrayReadWord(addr);
+   case 0x7:
+   {
+      if (addr >= 0xFFFFFE00)
       {
-         // Address Array
-         return AddressArrayReadLong(addr);
+         // Onchip modules
+         addr &= 0x1FF;
+         return OnchipReadWord(addr);
       }
-      //case 0x4:
-      case 0x6:
-         // Data Array
-         return DataArrayReadLong(addr);
-      case 0x7:
+      else if (addr >= 0xFFFF8000 && addr < 0xFFFFC000)
       {
-         if (addr >= 0xFFFFFE00)
-         {
-            // Onchip modules
-            addr &= 0x1FF;
-            return OnchipReadLong(addr);
-         }
-         else if (addr >= 0xFFFF8000 && addr < 0xFFFFC000)
-         {
-            // ???
-         }
-         else
-         {
-            // Garbage data
-         }
-         break;
+         // ???
       }
-      default:
+      else
       {
-         return UnhandledMemoryReadLong(addr);
+         // Garbage data
       }
+      break;
+   }
+   default:
+   {
+      return UnhandledMemoryReadWord(addr);
+   }
+   }
+
+   return 0;
+}
+
+//////////////////////////////////////////////////////////////////////////////
+#if CACHE_ENABLE
+u32 FASTCALL MappedMemoryReadLong(u32 addr, u32 *cycle)
+{
+   return cache_memory_read_l(&CurrentSH2->onchip.cache, addr, cycle);
+}
+u32 FASTCALL MappedMemoryReadLongNocache(u32 addr, u32 *cycle)
+#else
+u32 FASTCALL MappedMemoryReadLong(u32 addr, u32 *cycle)
+#endif
+{
+
+   if (cycle != NULL)
+   {
+      *cycle = getMemClock(addr);
+   }
+
+   switch (addr >> 29)
+   {
+   case 0x0:
+   case 0x1:
+   case 0x4:
+   {
+      // Cache/Non-Cached
+      u32 rtn = ReadLongList[(addr >> 16) & 0xFFF](addr);
+      // if( (addr&0xF0000000) == 0x20000000 ){
+      //    LOG("[%s] %zu-byte read address=0x%08x value=0x%x\n", CurrentSH2->isslave ? "SH2-S" : "SH2-M", 4, addr, rtn);
+      // }
+      return rtn;
+   }
+
+   case 0x2:
+   case 0x5:
+   {
+      // Purge Area
+      return 0xFFFFFFFF;
+   }
+
+   case 0x3:
+   {
+      // Address Array
+      return AddressArrayReadLong(addr);
+   }
+   // case 0x4:
+   case 0x6:
+      // Data Array
+      return DataArrayReadLong(addr);
+   case 0x7:
+   {
+      if (addr >= 0xFFFFFE00)
+      {
+         // Onchip modules
+         addr &= 0x1FF;
+         return OnchipReadLong(addr);
+      }
+      else if (addr >= 0xFFFF8000 && addr < 0xFFFFC000)
+      {
+         // ???
+      }
+      else
+      {
+         // Garbage data
+      }
+      break;
+   }
+   default:
+   {
+      return UnhandledMemoryReadLong(addr);
+   }
    }
    return 0;
 }
 
 //////////////////////////////////////////////////////////////////////////////
 #if CACHE_ENABLE
-void FASTCALL MappedMemoryWriteByte(u32 addr, u8 val, u32 * cycle){
-	cache_memory_write_b(&CurrentSH2->onchip.cache,addr,val,cycle);
+void FASTCALL MappedMemoryWriteByte(u32 addr, u8 val, u32 *cycle)
+{
+   cache_memory_write_b(&CurrentSH2->onchip.cache, addr, val, cycle);
 }
-void FASTCALL MappedMemoryWriteByteNocache(u32 addr, u8 val, u32 * cycle)
+void FASTCALL MappedMemoryWriteByteNocache(u32 addr, u8 val, u32 *cycle)
 #else
-void FASTCALL MappedMemoryWriteByte(u32 addr, u8 val, u32 * cycle)
+void FASTCALL MappedMemoryWriteByte(u32 addr, u8 val, u32 *cycle)
 #endif
 {
-  //if ((addr & 0x0FFFFFFF) == 0x060f9600) {
-  //  LOG("[%s] %d Write %zu-byte write of 0x%08x to 0x%08x PC=%08X frame=%d:%d", CurrentSH2->isslave ? "SH2-S" : "SH2-M", CurrentSH2->cycles, 1, val, addr, CurrentSH2->regs.PC, yabsys.frame_count, yabsys.LineCount);
-    //if (slogp != NULL){
-    //   fprintf(slogp, "%08X: CPU write 0x%08X = %d(0x%08X)\n", CurrentSH2->regs.PC, addr, val,val );
-    //}
-  //}
+   // if ((addr & 0x0FFFFFFF) == 0x060f9600) {
+   //   LOG("[%s] %d Write %zu-byte write of 0x%08x to 0x%08x PC=%08X frame=%d:%d", CurrentSH2->isslave ? "SH2-S" : "SH2-M", CurrentSH2->cycles, 1, val, addr, CurrentSH2->regs.PC, yabsys.frame_count, yabsys.LineCount);
+   // if (slogp != NULL){
+   //    fprintf(slogp, "%08X: CPU write 0x%08X = %d(0x%08X)\n", CurrentSH2->regs.PC, addr, val,val );
+   // }
+   //}
 
-  if (cycle != NULL) {
-    *cycle = getMemClock(addr);
-  }
-
-  switch (addr >> 29)
+   if (cycle != NULL)
    {
-      case 0x0:
-      case 0x1:
-      case 0x4:
-      {
-         // Cache/Non-Cached
-         WriteByteList[(addr >> 16) & 0xFFF](addr, val);
-         return;
-      }
+      *cycle = getMemClock(addr);
+   }
 
-      case 0x2:
-      case 0x5:
-      {
-         // Purge Area
-         return;
-      }
+   switch (addr >> 29)
+   {
+   case 0x0:
+   case 0x1:
+   case 0x4:
+   {
+      // Cache/Non-Cached
+      WriteByteList[(addr >> 16) & 0xFFF](addr, val);
+      return;
+   }
 
-      //case 0x4:
-      case 0x6:
-         // Data Array
-         DataArrayWriteByte(addr, val);
-         return;
-      case 0x7:
+   case 0x2:
+   case 0x5:
+   {
+      // Purge Area
+      return;
+   }
+
+   // case 0x4:
+   case 0x6:
+      // Data Array
+      DataArrayWriteByte(addr, val);
+      return;
+   case 0x7:
+   {
+      if (addr >= 0xFFFFFE00)
       {
-         if (addr >= 0xFFFFFE00)
-         {
-            // Onchip modules
-            addr &= 0x1FF;
-            OnchipWriteByte(addr, val);
-            return; 
-         }
-         else if (addr >= 0xFFFF8000 && addr < 0xFFFFC000)
-         {
-            // ???
-         }
-         else
-         {
-            // Garbage data
-         }
+         // Onchip modules
+         addr &= 0x1FF;
+         OnchipWriteByte(addr, val);
          return;
       }
-      default:
+      else if (addr >= 0xFFFF8000 && addr < 0xFFFFC000)
       {
-         UnhandledMemoryWriteByte(addr, val);
-         return;
+         // ???
       }
+      else
+      {
+         // Garbage data
+      }
+      return;
+   }
+   default:
+   {
+      UnhandledMemoryWriteByte(addr, val);
+      return;
+   }
    }
 }
 
 //////////////////////////////////////////////////////////////////////////////
 #if CACHE_ENABLE
-void FASTCALL MappedMemoryWriteWord(u32 addr, u16 val, u32 * cycle){
-	cache_memory_write_w(&CurrentSH2->onchip.cache, addr, val, cycle);
+void FASTCALL MappedMemoryWriteWord(u32 addr, u16 val, u32 *cycle)
+{
+   cache_memory_write_w(&CurrentSH2->onchip.cache, addr, val, cycle);
 }
-void FASTCALL MappedMemoryWriteWordNocache(u32 addr, u16 val, u32 * cycle)
+void FASTCALL MappedMemoryWriteWordNocache(u32 addr, u16 val, u32 *cycle)
 #else
-void FASTCALL MappedMemoryWriteWord(u32 addr, u16 val, u32 * cycle )
+void FASTCALL MappedMemoryWriteWord(u32 addr, u16 val, u32 *cycle)
 #endif
 {
-  if (cycle != NULL) {
-    *cycle = getMemClock(addr);
-  }
+   if (cycle != NULL)
+   {
+      *cycle = getMemClock(addr);
+   }
 
    switch (addr >> 29)
    {
-      case 0x0:
-      case 0x1:
-      case 0x4:
-      {
-         // Cache/Non-Cached
-         WriteWordList[(addr >> 16) & 0xFFF](addr, val);
-         return;
-      }
+   case 0x0:
+   case 0x1:
+   case 0x4:
+   {
+      // Cache/Non-Cached
+      WriteWordList[(addr >> 16) & 0xFFF](addr, val);
+      return;
+   }
 
-      case 0x2:
-      case 0x5:
-      {
-        // Purge Area
-        return;
-      }
+   case 0x2:
+   case 0x5:
+   {
+      // Purge Area
+      return;
+   }
 
-      //case 0x4:
-      case 0x6:
-         // Data Array
-         DataArrayWriteWord(addr, val);
-         return;
-      case 0x7:
+   // case 0x4:
+   case 0x6:
+      // Data Array
+      DataArrayWriteWord(addr, val);
+      return;
+   case 0x7:
+   {
+      if (addr >= 0xFFFFFE00)
       {
-         if (addr >= 0xFFFFFE00)
-         {
-            // Onchip modules
-            addr &= 0x1FF;
-            OnchipWriteWord(addr, val);
-            return;
-         }
-         else if (addr >= 0xFFFF8000 && addr < 0xFFFFC000)
-         {
-            // ???
-         }
-         else
-         {
-            // Garbage data
-         }
+         // Onchip modules
+         addr &= 0x1FF;
+         OnchipWriteWord(addr, val);
          return;
       }
-      default:
+      else if (addr >= 0xFFFF8000 && addr < 0xFFFFC000)
       {
-         UnhandledMemoryWriteWord(addr, val);
-         return;
+         // ???
       }
+      else
+      {
+         // Garbage data
+      }
+      return;
+   }
+   default:
+   {
+      UnhandledMemoryWriteWord(addr, val);
+      return;
+   }
    }
 }
 
@@ -1199,12 +1285,13 @@ extern FILE * slogp;
 
 //////////////////////////////////////////////////////////////////////////////
 #if CACHE_ENABLE
-void FASTCALL MappedMemoryWriteLong(u32 addr, u32 val , u32 * cycle ){
-	cache_memory_write_l(&CurrentSH2->onchip.cache, addr, val, cycle);
+void FASTCALL MappedMemoryWriteLong(u32 addr, u32 val, u32 *cycle)
+{
+   cache_memory_write_l(&CurrentSH2->onchip.cache, addr, val, cycle);
 }
-void FASTCALL MappedMemoryWriteLongNocache(u32 addr, u32 val , u32 * cycle)
+void FASTCALL MappedMemoryWriteLongNocache(u32 addr, u32 val, u32 *cycle)
 #else
-void FASTCALL MappedMemoryWriteLong(u32 addr, u32 val, u32 * cycle )
+void FASTCALL MappedMemoryWriteLong(u32 addr, u32 val, u32 *cycle)
 #endif
 {
 #if 0   
@@ -1216,71 +1303,75 @@ void FASTCALL MappedMemoryWriteLong(u32 addr, u32 val, u32 * cycle )
    }
 #endif
 
-   if (cycle != NULL) {
-     *cycle = getMemClock(addr);
+   if (cycle != NULL)
+   {
+      *cycle = getMemClock(addr);
    }
 
    switch (addr >> 29)
    {
-      case 0x0:
-      case 0x1:
-      case 0x4:
+   case 0x0:
+   case 0x1:
+   case 0x4:
+   {
+      // Cache/Non-Cached
+      WriteLongList[(addr >> 16) & 0xFFF](addr, val);
+      return;
+   }
+
+   case 0x2:
+   case 0x5:
+   {
+      // Purge Area
+      return;
+   }
+
+   case 0x3:
+   {
+      if (cycle != NULL)
       {
-         // Cache/Non-Cached
-         WriteLongList[(addr >> 16) & 0xFFF](addr, val);
-         return;
+         *cycle = 2;
       }
 
-      case 0x2:
-      case 0x5:
+      // Address Array
+      AddressArrayWriteLong(addr, val);
+      return;
+   }
+   // case 0x4:
+   case 0x6:
+      // Data Array
+      DataArrayWriteLong(addr, val);
+      return;
+   case 0x7:
+   {
+      if (addr >= 0xFFFFFE00)
       {
-        // Purge Area
-        return;
-      }
-
-      case 0x3:
-      {
-         if (cycle != NULL) { *cycle = 2; }
-         
-         // Address Array
-         AddressArrayWriteLong(addr, val);
+         // Onchip modules
+         addr &= 0x1FF;
+         OnchipWriteLong(addr, val);
          return;
       }
-      //case 0x4:
-      case 0x6:
-         // Data Array
-         DataArrayWriteLong(addr, val);
-         return;
-      case 0x7:
+      else if (addr >= 0xFFFF8000 && addr < 0xFFFFC000)
       {
-         if (addr >= 0xFFFFFE00)
-         {
-            // Onchip modules
-            addr &= 0x1FF;
-            OnchipWriteLong(addr, val);
-            return;
-         }
-         else if (addr >= 0xFFFF8000 && addr < 0xFFFFC000)
-         {
-            // ???
-         }
-         else
-         {
-            // Garbage data
-         }
-         return;
+         // ???
       }
-      default:
+      else
       {
-         UnhandledMemoryWriteLong(addr, val);
-         return;
+         // Garbage data
       }
+      return;
+   }
+   default:
+   {
+      UnhandledMemoryWriteLong(addr, val);
+      return;
+   }
    }
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
-int MappedMemoryLoad(const char *filename, u32 addr )
+int MappedMemoryLoad(const char *filename, u32 addr)
 {
    FILE *fp;
    long filesize;
@@ -1302,7 +1393,7 @@ int MappedMemoryLoad(const char *filename, u32 addr )
    {
       YabSetError(YAB_ERR_FILEREAD, filename);
       fclose(fp);
-      return -1;//error
+      return -1; // error
    }
 
    fseek(fp, 0, SEEK_SET);
@@ -1317,7 +1408,7 @@ int MappedMemoryLoad(const char *filename, u32 addr )
    fclose(fp);
 
    for (i = 0; i < filesize; i++)
-      MappedMemoryWriteByte(addr+i, buffer[i], NULL);
+      MappedMemoryWriteByte(addr + i, buffer[i], NULL);
 
    free(buffer);
 
@@ -1345,7 +1436,7 @@ int MappedMemorySave(const char *filename, u32 addr, u32 size)
    }
 
    for (i = 0; i < size; i++)
-      buffer[i] = MappedMemoryReadByte(addr+i, NULL);
+      buffer[i] = MappedMemoryReadByte(addr + i, NULL);
 
    fwrite((void *)buffer, 1, size, fp);
    fclose(fp);
@@ -1372,7 +1463,7 @@ int MappedMemoryLoadExec(const char *filename, u32 pc)
          free(p);
          return rtn;
       }
-      else if(strcmp(p, ".ELF") == 0)
+      else if (strcmp(p, ".ELF") == 0)
       {
          int rtn = MappedMemoryLoadElf(filename);
          free(p);
@@ -1410,66 +1501,71 @@ int LoadBackupRam(const char *filename)
 }
 
 static u8 header[32] = {
-  0xFF, 'B', 0xFF, 'a', 0xFF, 'c', 0xFF, 'k',
-  0xFF, 'U', 0xFF, 'p', 0xFF, 'R', 0xFF, 'a',
-  0xFF, 'm', 0xFF, ' ', 0xFF, 'F', 0xFF, 'o',
-  0xFF, 'r', 0xFF, 'm', 0xFF, 'a', 0xFF, 't'
-};
+    0xFF, 'B', 0xFF, 'a', 0xFF, 'c', 0xFF, 'k',
+    0xFF, 'U', 0xFF, 'p', 0xFF, 'R', 0xFF, 'a',
+    0xFF, 'm', 0xFF, ' ', 0xFF, 'F', 0xFF, 'o',
+    0xFF, 'r', 0xFF, 'm', 0xFF, 'a', 0xFF, 't'};
 
-int CheckBackupFile(FILE *fp) {
-  int i, i2;
-  u32 i3;
+int CheckBackupFile(FILE *fp)
+{
+   int i, i2;
+   u32 i3;
 
-  // Fill in header
-  for (i2 = 0; i2 < 4; i2++) {
-    for (i = 0; i < 32; i++) {
-      u8 val = fgetc(fp);
-      if ( val != header[i]) {
-        return -1;
+   // Fill in header
+   for (i2 = 0; i2 < 4; i2++)
+   {
+      for (i = 0; i < 32; i++)
+      {
+         u8 val = fgetc(fp);
+         if (val != header[i])
+         {
+            return -1;
+         }
       }
-    }
-  }
-  return 0;
+   }
+   return 0;
 }
 
-int ExtendBackupFile(FILE *fp, u32 size ) {
+int ExtendBackupFile(FILE *fp, u32 size)
+{
 
-  fseek(fp, 0, SEEK_END);
-  u32 acsize = ftell(fp);
-  if (acsize < size) {
-    // Clear the rest
-    u32 i;
-    for ( i = (acsize&0xFFFFFFFE) ; i < size; i += 2)
-    {
-      fputc(0xFF, fp);
-      fputc(0x00, fp);
-    }
-    fflush(fp);
-  }
-  fseek(fp, 0, SEEK_SET);
+   fseek(fp, 0, SEEK_END);
+   u32 acsize = ftell(fp);
+   if (acsize < size)
+   {
+      // Clear the rest
+      u32 i;
+      for (i = (acsize & 0xFFFFFFFE); i < size; i += 2)
+      {
+         fputc(0xFF, fp);
+         fputc(0x00, fp);
+      }
+      fflush(fp);
+   }
+   fseek(fp, 0, SEEK_SET);
 
-  return 0;
+   return 0;
 }
-
 
 //////////////////////////////////////////////////////////////////////////////
-void FormatBackupRamFile(FILE *fp, u32 size) {
+void FormatBackupRamFile(FILE *fp, u32 size)
+{
 
-  int i, i2;
-  u32 i3;
+   int i, i2;
+   u32 i3;
 
-  // Fill in header
-  for (i2 = 0; i2 < 4; i2++)
-    for (i = 0; i < 32; i++)
-      fputc(header[i],fp);
+   // Fill in header
+   for (i2 = 0; i2 < 4; i2++)
+      for (i = 0; i < 32; i++)
+         fputc(header[i], fp);
 
-  // Clear the rest
-  for (i3 = 0x80; i3 < size; i3 += 2)
-  {
-    fputc(0xFF,fp);
-    fputc(0x00,fp);
-  }
-  fflush(fp);
+   // Clear the rest
+   for (i3 = 0x80; i3 < size; i3 += 2)
+   {
+      fputc(0xFF, fp);
+      fputc(0x00, fp);
+   }
+   fflush(fp);
 }
 
 void FormatBackupRam(void *mem, u32 size)
@@ -1478,27 +1574,28 @@ void FormatBackupRam(void *mem, u32 size)
    u32 i3;
 
    // Fill in header
-   for(i2 = 0; i2 < 4; i2++)
-      for(i = 0; i < 32; i++)
+   for (i2 = 0; i2 < 4; i2++)
+      for (i = 0; i < 32; i++)
          T1WriteByte(mem, (i2 * 32) + i, header[i]);
 
    // Clear the rest
-   for(i3 = 0x80; i3 < size; i3+=2)
+   for (i3 = 0x80; i3 < size; i3 += 2)
    {
       T1WriteByte(mem, i3, 0xFF);
-      T1WriteByte(mem, i3+1, 0x00);
+      T1WriteByte(mem, i3 + 1, 0x00);
    }
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
-int YabSaveStateBuffer(void ** buffer, size_t * size)
+int YabSaveStateBuffer(void **buffer, size_t *size)
 {
-   FILE * fp;
+   FILE *fp;
    int status;
    size_t num_read = 0;
 
-   if (buffer != NULL) *buffer = NULL;
+   if (buffer != NULL)
+      *buffer = NULL;
    *size = 0;
 
    fp = tmpfile();
@@ -1534,7 +1631,7 @@ int YabSaveState(const char *filename)
    FILE *fp;
    int status = 0;
 
-   //use a second set of savestates for movies
+   // use a second set of savestates for movies
    filename = MakeMovieStateName(filename);
    if (!filename)
       return -1;
@@ -1548,7 +1645,6 @@ int YabSaveState(const char *filename)
 
    return status;
 }
-
 
 //////////////////////////////////////////////////////////////////////////////
 
@@ -1599,10 +1695,10 @@ int YabSaveStateStream(FILE *fp)
    i = 0;
    ywrite(&check, (void *)&i, sizeof(i), 1, fp);
 
-   //write frame number
+   // write frame number
    ywrite(&check, (void *)&framecounter, 4, 1, fp);
 
-   //this will be updated with the movie position later
+   // this will be updated with the movie position later
    ywrite(&check, (void *)&framecounter, 4, 1, fp);
 
    // Go through each area and write each state
@@ -1638,30 +1734,30 @@ int YabSaveStateStream(FILE *fp)
 
    VIDCore->GetGlSize(&outputwidth, &outputheight);
 
-   totalsize=outputwidth * outputheight * sizeof(u32);
+   totalsize = outputwidth * outputheight * sizeof(u32);
 
    if ((buf = (u8 *)malloc(totalsize)) == NULL)
    {
       return -2;
    }
 
-   //YuiSwapBuffers();
-   #ifdef USE_OPENGL
-   glPixelZoom(1,1);
+// YuiSwapBuffers();
+#ifdef USE_OPENGL
+   glPixelZoom(1, 1);
    glReadBuffer(GL_BACK);
    glReadPixels(0, 0, outputwidth, outputheight, GL_RGBA, GL_UNSIGNED_BYTE, buf);
-   #else
-   //memcpy(buf, dispbuffer, totalsize);
-   #endif
-   //YuiSwapBuffers();
+#else
+// memcpy(buf, dispbuffer, totalsize);
+#endif
+   // YuiSwapBuffers();
 
    ywrite(&check, (void *)&outputwidth, sizeof(outputwidth), 1, fp);
    ywrite(&check, (void *)&outputheight, sizeof(outputheight), 1, fp);
 
    ywrite(&check, (void *)buf, totalsize, 1, fp);
 
-   movieposition=ftell(fp);
-   //write the movie to the end of the savestate
+   movieposition = ftell(fp);
+   // write the movie to the end of the savestate
    SaveMovieInState(fp, check);
 
    i += StateFinishHeader(fp, offset);
@@ -1680,9 +1776,9 @@ int YabSaveStateStream(FILE *fp)
 
 //////////////////////////////////////////////////////////////////////////////
 
-int YabLoadStateBuffer(const void * buffer, size_t size)
+int YabLoadStateBuffer(const void *buffer, size_t size)
 {
-   FILE * fp;
+   FILE *fp;
    int status;
 
    fp = tmpfile();
@@ -1730,7 +1826,7 @@ int YabLoadStateStream(FILE *fp)
    u8 endian;
    int headerversion, version, size, chunksize, headersize;
    IOCheck_struct check;
-   u8* buf;
+   u8 *buf;
    int totalsize;
    int outputwidth;
    int outputheight;
@@ -1739,14 +1835,13 @@ int YabLoadStateStream(FILE *fp)
    int movieposition;
    int temp;
    u32 temp32;
-	int test_endian;
+   int test_endian;
 
-  yabsys.frame_count = 0;
+   yabsys.frame_count = 0;
 
    headersize = 0xC;
    check.done = 0;
    check.size = 0;
-
 
    // Read signature
    yread(&check, (void *)id, 1, 3, fp);
@@ -1760,23 +1855,23 @@ int YabLoadStateStream(FILE *fp)
    yread(&check, (void *)&endian, 1, 1, fp);
    yread(&check, (void *)&headerversion, 4, 1, fp);
    yread(&check, (void *)&size, 4, 1, fp);
-   switch(headerversion)
+   switch (headerversion)
    {
-      case 1:
-         /* This is the "original" version of the format */
-         break;
-      case 2:
-         /* version 2 adds video recording */
-         yread(&check, (void *)&framecounter, 4, 1, fp);
-		 movieposition=ftell(fp);
-		 yread(&check, (void *)&movieposition, 4, 1, fp);
-         headersize = 0x14;
-         break;
-      default:
-         /* we're trying to open a save state using a future version
-          * of the YSS format, that won't work, sorry :) */
-         return -3;
-         break;
+   case 1:
+      /* This is the "original" version of the format */
+      break;
+   case 2:
+      /* version 2 adds video recording */
+      yread(&check, (void *)&framecounter, 4, 1, fp);
+      movieposition = ftell(fp);
+      yread(&check, (void *)&movieposition, 4, 1, fp);
+      headersize = 0x14;
+      break;
+   default:
+      /* we're trying to open a save state using a future version
+       * of the YSS format, that won't work, sorry :) */
+      return -3;
+      break;
    }
 
 #ifdef WORDS_BIGENDIAN
@@ -1801,8 +1896,7 @@ int YabLoadStateStream(FILE *fp)
    fseek(fp, headersize, SEEK_SET);
 
    // Verify version here
- 
-      
+
    if (StateCheckRetrieveHeader(fp, "CART", &version, &chunksize) != 0)
    {
       // Revert back to old state here
@@ -1872,8 +1966,8 @@ int YabLoadStateStream(FILE *fp)
       return -3;
    }
    // Other data
-   //yread(&check, (void *)BupRam, 0x10000, 1, fp);
-   fseek(fp, 0x10000, SEEK_CUR ); // skip this data
+   // yread(&check, (void *)BupRam, 0x10000, 1, fp);
+   fseek(fp, 0x10000, SEEK_CUR); // skip this data
    yread(&check, (void *)HighWram, 0x100000, 1, fp);
    yread(&check, (void *)LowWram, 0x100000, 1, fp);
 
@@ -1889,39 +1983,40 @@ int YabLoadStateStream(FILE *fp)
    YabauseChangeTiming(yabsys.CurSH2FreqType);
    yabsys.UsecFrac = (temp32 << YABSYS_TIMING_BITS) * temp / 10;
 
-   if (headerversion > 1) {
-
-   yread(&check, (void *)&outputwidth, sizeof(outputwidth), 1, fp);
-   yread(&check, (void *)&outputheight, sizeof(outputheight), 1, fp);
-
-   totalsize=outputwidth * outputheight * sizeof(u32);
-
-   if ((buf = (u8 *)malloc(totalsize)) == NULL)
+   if (headerversion > 1)
    {
-      return -2;
-   }
 
-   yread(&check, (void *)buf, totalsize, 1, fp);
+      yread(&check, (void *)&outputwidth, sizeof(outputwidth), 1, fp);
+      yread(&check, (void *)&outputheight, sizeof(outputheight), 1, fp);
 
-   //YuiSwapBuffers();
+      totalsize = outputwidth * outputheight * sizeof(u32);
 
-   #ifdef USE_OPENGL
-   if(VIDCore->id == VIDCORE_SOFT)
-     glRasterPos2i(0, outputheight);
-   if(VIDCore->id == VIDCORE_OGL)
-	 glRasterPos2i(0, outputheight/2);
-   #endif
+      if ((buf = (u8 *)malloc(totalsize)) == NULL)
+      {
+         return -2;
+      }
 
-   VIDCore->GetGlSize(&curroutputwidth, &curroutputheight);
-   #ifdef USE_OPENGL
-   glPixelZoom((float)curroutputwidth / (float)outputwidth, ((float)curroutputheight / (float)outputheight));
-   glDrawPixels(outputwidth, outputheight, GL_RGBA, GL_UNSIGNED_BYTE, buf);
-   #endif
-   //YuiSwapBuffers();
-   free(buf);
+      yread(&check, (void *)buf, totalsize, 1, fp);
 
-   fseek(fp, movieposition, SEEK_SET);
-   MovieReadState(fp);
+      // YuiSwapBuffers();
+
+#ifdef USE_OPENGL
+      if (VIDCore->id == VIDCORE_SOFT)
+         glRasterPos2i(0, outputheight);
+      if (VIDCore->id == VIDCORE_OGL)
+         glRasterPos2i(0, outputheight / 2);
+#endif
+
+      VIDCore->GetGlSize(&curroutputwidth, &curroutputheight);
+#ifdef USE_OPENGL
+      glPixelZoom((float)curroutputwidth / (float)outputwidth, ((float)curroutputheight / (float)outputheight));
+      glDrawPixels(outputwidth, outputheight, GL_RGBA, GL_UNSIGNED_BYTE, buf);
+#endif
+      // YuiSwapBuffers();
+      free(buf);
+
+      fseek(fp, movieposition, SEEK_SET);
+      MovieReadState(fp);
    }
 
    ScspUnMuteAudio(SCSP_MUTE_SYSTEM);
@@ -1935,7 +2030,7 @@ int YabLoadStateStream(FILE *fp)
 
 int YabSaveStateSlot(const char *dirpath, u8 slot)
 {
-  int rtn;
+   int rtn;
    char filename[512];
 
    if (cdip == NULL)
@@ -2017,16 +2112,16 @@ static int SearchString(u32 startaddr, u32 endaddr, int searchtype,
                         const char *searchstr, result_struct *results,
                         u32 *maxresults)
 {
-   u8 *buf=NULL;
-   u32 *buf32=NULL;
-   u32 buflen=0;
+   u8 *buf = NULL;
+   u32 *buf32 = NULL;
+   u32 buflen = 0;
    u32 counter;
    u32 addr;
-   u32 numresults=0;
+   u32 numresults = 0;
 
-   buflen=(u32)strlen(searchstr);
+   buflen = (u32)strlen(searchstr);
 
-   if ((buf32=(u32 *)malloc(buflen*sizeof(u32))) == NULL)
+   if ((buf32 = (u32 *)malloc(buflen * sizeof(u32))) == NULL)
       return 0;
 
    buf = (u8 *)buf32;
@@ -2034,27 +2129,27 @@ static int SearchString(u32 startaddr, u32 endaddr, int searchtype,
    // Copy string to buffer
    switch (searchtype & 0x70)
    {
-      case SEARCHSTRING:
-         strcpy((char *)buf, searchstr);
-         break;
-      case SEARCHREL8BIT:
-      case SEARCHREL16BIT:
+   case SEARCHSTRING:
+      strcpy((char *)buf, searchstr);
+      break;
+   case SEARCHREL8BIT:
+   case SEARCHREL16BIT:
+   {
+      char *text;
+      char *searchtext = strdup(searchstr);
+
+      // Calculate buffer length and read values into table
+      buflen = 0;
+      for (text = strtok((char *)searchtext, " ,"); text != NULL; text = strtok(NULL, " ,"))
       {
-         char *text;
-         char *searchtext=strdup(searchstr);
-
-         // Calculate buffer length and read values into table
-         buflen = 0;
-         for (text=strtok((char *)searchtext, " ,"); text != NULL; text=strtok(NULL, " ,"))
-         {            
-            buf32[buflen] = strtoul(text, NULL, 0);
-            buflen++;
-         }
-         free(searchtext);
-
-         break;
+         buf32[buflen] = strtoul(text, NULL, 0);
+         buflen++;
       }
-   }    
+      free(searchtext);
+
+      break;
+   }
+   }
 
    addr = startaddr;
    counter = 0;
@@ -2064,79 +2159,79 @@ static int SearchString(u32 startaddr, u32 endaddr, int searchtype,
       // Fetch byte/word/etc.
       switch (searchtype & 0x70)
       {
-         case SEARCHSTRING:
+      case SEARCHSTRING:
+      {
+         u8 val = MappedMemoryReadByte(addr, NULL);
+         addr++;
+
+         if (val == buf[counter])
          {
-            u8 val = MappedMemoryReadByte(addr, NULL);
-            addr++;
-
-            if (val == buf[counter])
-            {
-               counter++;
-               if (counter == buflen)
-                  MappedMemoryAddMatch(addr-buflen, val, searchtype, results, &numresults);
-            }
-            else
-               counter = 0;
-            break;
+            counter++;
+            if (counter == buflen)
+               MappedMemoryAddMatch(addr - buflen, val, searchtype, results, &numresults);
          }
-         case SEARCHREL8BIT:
+         else
+            counter = 0;
+         break;
+      }
+      case SEARCHREL8BIT:
+      {
+         int diff;
+         u32 j;
+         u8 val2;
+         u8 val = MappedMemoryReadByte(addr, NULL);
+
+         for (j = 1; j < buflen; j++)
          {
-            int diff;
-            u32 j;
-            u8 val2;
-            u8 val = MappedMemoryReadByte(addr, NULL);
+            // grab the next value
+            val2 = MappedMemoryReadByte(addr + j, NULL);
 
-            for (j = 1; j < buflen; j++)
-            {
-               // grab the next value
-               val2 = MappedMemoryReadByte(addr+j, NULL);
+            // figure out the diff
+            diff = (int)val2 - (int)val;
 
-               // figure out the diff
-               diff = (int)val2 - (int)val;
+            // see if there's a match
+            if (((int)buf32[j] - (int)buf32[j - 1]) != diff)
+               break;
 
-               // see if there's a match             
-               if (((int)buf32[j] - (int)buf32[j-1]) != diff)
-                  break;
+            if (j == (buflen - 1))
+               MappedMemoryAddMatch(addr, val, searchtype, results, &numresults);
 
-               if (j == (buflen - 1))
-                  MappedMemoryAddMatch(addr, val, searchtype, results, &numresults);
-
-               val = val2;
-            }
-
-            addr++;
-
-            break;
+            val = val2;
          }
-         case SEARCHREL16BIT:
+
+         addr++;
+
+         break;
+      }
+      case SEARCHREL16BIT:
+      {
+         int diff;
+         u32 j;
+         u16 val2;
+         u16 val = MappedMemoryReadWord(addr, NULL);
+
+         for (j = 1; j < buflen; j++)
          {
-            int diff;
-            u32 j;
-            u16 val2;
-            u16 val = MappedMemoryReadWord(addr, NULL);
+            // grab the next value
+            val2 = MappedMemoryReadWord(addr + (j * 2), NULL);
 
-            for (j = 1; j < buflen; j++)
-            {
-               // grab the next value
-               val2 = MappedMemoryReadWord(addr+(j*2), NULL);
+            // figure out the diff
+            diff = (int)val2 - (int)val;
 
-               // figure out the diff
-               diff = (int)val2 - (int)val;
+            // see if there's a match
+            if (((int)buf32[j] - (int)buf32[j - 1]) != diff)
+               break;
 
-               // see if there's a match             
-               if (((int)buf32[j] - (int)buf32[j-1]) != diff)
-                  break;
+            if (j == (buflen - 1))
+               MappedMemoryAddMatch(addr, val, searchtype, results, &numresults);
 
-               if (j == (buflen - 1))
-                  MappedMemoryAddMatch(addr, val, searchtype, results, &numresults);
-
-               val = val2;
-            }
-
-            addr+=2;
-            break;
+            val = val2;
          }
-      }    
+
+         addr += 2;
+         break;
+      }
+      }
 
       if (addr > endaddr || numresults >= maxresults[0])
          break;
@@ -2153,11 +2248,11 @@ result_struct *MappedMemorySearch(u32 startaddr, u32 endaddr, int searchtype,
                                   const char *searchstr,
                                   result_struct *prevresults, u32 *maxresults)
 {
-   u32 i=0;
+   u32 i = 0;
    result_struct *results;
-   u32 numresults=0;
+   u32 numresults = 0;
    unsigned long searchval = 0;
-   int issigned=0;
+   int issigned = 0;
    u32 addr;
 
    if ((results = (result_struct *)malloc(sizeof(result_struct) * maxresults[0])) == NULL)
@@ -2165,33 +2260,33 @@ result_struct *MappedMemorySearch(u32 startaddr, u32 endaddr, int searchtype,
 
    switch (searchtype & 0x70)
    {
-      case SEARCHSTRING:
-      case SEARCHREL8BIT:
-      case SEARCHREL16BIT:
+   case SEARCHSTRING:
+   case SEARCHREL8BIT:
+   case SEARCHREL16BIT:
+   {
+      // String/8-bit relative/16-bit relative search(not supported, yet)
+      if (SearchString(startaddr, endaddr, searchtype, searchstr,
+                       results, maxresults) == 0)
       {
-         // String/8-bit relative/16-bit relative search(not supported, yet)
-         if (SearchString(startaddr, endaddr,  searchtype, searchstr,
-                          results, maxresults) == 0)
-         {
-            maxresults[0] = 0;
-            free(results);
-            return NULL;
-         }
-
-         return results;
+         maxresults[0] = 0;
+         free(results);
+         return NULL;
       }
-      case SEARCHHEX:         
-         sscanf(searchstr, "%08lx", &searchval);
-         break;
-      case SEARCHUNSIGNED:
-         searchval = (unsigned long)strtoul(searchstr, NULL, 10);
-         issigned = 0;
-         break;
-      case SEARCHSIGNED:
-         searchval = (unsigned long)strtol(searchstr, NULL, 10);
-         issigned = 1;
-         break;
-   }   
+
+      return results;
+   }
+   case SEARCHHEX:
+      sscanf(searchstr, "%08lx", &searchval);
+      break;
+   case SEARCHUNSIGNED:
+      searchval = (unsigned long)strtoul(searchstr, NULL, 10);
+      issigned = 0;
+      break;
+   case SEARCHSIGNED:
+      searchval = (unsigned long)strtol(searchstr, NULL, 10);
+      issigned = 1;
+      break;
+   }
 
    if (prevresults)
    {
@@ -2204,66 +2299,66 @@ result_struct *MappedMemorySearch(u32 startaddr, u32 endaddr, int searchtype,
    // Regular value search
    for (;;)
    {
-       u32 val=0;
-       u32 newaddr;
+      u32 val = 0;
+      u32 newaddr;
 
-       // Fetch byte/word/etc.
-       switch (searchtype & 0x3)
-       {
-          case SEARCHBYTE:
-             val = MappedMemoryReadByte(addr, NULL);
-             // sign extend if neccessary
-             if (issigned)
-                val = (s8)val;
+      // Fetch byte/word/etc.
+      switch (searchtype & 0x3)
+      {
+      case SEARCHBYTE:
+         val = MappedMemoryReadByte(addr, NULL);
+         // sign extend if neccessary
+         if (issigned)
+            val = (s8)val;
 
-             if (SearchIncrementAndCheckBounds(prevresults, maxresults, numresults, &i, addr+1, &newaddr, endaddr))
-                return results;
-             break;
-          case SEARCHWORD:
-             val = MappedMemoryReadWord(addr, NULL);
-             // sign extend if neccessary
-             if (issigned)
-                val = (s16)val;
+         if (SearchIncrementAndCheckBounds(prevresults, maxresults, numresults, &i, addr + 1, &newaddr, endaddr))
+            return results;
+         break;
+      case SEARCHWORD:
+         val = MappedMemoryReadWord(addr, NULL);
+         // sign extend if neccessary
+         if (issigned)
+            val = (s16)val;
 
-             if (SearchIncrementAndCheckBounds(prevresults, maxresults, numresults, &i, addr+2, &newaddr, endaddr))
-                return results;
-             break;
-          case SEARCHLONG:
-             val = MappedMemoryReadLong(addr, NULL);
+         if (SearchIncrementAndCheckBounds(prevresults, maxresults, numresults, &i, addr + 2, &newaddr, endaddr))
+            return results;
+         break;
+      case SEARCHLONG:
+         val = MappedMemoryReadLong(addr, NULL);
 
-             if (SearchIncrementAndCheckBounds(prevresults, maxresults, numresults, &i, addr+4, &newaddr, endaddr))
-                return results;
-             break;
-          default:
-             maxresults[0] = 0; 
-             if (results)
-                free(results);
-             return NULL;
-       }
+         if (SearchIncrementAndCheckBounds(prevresults, maxresults, numresults, &i, addr + 4, &newaddr, endaddr))
+            return results;
+         break;
+      default:
+         maxresults[0] = 0;
+         if (results)
+            free(results);
+         return NULL;
+      }
 
-       // Do a comparison
-       switch (searchtype & 0xC)
-       {
-          case SEARCHEXACT:
-             if (val == searchval)
-                MappedMemoryAddMatch(addr, val, searchtype, results, &numresults);
-             break;
-          case SEARCHLESSTHAN:
-             if ((!issigned && val < searchval) || (issigned && (signed)val < (signed)searchval))
-                MappedMemoryAddMatch(addr, val, searchtype, results, &numresults);
-             break;
-          case SEARCHGREATERTHAN:
-             if ((!issigned && val > searchval) || (issigned && (signed)val > (signed)searchval))
-                MappedMemoryAddMatch(addr, val, searchtype, results, &numresults);
-             break;
-          default:
-             maxresults[0] = 0;
-             if (results)
-                free(results);
-             return NULL;
-       }
+      // Do a comparison
+      switch (searchtype & 0xC)
+      {
+      case SEARCHEXACT:
+         if (val == searchval)
+            MappedMemoryAddMatch(addr, val, searchtype, results, &numresults);
+         break;
+      case SEARCHLESSTHAN:
+         if ((!issigned && val < searchval) || (issigned && (signed)val < (signed)searchval))
+            MappedMemoryAddMatch(addr, val, searchtype, results, &numresults);
+         break;
+      case SEARCHGREATERTHAN:
+         if ((!issigned && val > searchval) || (issigned && (signed)val > (signed)searchval))
+            MappedMemoryAddMatch(addr, val, searchtype, results, &numresults);
+         break;
+      default:
+         maxresults[0] = 0;
+         if (results)
+            free(results);
+         return NULL;
+      }
 
-       addr = newaddr;
+      addr = newaddr;
    }
 
    maxresults[0] = numresults;

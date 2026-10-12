@@ -112,21 +112,59 @@ extern _EachClock, _DelayEachClock, _DebugEachClock, _DebugDelayClock
   x86_\name:
 .endm
 
-.macro CALL_GETMEM_BYTE 
-  ldr x10 , [x19, #(16+3+7)*4+(0*8) ]  
-  blr x10
-.endm  
+// =====================================================================
+// Fast-path memory read macros: inline HighWRAM (0x06xxxxxx) access
+// x27 = HighWram base pointer (loaded in prologue)
+// Eliminates indirect function call overhead for ~70% of memory reads
+// =====================================================================
 
-.macro CALL_GETMEM_WORD 
-  ldr x10 , [x19, #(16+3+7)*4+(1*8) ]  
+.macro CALL_GETMEM_BYTE
+  lsr  w3, w0, #24
+  cmp  w3, #0x06
+  b.ne 8f
+  and  w0, w0, #0xFFFFF
+  eor  w0, w0, #1
+  ldrb w0, [x27, w0, uxtw]
+  b    9f
+8:
+  ldr x10, [x19, #(16+3+7)*4+(0*8)]
   blr x10
-.endm  
+9:
+.endm
+
+.macro CALL_GETMEM_WORD
+  lsr  w3, w0, #24
+  cmp  w3, #0x06
+  b.ne 8f
+  and  w0, w0, #0xFFFFF
+  ldrh w0, [x27, w0, uxtw]
+  b    9f
+8:
+  ldr x10, [x19, #(16+3+7)*4+(1*8)]
+  blr x10
+9:
+.endm
 
 .macro CALL_GETMEM_LONG
-  ldr x10 , [x19, #(16+3+7)*4+(2*8) ]  
+  lsr  w3, w0, #24
+  cmp  w3, #0x06
+  b.ne 8f
+  and  w0, w0, #0xFFFFF
+  ldr  w0, [x27, w0, uxtw]
+  ror  w0, w0, #16
+  b    9f
+8:
+  ldr x10, [x19, #(16+3+7)*4+(2*8)]
   blr x10
+9:
 .endm  
 
+
+// =====================================================================
+// Memory write macros: MUST use indirect call (not inlined)
+// Writes to HighWRAM (0x06xxxxxx) require JIT block invalidation
+// via setDirty() in the C function — cannot be bypassed.
+// =====================================================================
 
 .macro CALL_SETMEM_BYTE 
   ldr x10 , [x19, #(16+3+7)*4+(3*8) ]  
@@ -152,6 +190,10 @@ extern _EachClock, _DelayEachClock, _DebugEachClock, _DebugDelayClock
 .macro LDR_EXIT_COUNT reg
   ldr \reg , [x19, #(16+3+7)*4+(7*8) ]  
 .endm  
+
+.macro LDR_HIGHWRAM reg
+  ldr \reg , [x19, #(16+3+7)*4+(8*8) ]
+.endm
 
 .macro LDR_MACH reg
   ldr \reg , [x19, #(16+3+0)*4 ]  
@@ -268,18 +310,20 @@ extern _EachClock, _DelayEachClock, _DebugEachClock, _DebugDelayClock
 .global prologue
 prologue:
 //push {w4-w10, lr}   // push regs
-sub  sp, sp, #80
+sub  sp, sp, #96
 stp  x19, x20, [sp]  
 stp  x21, x22, [sp,#16]
 stp  x23, x24, [sp,#32]
 stp  x29, x30, [sp,#48] 
 stp  x25, x26, [sp,#64]
+stp  x27, x28, [sp,#80]
 mov x19, x0      // GenReg( w0 has adress of m_pDynaSh2)
 LDR_PC w20       // PC
 LDR_COUNT w21    // ClockCounter
 LDR_EXIT_COUNT w25 // Target Count
 LDR_SR_REG w26
-.size	prologue, .-prologue // 8*4
+LDR_HIGHWRAM x27   // HighWram base for inline memory access
+.size	prologue, .-prologue // 13*4
 
 
 //-----------------------------------------------------
@@ -305,12 +349,13 @@ ldp  x21, x22, [sp,#16]
 ldp  x23, x24, [sp,#32]
 ldp  x29, x30, [sp,#48] 
 ldp  x25, x26, [sp,#64]
-add  sp, sp, #80
+ldp  x27, x28, [sp,#80]
+add  sp, sp, #96
 ret
 continue:
 mov w20, w0    // copy jump addr
 sub w20, w20, #2    // PC -= 2
-.size seperator_delay_slot, .-seperator_delay_slot // 40
+.size seperator_delay_slot, .-seperator_delay_slot // 16*4
   
 
 //-----------------------------------------------------
@@ -327,9 +372,10 @@ ldp  x21, x22, [sp,#16]
 ldp  x23, x24, [sp,#32]
 ldp  x29, x30, [sp,#48] 
 ldp  x25, x26, [sp,#64]
-add  sp, sp, #80
+ldp  x27, x28, [sp,#80]
+add  sp, sp, #96
 ret
-.size seperator_delay_after, .-seperator_delay_after // 20
+.size seperator_delay_after, .-seperator_delay_after // 13*4
 
 .global internal_delay_jmp
 internal_delay_jmp:
@@ -347,7 +393,8 @@ ldp  x21, x22, [sp,#16]
 ldp  x23, x24, [sp,#32]
 ldp  x29, x30, [sp,#48] 
 ldp  x25, x26, [sp,#64]
-add  sp, sp, #80
+ldp  x27, x28, [sp,#80]
+add  sp, sp, #96
 ret
 internal_delay_jmp.next:
 //internal_delay_jmp_size = .-internal_delay_jmp
@@ -363,9 +410,10 @@ ldp  x21, x22, [sp,#16]
 ldp  x23, x24, [sp,#32]
 ldp  x29, x30, [sp,#48] 
 ldp  x25, x26, [sp,#64]
-add  sp, sp, #80
+ldp  x27, x28, [sp,#80]
+add  sp, sp, #96
 ret
-.size	epilogue, .-epilogue // 12
+.size	epilogue, .-epilogue // 11*4
 
 //-----------------------------------------------------
 // Jump part 20
@@ -382,10 +430,11 @@ ldp  x21, x22, [sp,#16]
 ldp  x23, x24, [sp,#32]
 ldp  x29, x30, [sp,#48] 
 ldp  x25, x26, [sp,#64]
-add  sp, sp, #80
+ldp  x27, x28, [sp,#80]
+add  sp, sp, #96
 ret
 PageFlip.next:
-.size	PageFlip, .-PageFlip // 22
+.size	PageFlip, .-PageFlip // 13*4
 
 .global internal_jmp
 internal_jmp:
@@ -408,7 +457,8 @@ ldp  x21, x22, [sp,#16]
 ldp  x23, x24, [sp,#32]
 ldp  x29, x30, [sp,#48] 
 ldp  x25, x26, [sp,#64]
-add  sp, sp, #80
+ldp  x27, x28, [sp,#80]
+add  sp, sp, #96
 ret
 internal_jmp.next:
 
@@ -434,7 +484,8 @@ ldp  x21, x22, [sp,#16]
 ldp  x23, x24, [sp,#32]
 ldp  x29, x30, [sp,#48] 
 ldp  x25, x26, [sp,#64]
-add  sp, sp, #80
+ldp  x27, x28, [sp,#80]
+add  sp, sp, #96
 ret
 seperator_d_normal.continue:
 mov w0,w23
@@ -458,7 +509,8 @@ ldp  x21, x22, [sp,#16]
 ldp  x23, x24, [sp,#32]
 ldp  x29, x30, [sp,#48] 
 ldp  x25, x26, [sp,#64]
-add  sp, sp, #80
+ldp  x27, x28, [sp,#80]
+add  sp, sp, #96
 ret
 seperator_d_delay.continue:
 mov w20, w22    // copy jump addr
@@ -767,7 +819,7 @@ str w0, [x19, x2] // R[n] -= 4
 LDR_VBR w1
 CALL_SETMEM_LONG
 
-opdesc MOVBL,	28,0,4,0xff,0xff,0xff
+opdesc MOVBL,	(14*4),0,4,0xff,0xff,0xff
 opfunc MOVBL
 mov  w0, #0  // m
 mov  w22, #0  // n
@@ -777,7 +829,7 @@ sxtb w0, w0
 str  w0, [x19, x22]
 
 
-opdesc MOVWL,		28,0,4,0xff,0xff,0xff
+opdesc MOVWL,		(13*4),0,4,0xff,0xff,0xff
 opfunc MOVWL
 mov  w0, #0  // m
 mov  w22, #0  // n
@@ -787,7 +839,7 @@ sxth w0, w0
 str  w0, [x19, x22]
 
 
-opdesc MOVL_MEM_REG, (6*4),0,4,0xff,0xff,0xff
+opdesc MOVL_MEM_REG, (13*4),0,4,0xff,0xff,0xff
 opfunc MOVL_MEM_REG
 mov w1,  #0  // c
 mov w22,  #0  // b
@@ -796,7 +848,7 @@ CALL_GETMEM_LONG
 str w0, [x19, x22]
 
 
-opdesc MOVBP,	(12*4),0,4,0xff,0xff,0xff
+opdesc MOVBP,	(19*4),0,4,0xff,0xff,0xff
 opfunc MOVBP
 mov  w22, #0 // m
 mov  w23, #0 // n
@@ -812,7 +864,7 @@ str	w0, [x19,x22]
 MOVBP_FINISH:
 
 
-opdesc MOVWP,	(12*4),0,4,0xff,0xff,0xff
+opdesc MOVWP,	(18*4),0,4,0xff,0xff,0xff
 opfunc MOVWP
 mov  w22, #0 // m
 mov  w23, #0 // n
@@ -828,7 +880,7 @@ str	w0, [x19,x22]
 MOVWP_FINISH:
 
 
-opdesc MOVLP,	(11*4),0,4,0xff,0xff,0xff
+opdesc MOVLP,	(18*4),0,4,0xff,0xff,0xff
 opfunc MOVLP
 mov  w22, #0 // m
 mov  w23, #0 // n
@@ -851,7 +903,7 @@ str  w0, [x19, x1] // R[n] = (int)i
 
 //----------------------
 
-opdesc MOVBL0,	(9*4),0,4,0xff,0xff,0xff
+opdesc MOVBL0,	(16*4),0,4,0xff,0xff,0xff
 opfunc MOVBL0
 mov w1,  #0  
 mov w22 , #0  
@@ -863,7 +915,7 @@ sxtb w0,w0
 str w0, [x19, x22]
 
 
-opdesc MOVWL0,	(9*4),0,4,0xff,0xff,0xff
+opdesc MOVWL0,	(15*4),0,4,0xff,0xff,0xff
 opfunc MOVWL0
 mov w1,   #0  
 mov w22 , #0  
@@ -875,7 +927,7 @@ sxth w0,w0
 str w0, [x19, x22]
 
 
-opdesc MOVLL0,	(8*4),0,4,0xff,0xff,0xff
+opdesc MOVLL0,	(15*4),0,4,0xff,0xff,0xff
 opfunc MOVLL0
 mov w1,  #0  
 mov w22 , #0  
@@ -1274,7 +1326,7 @@ ldr w3, [x19, x1]
 add	w0, w3, w0, sxtb
 str w0, [x19, x1]
 
-opdesc AND_B,	44,0xff,0xff,0xff,0,0xff
+opdesc AND_B,	(18*4),0xff,0xff,0xff,0,0xff
 opfunc AND_B
 mov     w0, #0     // source
 LDR_GBR w5         // GBR
@@ -1287,7 +1339,7 @@ add     w0, w5, w6  // GBR+w0
 CALL_SETMEM_BYTE
 
 
-opdesc OR_B,	(11*4),0xff,0xff,0xff,0,0xff
+opdesc OR_B,	(18*4),0xff,0xff,0xff,0,0xff
 opfunc OR_B
 mov     w0, #0     // source
 LDR_GBR w23         // GBR
@@ -1300,7 +1352,7 @@ add     w0, w23, w24  // GBR+w0
 CALL_SETMEM_BYTE
 
 
-opdesc XOR_B,	44,0xff,0xff,0xff,0,0xff
+opdesc XOR_B,	(18*4),0xff,0xff,0xff,0,0xff
 opfunc XOR_B
 mov     w0, #0     // source
 LDR_GBR w5         // GBR
@@ -1313,7 +1365,7 @@ add     w0, w5, w6  // GBR+w0
 CALL_SETMEM_BYTE
 
 
-opdesc TST_B,	(12*4),0xff,0xff,0xff,(6*4),0xff
+opdesc TST_B,	(19*4),0xff,0xff,0xff,(13*4),0xff
 opfunc TST_B
 ldr     w22, [x19]
 LDR_GBR w0
@@ -1389,7 +1441,7 @@ opdesc RTS,			4,0xff,0xff,0xff,0xff,0xff
 opfunc RTS
 LDR_PR w0
 
-opdesc RTE,			(16*4),0xff,0xff,0xff,0xff,0xff
+opdesc RTE,			(30*4),0xff,0xff,0xff,0xff,0xff
 opfunc RTE
 ldr     w0, [x19, #60]
 CALL_GETMEM_LONG
@@ -1406,7 +1458,7 @@ and     w0, w0, w1
 STR_SR  w0
 mov     w0, w22
 
-opdesc TRAPA,	  (17*4),0xff,0xff,0xff,(13*4),0xff
+opdesc TRAPA,	  (24*4),0xff,0xff,0xff,(13*4),0xff
 opfunc TRAPA
 ldr w0, [x19, #60]  // w0 = R[15]
 sub w0, w0, #4         // w0 -= 4
@@ -1530,7 +1582,7 @@ lsl     w0, w0, #22
 lsr     w0, w0, #22  // SR = w0 & 0w000003f3;
 STR_SR  w0
 
-opdesc LDC_SR_INC,	(12*4),0xff,0,0xff,0xff,0xff
+opdesc LDC_SR_INC,	(19*4),0xff,0,0xff,0xff,0xff
 opfunc LDC_SR_INC
 mov     w1, #0  // m
 ldr     w5, [x19, x1] // w5 = R[m] 
@@ -1552,7 +1604,7 @@ ldr     w0, [x19, x0] // w5 = R[m]
 STR_GBR  w0
  
 
-opdesc LDC_GBR_INC,	(7*4),0xff,0,0xff,0xff,0xff
+opdesc LDC_GBR_INC,	(14*4),0xff,0,0xff,0xff,0xff
 opfunc LDC_GBR_INC
 mov w2, #0 // m
 ldr w0, [x19, x2]
@@ -1568,7 +1620,7 @@ mov     w0, #0  // m
 ldr     w0, [x19, x0] // w5 = R[m] 
 STR_VBR  w0
 
-opdesc LDC_VBR_INC,	(7*4),0xff,0,0xff,0xff,0xff
+opdesc LDC_VBR_INC,	(14*4),0xff,0,0xff,0xff,0xff
 opfunc LDC_VBR_INC
 mov w2, #0 // m
 ldr w0, [x19, x2]
@@ -1599,7 +1651,7 @@ mov w0, #0 // b
 ldr w0, [x19, x0]
 STR_PR w0
 
-opdesc LDS_PR_INC,	(7*4),0xff,0,0xff,0xff,0xff
+opdesc LDS_PR_INC,	(14*4),0xff,0,0xff,0xff,0xff
 opfunc LDS_PR_INC
 mov w2, #0 // m
 ldr w0, [x19, x2]
@@ -1616,7 +1668,7 @@ ldr w0, [x19, x0]
 STR_MACH w0
 
 
-opdesc LDS_MACH_INC,	28,0xff,0,0xff,0xff,0xff
+opdesc LDS_MACH_INC,	(14*4),0xff,0,0xff,0xff,0xff
 opfunc LDS_MACH_INC
 mov w2, #0 // m
 ldr w0, [x19, x2]
@@ -1633,7 +1685,7 @@ ldr w0, [x19, x0]
 STR_MACL w0
 
 
-opdesc LDS_MACL_INC,	28,0xff,0,0xff,0xff,0xff
+opdesc LDS_MACL_INC,	(14*4),0xff,0,0xff,0xff,0xff
 opfunc LDS_MACL_INC
 mov w2, #0 // m
 ldr w0, [x19, x2]
@@ -1655,7 +1707,7 @@ add     w2, w2, w1, lsl #2
 str     w2, [x19]
 
 
-opdesc MOVWI,	40,0xff,0,0xff,4,0xff
+opdesc MOVWI,	(16*4),0xff,0,0xff,4,0xff
 opfunc MOVWI
 mov w22, #0 // n
 mov w2, #0 // disp
@@ -1666,7 +1718,7 @@ CALL_GETMEM_WORD
 sxth w0,w0
 str w0, [x19, x22] // R[n] = readval
 
-opdesc MOVLI,  36,0xff,0,0xff,4,0xff
+opdesc MOVLI,  (16*4),0xff,0,0xff,4,0xff
 opfunc MOVLI
 mov w22, #0 // n
 mov w2, #0 // disp
@@ -1678,7 +1730,7 @@ CALL_GETMEM_LONG
 str w0, [x19, x22] // R[n] = readval
 
 
-opdesc MOVBL4, (8*4),0,0xff,4,0xff,0xff
+opdesc MOVBL4, (15*4),0,0xff,4,0xff,0xff
 opfunc MOVBL4
 mov w0, #0 // n
 mov w1, #0 // disp
@@ -1688,7 +1740,7 @@ CALL_GETMEM_BYTE
 sxtb w0,w0
 str  w0, [x19, #0]
 
-opdesc MOVWL4, (8*4),0,0xff,(2*4),0xff,0xff
+opdesc MOVWL4, (14*4),0,0xff,(2*4),0xff,0xff
 opfunc MOVWL4
 mov w0, #0 // n
 ldr w2, [x19, x0]
@@ -1698,7 +1750,7 @@ CALL_GETMEM_WORD
 sxth w0,w0
 str  w0, [x19, #0]
 
-opdesc MOVLL4, (8*4),0,(6*4),(2*4),0xff,0xff
+opdesc MOVLL4, (15*4),0,(13*4),(2*4),0xff,0xff
 opfunc MOVLL4
 mov w0, #0 // n
 ldr w2, [x19, x0]
@@ -1737,7 +1789,7 @@ add w0, w2, w1, lsl #2
 mov w1, w3
 CALL_SETMEM_LONG
 
-opdesc MOVBLG,    28,0xff,0xff,0xff,0,0xff
+opdesc MOVBLG,    (14*4),0xff,0xff,0xff,0,0xff
 opfunc MOVBLG
 mov w0, #0
 LDR_GBR w1
@@ -1746,7 +1798,7 @@ CALL_GETMEM_BYTE
 sxtb w0,w0
 str  w0, [x19]
 
-opdesc MOVWLG,     28,0xff,0xff,0xff,0,0xff
+opdesc MOVWLG,     (13*4),0xff,0xff,0xff,0,0xff
 opfunc MOVWLG
 mov w0, #0
 LDR_GBR w1
@@ -1755,7 +1807,7 @@ CALL_GETMEM_WORD
 sxth w0,w0
 str  w0, [x19]
 
-opdesc MOVLLG,    24,0xff,0xff,0xff,0,0xff
+opdesc MOVLLG,    (13*4),0xff,0xff,0xff,0,0xff
 opfunc MOVLLG
 mov w0, #0
 LDR_GBR w1
@@ -1850,7 +1902,7 @@ sub  w0, w0, #4
 str  w0, [x19, x3] // R[n] -= 4
 CALL_SETMEM_LONG // 2cyclte
 
-opdesc TAS,  (15*4),0xff,0,0xff,0xff,0xff
+opdesc TAS,  (22*4),0xff,0,0xff,0xff,0xff
 opfunc TAS
 mov     w22, #0
 ldr     w0, [x19, x22]
@@ -2044,7 +2096,7 @@ STR_MACL w1
 // MACL   ans = 32bit -> 64 bit MUL
 //        (MACH << 32 + MACL)  + ans 
 //-------------------------------------------------------------
-opdesc MAC_L, ((36)*4),0,4,0xff,0xff,0xff 
+opdesc MAC_L, (50*4),0,4,0xff,0xff,0xff 
 opfunc MAC_L
 mov w24, #0
 mov w23, #0
@@ -2179,7 +2231,7 @@ MAC_L.FINISH:
 // MACW   ans = 32bit -> 64 bit MUL
 //        (MACH << 32 + MACL)  + ans 
 //-------------------------------------------------------------
-opdesc MAC_W, (35*4),0,4,0xff,0xff,0xff
+opdesc MAC_W, (47*4),0,4,0xff,0xff,0xff
 opfunc MAC_W
 mov    w22, #0
 mov    w23, #0

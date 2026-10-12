@@ -23,4 +23,7 @@
 #define SNDCORE_SDL 1
 
 extern SoundInterface_struct SNDSDL;
+
+// Clear audio buffer - useful after state load to prevent audio glitches
+void SNDSDLClearBuffer(void);
 #endif

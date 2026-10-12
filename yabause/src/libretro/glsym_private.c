@@ -7,5 +7,7 @@ RGLSYMGLPATCHPARAMETERIPROC __rglgen_glPatchParameteri;
 RGLSYMGLDISPATCHCOMPUTEPROC __rglgen_glDispatchCompute;
 RGLSYMGLBINDIMAGETEXTUREPROC __rglgen_glBindImageTexture;
 #else
+#if defined(GL_NV_texture_barrier) && !defined(__SWITCH__)
 RGLSYMGLTEXTUREBARRIERNVPROC __rglgen_glTextureBarrierNV;
+#endif
 #endif

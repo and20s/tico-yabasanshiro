@@ -26,14 +26,17 @@
 #include <stdlib.h>
 
 #if defined(__APPLE__) || defined(GEKKO)
- #ifdef HAVE_LIBSDL2
-  #include <SDL2/SDL.h>
- #else
-  #include <SDL/SDL.h>
- #endif
+#ifdef HAVE_LIBSDL2
+#include <SDL2/SDL.h>
 #else
- #include "SDL.h"
+#include <SDL/SDL.h>
 #endif
+#else
+#include "SDL.h"
+#endif
+
+#include <SDL_mixer.h>
+
 #include "error.h"
 #include "scsp.h"
 #include "sndsdl.h"
@@ -56,25 +59,25 @@ int SNDSDLMidiOut(u8 data);
 #endif
 
 SoundInterface_struct SNDSDL = {
-SNDCORE_SDL,
-"SDL Sound Interface",
-SNDSDLInit,
-SNDSDLDeInit,
-SNDSDLReset,
-SNDSDLChangeVideoFormat,
-SNDSDLUpdateAudio,
-SNDSDLGetAudioSpace,
-SNDSDLMuteAudio,
-SNDSDLUnMuteAudio,
-SNDSDLSetVolume,
+    SNDCORE_SDL,
+    "SDL Sound Interface",
+    SNDSDLInit,
+    SNDSDLDeInit,
+    SNDSDLReset,
+    SNDSDLChangeVideoFormat,
+    SNDSDLUpdateAudio,
+    SNDSDLGetAudioSpace,
+    SNDSDLMuteAudio,
+    SNDSDLUnMuteAudio,
+    SNDSDLSetVolume,
 #ifdef USE_SCSPMIDI
-SNDSDLMidiChangePorts,
-SNDSDLMidiIn,
-SNDSDLMidiOut
+    SNDSDLMidiChangePorts,
+    SNDSDLMidiIn,
+    SNDSDLMidiOut
 #endif
 };
 
-#define NUMSOUNDBLOCKS  4
+#define NUMSOUNDBLOCKS 4
 
 static u16 *stereodata16;
 static u32 soundoffset;
@@ -87,57 +90,48 @@ static int muted = 0;
 
 //////////////////////////////////////////////////////////////////////////////
 
-static void MixAudio(UNUSED void *userdata, Uint8 *stream, int len) {
-	int i;
-	Uint8* soundbuf = (Uint8*)stereodata16;
+static void MixAudio(UNUSED void *userdata, Uint8 *stream, int len)
+{
+   int i;
+   Uint8 *soundbuf = (Uint8 *)stereodata16;
 
-	// original code
-	for (i = 0; i < len; i++)
-	{
-		if (soundpos >= soundbufsize)
-			soundpos = 0;
-		stream[i] = muted ? audiofmt.silence : soundbuf[soundpos];
-		soundpos++;
-	}
+   // original code
+   for (i = 0; i < len; i++)
+   {
+      if (soundpos >= soundbufsize)
+         soundpos = 0;
+      stream[i] = muted ? audiofmt.silence : soundbuf[soundpos];
+      soundpos++;
+   }
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
 static int SNDSDLInit(void)
 {
-   //samples should be a power of 2 according to SDL-doc
-   //so normalize it to the nearest power of 2 here
+   // samples should be a power of 2 according to SDL-doc
+   // so normalize it to the nearest power of 2 here
    u32 normSamples = 512;
 
-#if defined (_MSC_VER) && SDL_VERSION_ATLEAST(2,0,0)
+#if defined(_MSC_VER) && SDL_VERSION_ATLEAST(2, 0, 0)
    SDL_SetMainReady();
 #endif
-   SDL_InitSubSystem(SDL_INIT_AUDIO);
-//   if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0);
-//      return -1;
-
    audiofmt.freq = 44100;
    audiofmt.format = AUDIO_S16SYS;
    audiofmt.channels = 2;
-   audiofmt.samples = (audiofmt.freq / 60) * 2;
+   audiofmt.samples = (audiofmt.freq / 60);
    audiofmt.callback = MixAudio;
    audiofmt.userdata = NULL;
 
-   while (normSamples < audiofmt.samples) 
+   while (normSamples < audiofmt.samples)
       normSamples <<= 1;
 
    audiofmt.samples = normSamples;
-   
+
    soundlen = audiofmt.freq / 60; // 60 for NTSC or 50 for PAL. Initially assume it's going to be NTSC.
    soundbufsize = soundlen * NUMSOUNDBLOCKS * 2 * 2;
-   
-   soundvolume = SDL_MIX_MAXVOLUME;
 
-   if (SDL_OpenAudio(&audiofmt, NULL) != 0)
-   {
-      YabSetError(YAB_ERR_SDL, (void *)SDL_GetError());
-      return -1;
-   }
+   soundvolume = SDL_MIX_MAXVOLUME;
 
    if ((stereodata16 = (u16 *)malloc(soundbufsize)) == NULL)
       return -1;
@@ -146,6 +140,11 @@ static int SNDSDLInit(void)
 
    soundpos = 0;
 
+   // Hook into SDL_mixer's music stream to output our emulator audio
+   Mix_HookMusic(MixAudio, NULL);
+   
+   // SDL_mixer starts the audio device paused, and only unpauses implicitly 
+   // when a chunk is played. Since we are streaming music, force it to unpause immediately.
    SDL_PauseAudio(0);
 
    return 0;
@@ -155,10 +154,14 @@ static int SNDSDLInit(void)
 
 static void SNDSDLDeInit(void)
 {
-   SDL_CloseAudio();
-
+   Mix_HookMusic(NULL, NULL);
+   
    if (stereodata16)
       free(stereodata16);
+   stereodata16 = NULL;
+   soundpos = 0;
+   soundoffset = 0;
+   muted = 0;
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -166,6 +169,20 @@ static void SNDSDLDeInit(void)
 static int SNDSDLReset(void)
 {
    return 0;
+}
+
+//////////////////////////////////////////////////////////////////////////////
+
+void SNDSDLClearBuffer(void)
+{
+   SDL_LockAudio();
+   if (stereodata16 && soundbufsize > 0)
+   {
+      memset(stereodata16, 0, soundbufsize);
+      soundpos = 0;
+      soundoffset = 0;
+   }
+   SDL_UnlockAudio();
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -188,31 +205,38 @@ static int SNDSDLChangeVideoFormat(int vertfreq)
 
 //////////////////////////////////////////////////////////////////////////////
 
-static void sdlConvert32uto16s(s32 *srcL, s32 *srcR, s16 *dst, u32 len) {
+static void sdlConvert32uto16s(s32 *srcL, s32 *srcR, s16 *dst, u32 len)
+{
    u32 i;
 
    for (i = 0; i < len; i++)
    {
       // Left Channel
-      *srcL = ( *srcL *soundvolume ) /SDL_MIX_MAXVOLUME;
-      if (*srcL > 0x7FFF) *dst = 0x7FFF;
-      else if (*srcL < -0x8000) *dst = -0x8000;
-      else *dst = *srcL;
+      *srcL = (*srcL * soundvolume) / SDL_MIX_MAXVOLUME;
+      if (*srcL > 0x7FFF)
+         *dst = 0x7FFF;
+      else if (*srcL < -0x8000)
+         *dst = -0x8000;
+      else
+         *dst = *srcL;
       srcL++;
       dst++;
       // Right Channel
-	  *srcR = ( *srcR *soundvolume ) /SDL_MIX_MAXVOLUME;
-      if (*srcR > 0x7FFF) *dst = 0x7FFF;
-      else if (*srcR < -0x8000) *dst = -0x8000;
-      else *dst = *srcR;
+      *srcR = (*srcR * soundvolume) / SDL_MIX_MAXVOLUME;
+      if (*srcR > 0x7FFF)
+         *dst = 0x7FFF;
+      else if (*srcR < -0x8000)
+         *dst = -0x8000;
+      else
+         *dst = *srcR;
       srcR++;
       dst++;
-   } 
+   }
 }
 
 static void SNDSDLUpdateAudio(u32 *leftchanbuffer, u32 *rightchanbuffer, u32 num_samples)
 {
-   u32 copy1size=0, copy2size=0;
+   u32 copy1size = 0, copy2size = 0;
    SDL_LockAudio();
 
    if ((soundbufsize - soundoffset) < (num_samples * sizeof(s16) * 2))
@@ -226,15 +250,15 @@ static void SNDSDLUpdateAudio(u32 *leftchanbuffer, u32 *rightchanbuffer, u32 num
       copy2size = 0;
    }
 
-   sdlConvert32uto16s((s32 *)leftchanbuffer, (s32 *)rightchanbuffer, 
-   (s16 *)(((u8 *)stereodata16)+soundoffset), copy1size / sizeof(s16) / 2);
+   sdlConvert32uto16s((s32 *)leftchanbuffer, (s32 *)rightchanbuffer,
+                      (s16 *)(((u8 *)stereodata16) + soundoffset), copy1size / sizeof(s16) / 2);
 
    if (copy2size)
-      sdlConvert32uto16s((s32 *)leftchanbuffer + (copy1size / sizeof(s16) / 2), 
-      (s32 *)rightchanbuffer + (copy1size / sizeof(s16) / 2), (s16 *)stereodata16,
-       copy2size / sizeof(s16) / 2);
+      sdlConvert32uto16s((s32 *)leftchanbuffer + (copy1size / sizeof(s16) / 2),
+                         (s32 *)rightchanbuffer + (copy1size / sizeof(s16) / 2), (s16 *)stereodata16,
+                         copy2size / sizeof(s16) / 2);
 
-   soundoffset += copy1size + copy2size;   
+   soundoffset += copy1size + copy2size;
    soundoffset %= soundbufsize;
 
    SDL_UnlockAudio();
@@ -244,7 +268,7 @@ static void SNDSDLUpdateAudio(u32 *leftchanbuffer, u32 *rightchanbuffer, u32 num
 
 static u32 SNDSDLGetAudioSpace(void)
 {
-   u32 freespace=0;
+   u32 freespace = 0;
 
    if (soundoffset > soundpos)
       freespace = soundbufsize - soundoffset + soundpos;
@@ -272,7 +296,7 @@ static void SNDSDLUnMuteAudio(void)
 
 static void SNDSDLSetVolume(int volume)
 {
-   soundvolume = ( (double)SDL_MIX_MAXVOLUME /(double)100 ) *volume;
+   soundvolume = ((double)SDL_MIX_MAXVOLUME / (double)100) * volume;
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -280,24 +304,29 @@ static void SNDSDLSetVolume(int volume)
 #ifdef USE_SCSPMIDI
 int SNDSDLMidiChangePorts(int inport, int outport)
 {
-	return 0;
+   return 0;
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
 u8 SNDSDLMidiIn(int *isdata)
 {
-	*isdata = 0;
-	return 0;
+   *isdata = 0;
+   return 0;
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
 int SNDSDLMidiOut(u8 data)
 {
-	return 1;
+   return 1;
 }
 
 //////////////////////////////////////////////////////////////////////////////
 #endif
+#endif
+
+// Fallback stub when SDL is not available
+#ifndef HAVE_LIBSDL
+void SNDSDLClearBuffer(void) {}
 #endif

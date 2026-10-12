@@ -14,14 +14,28 @@ typedef void (GL_APIENTRY *RGLGENGLDEBUGPROCKHR)(GLenum, GLenum, GLuint, GLenum,
 #define APIENTRYP APIENTRY *
 #endif
 typedef void (APIENTRY *RGLGENGLDEBUGPROCARB)(GLenum, GLenum, GLuint, GLenum, GLsizei, const GLchar*, GLvoid*);
-typedef void (APIENTRY *RGLGENGLDEBUGPROC)(GLenum, GLenum, GLuint, GLenum, GLsizei, const GLchar*, GLvoid*);
+typedef void (APIENTRY *RGLGENGLDEBUGPROCKHR)(GLenum, GLenum, GLuint, GLenum, GLsizei, const GLchar*, GLvoid*);
 #endif
+
+#ifndef GL_APIENTRY
+#define GL_APIENTRY APIENTRY
+#endif
+
+#ifndef GL_APIENTRYP
+#define GL_APIENTRYP GL_APIENTRY *
+#endif
+
 #ifndef GL_OES_EGL_image
 typedef void *GLeglImageOES;
 #endif
 #if !defined(GL_OES_fixed_point) && !defined(HAVE_OPENGLES2)
 typedef GLint GLfixed;
 #endif
+
+#ifdef _OGLES3_
+#include <GLES3/gl32.h>
+#endif
+
 #if defined(OSX) && !defined(MAC_OS_X_VERSION_10_7)
 typedef long long int GLint64;
 typedef unsigned long long int GLuint64;
@@ -55,6 +69,24 @@ typedef void (GL_APIENTRYP RGLSYMGLBLENDEQUATIONSEPARATEIOESPROC) (GLuint buf, G
 typedef void (GL_APIENTRYP RGLSYMGLBLENDFUNCIOESPROC) (GLuint buf, GLenum src, GLenum dst);
 typedef void (GL_APIENTRYP RGLSYMGLBLENDFUNCSEPARATEIOESPROC) (GLuint buf, GLenum srcRGB, GLenum dstRGB, GLenum srcAlpha, GLenum dstAlpha);
 typedef void (GL_APIENTRYP RGLSYMGLCOLORMASKIOESPROC) (GLuint index, GLboolean r, GLboolean g, GLboolean b, GLboolean a);
+
+#ifndef glPatchParameteri
+#define glPatchParameteri glPatchParameteriOES
+#endif
+
+typedef double GLdouble;
+typedef double GLclampd;
+
+#ifndef glBindFragDataLocation
+#define glBindFragDataLocation glBindFragDataLocationEXT
+#endif
+
+typedef PFNGLMEMORYBARRIERPROC RGLSYMGLMEMORYBARRIERPROC;
+typedef PFNGLBINDFRAGDATALOCATIONEXTPROC RGLSYMGLBINDFRAGDATALOCATIONPROC;
+typedef PFNGLPATCHPARAMETERIPROC RGLSYMGLPATCHPARAMETERIPROC;
+typedef PFNGLDISPATCHCOMPUTEPROC RGLSYMGLDISPATCHCOMPUTEPROC;
+typedef PFNGLBINDIMAGETEXTUREPROC RGLSYMGLBINDIMAGETEXTUREPROC;
+
 typedef GLboolean (GL_APIENTRYP RGLSYMGLISENABLEDIOESPROC) (GLenum target, GLuint index);
 typedef void (GL_APIENTRYP RGLSYMGLDRAWELEMENTSBASEVERTEXOESPROC) (GLenum mode, GLsizei count, GLenum type, const void *indices, GLint basevertex);
 typedef void (GL_APIENTRYP RGLSYMGLDRAWRANGEELEMENTSBASEVERTEXOESPROC) (GLenum mode, GLuint start, GLuint end, GLsizei count, GLenum type, const void *indices, GLint basevertex);

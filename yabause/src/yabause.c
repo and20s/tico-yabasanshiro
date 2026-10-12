@@ -42,7 +42,6 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
     \brief Yabause main emulation functions and interface for the ports
 */
 
-
 #include <sys/types.h>
 #ifdef WIN32
 #include <windows.h>
@@ -67,17 +66,17 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 #include "vdp2.h"
 #include "yui.h"
 #include "bios.h"
-//#include "movie.h"
+// #include "movie.h"
 #include "osdcore.h"
 #ifdef HAVE_LIBSDL
 #if defined(__APPLE__) || defined(GEKKO)
- #ifdef HAVE_LIBSDL2
-  #include <SDL2/SDL.h>
- #else
-  #include <SDL/SDL.h>
- #endif
+#ifdef HAVE_LIBSDL2
+#include <SDL2/SDL.h>
 #else
- #include "SDL.h"
+#include <SDL/SDL.h>
+#endif
+#else
+#include "SDL.h"
 #endif
 #endif
 #if defined(_MSC_VER) || !defined(HAVE_SYS_TIME_H)
@@ -95,12 +94,11 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 #include "psp/common.h"
 #endif
 
-
 #ifdef SYS_PROFILE_H
- #include SYS_PROFILE_H
+#include SYS_PROFILE_H
 #else
- #define DONT_PROFILE
- #include "profile.h"
+#define DONT_PROFILE
+#include "profile.h"
 #endif
 
 #if defined(SH2_DYNAREC)
@@ -108,7 +106,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 #endif
 
 #if HAVE_GDBSTUB
-    #include "gdb/stub.h"
+#include "gdb/stub.h"
 #endif
 
 #ifdef YAB_WANT_SSF
@@ -122,27 +120,29 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 yabsys_struct yabsys;
 const char *bupfilename = NULL;
 u64 tickfreq;
-//todo this ought to be in scspdsp.c
-ScspDsp scsp_dsp = { 0 };
-char ssf_track_name[256] = { 0 };
-char ssf_artist[256] = { 0 };
+// todo this ought to be in scspdsp.c
+ScspDsp scsp_dsp = {0};
+char ssf_track_name[256] = {0};
+char ssf_artist[256] = {0};
 
-u32 saved_scsp_cycles = 0;//fixed point
-volatile u64 saved_m68k_cycles = 0;//fixed point
+u32 saved_scsp_cycles = 0;          // fixed point
+volatile u64 saved_m68k_cycles = 0; // fixed point
 static u32 g_scsp_main_mode = 1;
 
-extern char * getLastShaderError();
+extern char *getLastShaderError();
 
 //////////////////////////////////////////////////////////////////////////////
 
 #ifndef NO_CLI
-void print_usage(const char *program_name) {
+void print_usage(const char *program_name)
+{
    printf("Yabause v" VERSION "\n");
    printf("\n"
           "Purpose:\n"
           "  This program is intended to be a Sega Saturn emulator\n"
           "\n"
-          "Usage: %s [OPTIONS]...\n", program_name);
+          "Usage: %s [OPTIONS]...\n",
+          program_name);
    printf("   -h         --help                 Print help and exit\n");
    printf("   -b STRING  --bios=STRING          bios file\n");
    printf("   -i STRING  --iso=STRING           iso/cue file\n");
@@ -156,52 +156,54 @@ void print_usage(const char *program_name) {
 
 //////////////////////////////////////////////////////////////////////////////
 
-void YabauseChangeTiming(int freqtype) {
+void YabauseChangeTiming(int freqtype)
+{
    // Setup all the variables related to timing
 
    const double freq_base = yabsys.IsPal ? 28437500.0
-      : (39375000.0 / 11.0) * 8.0;  // i.e. 8 * 3.579545... = 28.636363... MHz
-   const double freq_mult = (freqtype == CLKTYPE_26MHZ) ? 15.0/16.0 : 1.0;
+                                         : (39375000.0 / 11.0) * 8.0; // i.e. 8 * 3.579545... = 28.636363... MHz
+   const double freq_mult = (freqtype == CLKTYPE_26MHZ) ? 15.0 / 16.0 : 1.0;
    const double freq_shifted = (freq_base * freq_mult) * (1 << YABSYS_TIMING_BITS);
    const double usec_shifted = 1.0e6 * (1 << YABSYS_TIMING_BITS);
-   const double deciline_time = yabsys.IsPal ? 1.0 /  50        / 313 / 10
-                                             : 1.0 / (60/1.001) / 263 / 10;
+   const double deciline_time = yabsys.IsPal ? 1.0 / 50 / 313 / 10
+                                             : 1.0 / (60 / 1.001) / 263 / 10;
 
    yabsys.DecilineCount = 0;
    yabsys.LineCount = 0;
    yabsys.CurSH2FreqType = freqtype;
-   yabsys.DecilineStop = (u32) (freq_shifted * deciline_time + 0.5);
+   yabsys.DecilineStop = (u32)(freq_shifted * deciline_time + 0.5);
    yabsys.SH2CycleFrac = 0;
-   yabsys.DecilineUsec = (u32) (usec_shifted * deciline_time + 0.5);
+   yabsys.DecilineUsec = (u32)(usec_shifted * deciline_time + 0.5);
    yabsys.UsecFrac = 0;
 }
 
 //////////////////////////////////////////////////////////////////////////////
 extern int tweak_backup_file_size;
-YabEventQueue * q_scsp_frame_start;
-YabEventQueue * q_scsp_finish;
-
+YabEventQueue *q_scsp_frame_start;
+YabEventQueue *q_scsp_finish;
 
 int YabauseInit(yabauseinit_struct *init)
 {
 
-  YabThreadInit();
+   YabThreadInit();
 
-  if( init->use_cpu_affinity ){
-   YabThreadSetCurrentThreadAffinityMask(YabThreadGetFastestCpuIndex());
-  }
+   if (init->use_cpu_affinity)
+   {
+      YabThreadSetCurrentThreadAffinityMask(YabThreadGetFastestCpuIndex());
+   }
 
-  yabsys.use_cpu_affinity = init->use_cpu_affinity;
+   yabsys.use_cpu_affinity = init->use_cpu_affinity;
 
-  yabsys.use_sh2_cache = init->use_sh2_cache;
+   yabsys.use_sh2_cache = init->use_sh2_cache;
 
-  q_scsp_frame_start = YabThreadCreateQueue(1);
-  q_scsp_finish = YabThreadCreateQueue(1);
-  setM68kCounter(0);
+   q_scsp_frame_start = YabThreadCreateQueue(1);
+   q_scsp_finish = YabThreadCreateQueue(1);
+   setM68kCounter(0);
 
-  if( init->playRecordPath && strlen(init->playRecordPath) != 0) {
-    PlayRecorder_setPlayMode(init->playRecordPath,init);
-  }
+   if (init->playRecordPath && strlen(init->playRecordPath) != 0)
+   {
+      // PlayRecorder_setPlayMode(init->playRecordPath,init);
+   }
 
    yabsys.frame_count = 0;
    yabsys.sync_shift = init->sync_shift;
@@ -209,6 +211,7 @@ int YabauseInit(yabauseinit_struct *init)
    // Need to set this first, so init routines see it
    yabsys.UseThreads = init->usethreads;
    yabsys.NumThreads = init->numthreads;
+   yabsys.UseAsyncRendering = init->use_async_rendering;
 
    // Initialize both cpu's
    if (SH2Init(init->sh2coretype) != 0)
@@ -227,45 +230,50 @@ int YabauseInit(yabauseinit_struct *init)
       return -1;
 
    yabsys.extend_backup = init->extend_backup;
-   if (yabsys.extend_backup) {
-     FILE * pbackup;
-     bupfilename = init->buppath;
-     pbackup = fopen_utf8(bupfilename, "a+b");
-     if (pbackup == NULL) {
-       YabSetError(YAB_ERR_CANNOTINIT, _("InternalBackup"));
-       return -1;
-     }
+   bupfilename = init->buppath;  // Always set so T123Save works on deinit
+   if (yabsys.extend_backup)
+   {
+      FILE *pbackup;
+      pbackup = fopen_utf8(bupfilename, "a+b");
+      if (pbackup == NULL)
+      {
+         YabSetError(YAB_ERR_CANNOTINIT, _("InternalBackup"));
+         return -1;
+      }
 
-     fseek(pbackup, 0, SEEK_SET);
-     if (CheckBackupFile(pbackup) != 0) {
-       FormatBackupRamFile(pbackup, tweak_backup_file_size);
-     }
-     else {
-       ExtendBackupFile(pbackup, tweak_backup_file_size);
-     }
-     fclose(pbackup);
-     BupRam = YabMemMap(bupfilename, tweak_backup_file_size);
-     if (BupRam == NULL) {  // fall back to old version
-       if ((BupRam = T1MemoryInit(0x10000)) == NULL)
+      fseek(pbackup, 0, SEEK_SET);
+      if (CheckBackupFile(pbackup) != 0)
+      {
+         FormatBackupRamFile(pbackup, tweak_backup_file_size);
+      }
+      else
+      {
+         ExtendBackupFile(pbackup, tweak_backup_file_size);
+      }
+      fclose(pbackup);
+      BupRam = YabMemMap(bupfilename, tweak_backup_file_size);
+      if (BupRam == NULL)
+      { // fall back to old version
+         if ((BupRam = T1MemoryInit(0x10000)) == NULL)
+            return -1;
+
+         if (LoadBackupRam(init->buppath) != 0)
+            FormatBackupRam(BupRam, 0x10000);
+
+         BupRamWritten = 0;
+         yabsys.extend_backup = 0;
+      }
+   }
+   else
+   {
+      if ((BupRam = T1MemoryInit(0x10000)) == NULL)
          return -1;
 
-       if (LoadBackupRam(init->buppath) != 0)
+      if (LoadBackupRam(init->buppath) != 0)
          FormatBackupRam(BupRam, 0x10000);
-
-       BupRamWritten = 0;
-       yabsys.extend_backup = 0;
-     }
-
+      BupRamWritten = 0;
    }
-   else {
-     if ((BupRam = T1MemoryInit(0x10000)) == NULL)
-       return -1;
 
-     if (LoadBackupRam(init->buppath) != 0)
-       FormatBackupRam(BupRam, 0x10000);
-     BupRamWritten = 0;
-   }
-   
    // check if format is needed?
 
    if (CartInit(init->cartpath, init->carttype) != 0)
@@ -281,22 +289,24 @@ int YabauseInit(yabauseinit_struct *init)
 
    if (VideoInit(init->vidcoretype) != 0)
    {
-      if(getLastShaderError() != NULL){
-         YabSetError(YAB_ERR_CANNOTINIT, getLastShaderError() );
-      }else{
+      if (getLastShaderError() != NULL)
+      {
+         YabSetError(YAB_ERR_CANNOTINIT, getLastShaderError());
+      }
+      else
+      {
          YabSetError(YAB_ERR_CANNOTINIT, _("Video"));
       }
       return -1;
    }
 
    // Settings
-   VideoSetSetting(VDP_SETTING_FILTERMODE,init->video_filter_type);
+   VideoSetSetting(VDP_SETTING_FILTERMODE, init->video_filter_type);
    VideoSetSetting(VDP_SETTING_POLYGON_MODE, init->polygon_generation_mode);
    VideoSetSetting(VDP_SETTING_RESOLUTION_MODE, init->resolution_mode);
    VideoSetSetting(VDP_SETTING_ROTATE_SCREEN, init->rotate_screen);
    VideoSetSetting(VDP_SETTING_RBG_USE_COMPUTESHADER, init->rbg_use_compute_shader);
    VideoSetSetting(VDP_SETTING_RBG_RESOLUTION_MODE, init->rbg_resolution_mode);
-
 
    // Initialize input core
    if (PerInit(init->percoretype) != 0)
@@ -324,7 +334,7 @@ int YabauseInit(yabauseinit_struct *init)
    }
 
    g_scsp_main_mode = init->scsp_main_mode;
-   if (ScspInit(init->sndcoretype, init->scsp_sync_count_per_frame, init->scsp_main_mode ) != 0)
+   if (ScspInit(init->sndcoretype, init->scsp_sync_count_per_frame, init->scsp_main_mode) != 0)
    {
       YabSetError(YAB_ERR_CANNOTINIT, _("SCSP/M68K"));
       return -1;
@@ -363,7 +373,6 @@ int YabauseInit(yabauseinit_struct *init)
 
    VDP2SetFrameLimit(init->framelimit);
 
-
 #ifdef YAB_PORT_OSD
    OSDChangeCore(init->osdcoretype);
 #else
@@ -379,21 +388,23 @@ int YabauseInit(yabauseinit_struct *init)
       }
       yabsys.emulatebios = 0;
    }
-   else {
-     yabsys.emulatebios = 1;
-     T2WriteLong(BiosRom, 0x04, 0x06002000); // set base stack pointer
-     T2WriteByte(BiosRom,0x00000013, 0x22);  // patch for SAKURA TAISEN
-     T2WriteLong(BiosRom,0x00000018, 0x20000222); // patch for SAKURA TAISEN
-     T2WriteLong(BiosRom,0x00000220, 0x277AAFFE); // patch for SAKURA TAISEN
+   else
+   {
+      yabsys.emulatebios = 1;
+      T2WriteLong(BiosRom, 0x04, 0x06002000);       // set base stack pointer
+      T2WriteByte(BiosRom, 0x00000013, 0x22);       // patch for SAKURA TAISEN
+      T2WriteLong(BiosRom, 0x00000018, 0x20000222); // patch for SAKURA TAISEN
+      T2WriteLong(BiosRom, 0x00000220, 0x277AAFFE); // patch for SAKURA TAISEN
    }
 
    yabsys.usequickload = 0;
 
-   #if defined(SH2_DYNAREC)
-   if(SH2Core->id==2) {
-     sh2_dynarec_init();
+#if defined(SH2_DYNAREC)
+   if (SH2Core->id == 2)
+   {
+      sh2_dynarec_init();
    }
-   #endif
+#endif
 
    YabauseResetNoLoad();
 
@@ -401,7 +412,7 @@ int YabauseInit(yabauseinit_struct *init)
 
    if (init->play_ssf && init->ssfpath != NULL && strlen(init->ssfpath))
    {
-      if (!load_ssf((char*)init->ssfpath, init->m68kcoretype, init->sndcoretype))
+      if (!load_ssf((char *)init->ssfpath, init->m68kcoretype, init->sndcoretype))
       {
          YabSetError(YAB_ERR_FILENOTFOUND, (void *)init->ssfpath);
 
@@ -424,7 +435,7 @@ int YabauseInit(yabauseinit_struct *init)
 
    if (init->skip_load)
    {
-	   return 0;
+      return 0;
    }
 
    if (yabsys.usequickload || yabsys.emulatebios)
@@ -470,28 +481,39 @@ int YabauseInit(yabauseinit_struct *init)
 
 void YabFlushBackups(void)
 {
-  if (BupRam)
-  {
-    if (yabsys.extend_backup) {
-    //  YabFreeMap(BupRam);
-    }
-    else {
-      if (T123Save(BupRam, 0x10000, 1, bupfilename) != 0)
-        YabSetError(YAB_ERR_FILEWRITE, (void *)bupfilename);
-      T1MemoryDeInit(BupRam);
-    }
-  }
-  CartFlush();
+   if (BupRam)
+   {
+      if (yabsys.extend_backup)
+      {
+         //  YabFreeMap(BupRam);
+      }
+      else
+      {
+         if (T123Save(BupRam, 0x10000, 1, bupfilename) != 0)
+            YabSetError(YAB_ERR_FILEWRITE, (void *)bupfilename);
+         T1MemoryDeInit(BupRam);
+      }
+   }
+   CartFlush();
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
-void YabauseDeInit(void) {
-   
-  OSDDeInit();
+void YabauseDeInit(void)
+{
+
+   printf("YabauseDeInit: OSDDeInit\n");
+   fflush(stdout);
+   OSDDeInit();
+   printf("YabauseDeInit: Vdp2DeInit\n");
+   fflush(stdout);
    Vdp2DeInit();
+   printf("YabauseDeInit: Vdp1DeInit\n");
+   fflush(stdout);
    Vdp1DeInit();
-   
+
+   printf("YabauseDeInit: SH2DeInit\n");
+   fflush(stdout);
    SH2DeInit();
 
    if (BiosRom)
@@ -508,36 +530,70 @@ void YabauseDeInit(void) {
 
    if (BupRam)
    {
-     if (yabsys.extend_backup) {
-       YabFreeMap(BupRam);
-     }
-     else {
-       if (T123Save(BupRam, 0x10000, 1, bupfilename) != 0)
-         YabSetError(YAB_ERR_FILEWRITE, (void *)bupfilename);
-       T1MemoryDeInit(BupRam);
-     }
+      if (yabsys.extend_backup)
+      {
+         YabFreeMap(BupRam);
+      }
+      else
+      {
+         if (T123Save(BupRam, 0x10000, 1, bupfilename) != 0)
+            YabSetError(YAB_ERR_FILEWRITE, (void *)bupfilename);
+         T1MemoryDeInit(BupRam);
+      }
    }
    BupRam = NULL;
- 
+
    CartDeInit();
    Cs2DeInit();
    ScuDeInit();
+   printf("YabauseDeInit: ScspDeInit\n");
+   fflush(stdout);
    ScspDeInit();
+   printf("YabauseDeInit: ScspDeInit done\n");
+   fflush(stdout);
    SmpcDeInit();
    PerDeInit();
+   printf("YabauseDeInit: VideoDeInit\n");
+   fflush(stdout);
    VideoDeInit();
+   printf("YabauseDeInit: VideoDeInit done\n");
+   fflush(stdout);
    CheatDeInit();
+
+   // Free SCSP event queues created in YabauseInit
+   if (q_scsp_frame_start)
+   {
+      YabThreadDestoryQueue(q_scsp_frame_start);
+      q_scsp_frame_start = NULL;
+   }
+   if (q_scsp_finish)
+   {
+      YabThreadDestoryQueue(q_scsp_finish);
+      q_scsp_finish = NULL;
+   }
+
+   // Reset all thread subsystem state (sleep primitives, handles, stacks)
+   // so the next YabauseInit() starts with clean slate. Critical for
+   // NRO reload on Switch where stale kernel objects cause instant crash.
+#if defined(__SWITCH__)
+   YabThreadDeInit();
+#endif
+
+   printf("YabauseDeInit: complete\n");
+   fflush(stdout);
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
-void YabauseSetDecilineMode(int on) {
+void YabauseSetDecilineMode(int on)
+{
    yabsys.DecilineMode = (on != 0);
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
-void YabauseResetNoLoad(void) {
+void YabauseResetNoLoad(void)
+{
    SH2Reset(MSH2);
    YabauseStopSlave();
    memset(HighWram, 0, 0x100000);
@@ -557,7 +613,8 @@ void YabauseResetNoLoad(void) {
 
 //////////////////////////////////////////////////////////////////////////////
 
-void YabauseReset(void) {
+void YabauseReset(void)
+{
 
    if (yabsys.playing_ssf)
       yabsys.playing_ssf = 0;
@@ -580,7 +637,8 @@ void YabauseReset(void) {
 
 //////////////////////////////////////////////////////////////////////////////
 
-void YabauseResetButton(void) {
+void YabauseResetButton(void)
+{
    // This basically emulates the reset button behaviour of the saturn. This
    // is the better way of reseting the system since some operations (like
    // backup ram access) shouldn't be interrupted and this allows for that.
@@ -590,34 +648,34 @@ void YabauseResetButton(void) {
 
 //////////////////////////////////////////////////////////////////////////////
 
-int YabauseExec(void) {
-	//automatically advance lag frames, this should be optional later
-	//if (FrameAdvanceVariable > 0 && LagFrameFlag == 1){ 
-		//FrameAdvanceVariable = NeedAdvance; //advance a frame
+int YabauseExec(void)
+{
+   // automatically advance lag frames, this should be optional later
+   // if (FrameAdvanceVariable > 0 && LagFrameFlag == 1){
+   // FrameAdvanceVariable = NeedAdvance; //advance a frame
 
+   YabauseEmulate();
+   // FrameAdvanceVariable = Paused; //pause next time
+   return (0);
+   //}
+   /*
+      if (FrameAdvanceVariable == Paused){
+         ScspMuteAudio(SCSP_MUTE_SYSTEM);
+         return(0);
+      }
 
-		YabauseEmulate();
-		//FrameAdvanceVariable = Paused; //pause next time
-		return(0);
-	//}
-/*
-	if (FrameAdvanceVariable == Paused){
-		ScspMuteAudio(SCSP_MUTE_SYSTEM);
-		return(0);
-	}
-  
-	if (FrameAdvanceVariable == NeedAdvance){  //advance a frame
-		FrameAdvanceVariable = Paused; //pause next time
-		ScspUnMuteAudio(SCSP_MUTE_SYSTEM);
-		YabauseEmulate();
-	}
-	
-	if (FrameAdvanceVariable == RunNormal ) { //run normally
-		ScspUnMuteAudio(SCSP_MUTE_SYSTEM);	
-		YabauseEmulate();
-	}
-*/
-	return 0;
+      if (FrameAdvanceVariable == NeedAdvance){  //advance a frame
+         FrameAdvanceVariable = Paused; //pause next time
+         ScspUnMuteAudio(SCSP_MUTE_SYSTEM);
+         YabauseEmulate();
+      }
+
+      if (FrameAdvanceVariable == RunNormal ) { //run normally
+         ScspUnMuteAudio(SCSP_MUTE_SYSTEM);
+         YabauseEmulate();
+      }
+   */
+   return 0;
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -634,51 +692,54 @@ u32 get_cycles_per_line_division(u32 clock, int frames, int lines, int divisions
 int master_cc_dmy = 0;
 #endif
 
-u32 YabauseGetCpuTime(){
+u32 YabauseGetCpuTime()
+{
 
 #if defined(SH2_DYNAREC)
-  if (SH2Core->id == 2/*SH2CORE_DYNAREC*/){
-    master_cc_dmy += 256;
-    return (u32)master_cc_dmy; // ToDo
-  }
-  else{
-    return MSH2->cycles;
-  }
+   if (SH2Core->id == 2 /*SH2CORE_DYNAREC*/)
+   {
+      master_cc_dmy += 256;
+      return (u32)master_cc_dmy; // ToDo
+   }
+   else
+   {
+      return MSH2->cycles;
+   }
 #else
-  return MSH2->cycles;
+   return MSH2->cycles;
 #endif
 }
 
-u32 YabauseGetFrameCount() {
-  return yabsys.frame_count;
+u32 YabauseGetFrameCount()
+{
+   return yabsys.frame_count;
 }
 
-//#define YAB_STATICS
+// #define YAB_STATICS
 void SyncCPUtoSCSP();
 u64 getM68KCounter();
 u64 g_m68K_dec_cycle = 0;
 
-
-
-int YabauseEmulate(void) {
-  int oneframeexec = 0;
+int YabauseEmulate(void)
+{
+   int oneframeexec = 0;
    yabsys.frame_count++;
-   PlayRecorder_proc(yabsys.frame_count);
+   // PlayRecorder_proc(yabsys.frame_count);
 
    const u32 cyclesinc =
-      yabsys.DecilineMode ? yabsys.DecilineStop : yabsys.DecilineStop * 10;
+       yabsys.DecilineMode ? yabsys.DecilineStop : yabsys.DecilineStop * 10;
    const u32 usecinc =
-      yabsys.DecilineMode ? yabsys.DecilineUsec : yabsys.DecilineUsec * 10;
+       yabsys.DecilineMode ? yabsys.DecilineUsec : yabsys.DecilineUsec * 10;
 
-   unsigned int m68kcycles;       // Integral M68k cycles per call
-   unsigned int m68kcenticycles;  // 1/100 M68k cycles per call
+   unsigned int m68kcycles;      // Integral M68k cycles per call
+   unsigned int m68kcenticycles; // 1/100 M68k cycles per call
 
    u32 m68k_cycles_per_deciline = 0;
    u32 scsp_cycles_per_deciline = 0;
 
    const u32 sync_shift = yabsys.sync_shift;
 
-   if(use_new_scsp)
+   if (use_new_scsp)
    {
       int lines = 0;
       int frames = 0;
@@ -690,7 +751,7 @@ int YabauseEmulate(void) {
       }
       else
       {
-         lines = 263; 
+         lines = 263;
          frames = 60;
       }
 
@@ -713,17 +774,18 @@ int YabauseEmulate(void) {
       }
    }
 
-   //DoMovie();
+   // DoMovie();
 
-   #if defined(SH2_DYNAREC)
-   if(SH2Core->id==2) {
-     if (yabsys.IsPal)
-       YabauseDynarecOneFrameExec(722,0); // m68kcycles,m68kcenticycles
-     else
-       YabauseDynarecOneFrameExec(716,20);
-     return 0;
+#if defined(SH2_DYNAREC)
+   if (SH2Core->id == 2)
+   {
+      if (yabsys.IsPal)
+         YabauseDynarecOneFrameExec(722, 0); // m68kcycles,m68kcenticycles
+      else
+         YabauseDynarecOneFrameExec(716, 20);
+      return 0;
    }
-   #endif
+#endif
 
    MSH2->cycles = 0;
    MSH2->depth = 0;
@@ -734,7 +796,7 @@ int YabauseEmulate(void) {
    SH2OnFrame(MSH2);
    SH2OnFrame(SSH2);
    u64 cpu_emutime = 0;
-   Vdp2UpdateHv(0,0);
+   Vdp2UpdateHv(0, 0);
    while (!oneframeexec)
    {
       PROFILE_START("Total Emulation");
@@ -750,41 +812,48 @@ int YabauseEmulate(void) {
 #ifdef YAB_STATICS
       s64 current_cpu_clock = YabauseGetTicks();
 #endif
-      if( sync_shift != 0 ){
-        u32 i;
-        const u32 div = sync_shift;
-        const u32 step  = sh2cycles >> div;
-        const u32 amari = sh2cycles - (step<< div);
+      if (sync_shift != 0)
+      {
+         u32 i;
+         const u32 div = sync_shift;
+         const u32 step = sh2cycles >> div;
+         const u32 amari = sh2cycles - (step << div);
 
-        if( amari != 0 ){
-          SH2Exec(MSH2, amari);
-          if (yabsys.IsSSH2Running)
-            SH2Exec(SSH2, amari);
-        }
-        for (i = amari; i < sh2cycles; i += step){ 
+         if (amari != 0)
+         {
+            SH2Exec(MSH2, amari);
+            if (yabsys.IsSSH2Running)
+               SH2Exec(SSH2, amari);
+         }
+         for (i = amari; i < sh2cycles; i += step)
+         {
             SH2Exec(MSH2, step);
             if (yabsys.IsSSH2Running)
                SH2Exec(SSH2, step);
-        }
-      }else{
-        SH2Exec(MSH2, sh2cycles);
-        if (yabsys.IsSSH2Running)
-          SH2Exec(SSH2, sh2cycles);
+         }
+      }
+      else
+      {
+         SH2Exec(MSH2, sh2cycles);
+         if (yabsys.IsSSH2Running)
+            SH2Exec(SSH2, sh2cycles);
       }
 
 #ifdef YAB_STATICS
       cpu_emutime += (YabauseGetTicks() - current_cpu_clock) * 1000000 / yabsys.tickfreq;
 #endif
-       yabsys.DecilineCount++;
-       //Vdp2UpdateHv(yabsys.DecilineCount,yabsys.LineCount);
-       
-       if(yabsys.DecilineCount == 9) {
+      yabsys.DecilineCount++;
+      // Vdp2UpdateHv(yabsys.DecilineCount,yabsys.LineCount);
+
+      if (yabsys.DecilineCount == 9)
+      {
          // HBlankIN
          PROFILE_START("hblankin");
          Vdp2HBlankIN();
          PROFILE_STOP("hblankin");
-       }
-       else if (yabsys.DecilineCount == 10) {
+      }
+      else if (yabsys.DecilineCount == 10)
+      {
          // HBlankOUT
          PROFILE_START("hblankout");
          Vdp2HBlankOUT();
@@ -795,7 +864,8 @@ int YabauseEmulate(void) {
          yabsys.DecilineCount = 0;
          yabsys.LineCount++;
 
-         if (yabsys.LineCount == yabsys.VBlankLineCount) {
+         if (yabsys.LineCount == yabsys.VBlankLineCount)
+         {
 
 #if defined(ASYNC_SCSP)
             setM68kCounter((u64)(44100 * 256 / 60) << SCSP_FRACTIONAL_BITS);
@@ -818,7 +888,6 @@ int YabauseEmulate(void) {
             yabsys.LineCount = 0;
             oneframeexec = 1;
             PROFILE_STOP("VDP1/VDP2");
-
          }
       }
 
@@ -826,7 +895,7 @@ int YabauseEmulate(void) {
       ScuExec(sh2cycles >> 1);
       PROFILE_STOP("SCU");
       PROFILE_START("68K");
-      M68KSync();  // Wait for the previous iteration to finish
+      M68KSync(); // Wait for the previous iteration to finish
       PROFILE_STOP("68K");
 
       yabsys.UsecFrac += usecinc;
@@ -837,18 +906,18 @@ int YabauseEmulate(void) {
       Cs2Exec(yabsys.UsecFrac >> YABSYS_TIMING_BITS);
       PROFILE_STOP("CDB");
       yabsys.UsecFrac &= YABSYS_TIMING_MASK;
-      
+
 #if !defined(ASYNC_SCSP)
-      if(!use_new_scsp)
+      if (!use_new_scsp)
       {
          int cycles;
          PROFILE_START("68K");
          cycles = m68kcycles;
-         //yabsys.saved_centicycles += m68kcenticycles;
-         //if (yabsys.saved_centicycles >= 100) {
-         //   cycles++;
-         //   yabsys.saved_centicycles -= 100;
-         //}
+         // yabsys.saved_centicycles += m68kcenticycles;
+         // if (yabsys.saved_centicycles >= 100) {
+         //    cycles++;
+         //    yabsys.saved_centicycles -= 100;
+         // }
          M68KExec(cycles);
          PROFILE_STOP("68K");
       }
@@ -867,8 +936,8 @@ int YabauseEmulate(void) {
          saved_scsp_cycles -= scsp_integer_part << SCSP_FRACTIONAL_BITS;
 #else
       {
-        saved_m68k_cycles  += m68k_cycles_per_deciline;
-        setM68kCounter(saved_m68k_cycles);
+         saved_m68k_cycles += m68k_cycles_per_deciline;
+         setM68kCounter(saved_m68k_cycles);
 #endif
       }
       PROFILE_STOP("Total Emulation");
@@ -884,41 +953,45 @@ int YabauseEmulate(void) {
    }
 
 #endif
-   
+
 #ifdef YAB_STATICS
-   DebugLog("CPUTIME = %" PRId64 " @ %d \n", cpu_emutime, yabsys.frame_count );
+   DebugLog("CPUTIME = %" PRId64 " @ %d \n", cpu_emutime, yabsys.frame_count);
 #if 1
-   if (yabsys.frame_count >= 4000 ) {
-     static FILE * pfm = NULL;
-     if (pfm == NULL) {
+   if (yabsys.frame_count >= 4000)
+   {
+      static FILE *pfm = NULL;
+      if (pfm == NULL)
+      {
 #ifdef ANDROID
-       pfm = fopen("/mnt/sdcard/cpu.txt", "w");
+         pfm = fopen("/mnt/sdcard/cpu.txt", "w");
 #else
-       pfm = fopen_utf8("cpu.txt", "w");
+         pfm = fopen_utf8("cpu.txt", "w");
 #endif
-     }
-     if (pfm) {
-       fprintf(pfm, "%d\t%" PRId64 "\n", yabsys.frame_count, cpu_emutime);
-       fflush(pfm);
-     }
-     if( yabsys.frame_count >= 6100) {
-       fclose(pfm);
-       exit(0);
-     }
+      }
+      if (pfm)
+      {
+         fprintf(pfm, "%d\t%" PRId64 "\n", yabsys.frame_count, cpu_emutime);
+         fflush(pfm);
+      }
+      if (yabsys.frame_count >= 6100)
+      {
+         fclose(pfm);
+         exit(0);
+      }
    }
 #endif
 #endif
 #if DYNAREC_DEVMIYAX
-   //if (SH2Core->id == 3) SH2DynShowSttaics(MSH2, SSH2);
+   // if (SH2Core->id == 3) SH2DynShowSttaics(MSH2, SSH2);
 #endif
 
 #ifdef CACHE_STATICS
-   DebugLog( "%d: MSH2 hit:%d, miss:%d, wirte:%d", yabsys.frame_count, MSH2->onchip.cache.read_hit_count, MSH2->onchip.cache.read_miss_count, MSH2->onchip.cache.write_count );
+   DebugLog("%d: MSH2 hit:%d, miss:%d, wirte:%d", yabsys.frame_count, MSH2->onchip.cache.read_hit_count, MSH2->onchip.cache.read_miss_count, MSH2->onchip.cache.write_count);
    MSH2->onchip.cache.read_hit_count = 0;
    MSH2->onchip.cache.read_miss_count = 0;
    MSH2->onchip.cache.write_count = 0;
 
-   DebugLog( "%d: SSH2 hit:%d, miss:%d, wirte:%d", yabsys.frame_count, SSH2->onchip.cache.read_hit_count, SSH2->onchip.cache.read_miss_count, SSH2->onchip.cache.write_count );
+   DebugLog("%d: SSH2 hit:%d, miss:%d, wirte:%d", yabsys.frame_count, SSH2->onchip.cache.read_hit_count, SSH2->onchip.cache.read_miss_count, SSH2->onchip.cache.write_count);
    SSH2->onchip.cache.read_hit_count = 0;
    SSH2->onchip.cache.read_miss_count = 0;
    SSH2->onchip.cache.write_count = 0;
@@ -927,24 +1000,26 @@ int YabauseEmulate(void) {
    return 0;
 }
 
-
-void SyncCPUtoSCSP() {
-  //LOG("[SH2] WAIT SCSP");
-  if (g_scsp_main_mode == 0) {
-    setM68kCounter(1);
-    YabWaitEventQueue(q_scsp_finish);
-    saved_m68k_cycles = 0;
-    setM68kCounter(saved_m68k_cycles);
-    YabAddEventQueue(q_scsp_frame_start, 0);
-  }
-  //LOG("[SH2] START SCSP");
+void SyncCPUtoSCSP()
+{
+   // LOG("[SH2] WAIT SCSP");
+   if (g_scsp_main_mode == 0)
+   {
+      setM68kCounter(1);
+      YabWaitEventQueue(q_scsp_finish);
+      saved_m68k_cycles = 0;
+      setM68kCounter(saved_m68k_cycles);
+      YabAddEventQueue(q_scsp_frame_start, 0);
+   }
+   // LOG("[SH2] START SCSP");
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
-void YabauseStartSlave(void) {
+void YabauseStartSlave(void)
+{
 
-  LOG("YabauseStartSlave");
+   LOG("YabauseStartSlave");
 
    if (yabsys.emulatebios)
    {
@@ -954,14 +1029,14 @@ void YabauseStartSlave(void) {
       MappedMemoryWriteLong(0xFFFFFFE8, 0xA55A5555, NULL); // WCR
       MappedMemoryWriteLong(0xFFFFFFEC, 0xA55A0070, NULL); // MCR
 
-      MappedMemoryWriteWord(0xFFFFFEE0, 0x0000, NULL); // ICR
-      MappedMemoryWriteWord(0xFFFFFEE2, 0x0000, NULL); // IPRA
-      MappedMemoryWriteWord(0xFFFFFE60, 0x0F00, NULL); // VCRWDT
-      MappedMemoryWriteWord(0xFFFFFE62, 0x6061, NULL); // VCRA
-      MappedMemoryWriteWord(0xFFFFFE64, 0x6263, NULL); // VCRB
-      MappedMemoryWriteWord(0xFFFFFE66, 0x6465, NULL); // VCRC
-      MappedMemoryWriteWord(0xFFFFFE68, 0x6600, NULL); // VCRD
-      MappedMemoryWriteWord(0xFFFFFEE4, 0x6869, NULL); // VCRWDT
+      MappedMemoryWriteWord(0xFFFFFEE0, 0x0000, NULL);     // ICR
+      MappedMemoryWriteWord(0xFFFFFEE2, 0x0000, NULL);     // IPRA
+      MappedMemoryWriteWord(0xFFFFFE60, 0x0F00, NULL);     // VCRWDT
+      MappedMemoryWriteWord(0xFFFFFE62, 0x6061, NULL);     // VCRA
+      MappedMemoryWriteWord(0xFFFFFE64, 0x6263, NULL);     // VCRB
+      MappedMemoryWriteWord(0xFFFFFE66, 0x6465, NULL);     // VCRC
+      MappedMemoryWriteWord(0xFFFFFE68, 0x6600, NULL);     // VCRD
+      MappedMemoryWriteWord(0xFFFFFEE4, 0x6869, NULL);     // VCRWDT
       MappedMemoryWriteLong(0xFFFFFFA8, 0x0000006C, NULL); // VCRDMA1
       MappedMemoryWriteLong(0xFFFFFFA0, 0x0000006D, NULL); // VCRDMA0
       MappedMemoryWriteLong(0xFFFFFF0C, 0x0000006E, NULL); // VCRDIV
@@ -973,7 +1048,7 @@ void YabauseStartSlave(void) {
       MappedMemoryWriteByte(0xfffffe92, 0x01, NULL); // CCR
 
       SSH2->cycles = 0;
-      SH2Core->AddCycle(SSH2,2000);
+      SH2Core->AddCycle(SSH2, 2000);
 
       CurrentSH2 = MSH2;
 
@@ -988,12 +1063,12 @@ void YabauseStartSlave(void) {
       SH2SetRegisters(SSH2, &SSH2->regs);
       SH2HandleInterrupts(SSH2);
    }
-   else {
-     SH2PowerOn(SSH2);
-     SH2GetRegisters(SSH2, &SSH2->regs);
-     SSH2->regs.PC = 0x20000200;
-     SH2SetRegisters(SSH2, &SSH2->regs);
-
+   else
+   {
+      SH2PowerOn(SSH2);
+      SH2GetRegisters(SSH2, &SSH2->regs);
+      SSH2->regs.PC = 0x20000200;
+      SH2SetRegisters(SSH2, &SSH2->regs);
    }
 
    yabsys.IsSSH2Running = 1;
@@ -1001,28 +1076,30 @@ void YabauseStartSlave(void) {
 
 //////////////////////////////////////////////////////////////////////////////
 
-void YabauseStopSlave(void) {
+void YabauseStopSlave(void)
+{
    SH2Reset(SSH2);
    yabsys.IsSSH2Running = 0;
 }
 
 //////////////////////////////////////////////////////////////////////////////
 
-s64 YabauseGetTicks(void) {
+s64 YabauseGetTicks(void)
+{
 #ifdef WIN32
-  LARGE_INTEGER ticks;
+   LARGE_INTEGER ticks;
    QueryPerformanceCounter(&ticks);
    return (s64)ticks.QuadPart;
 #elif defined(_arch_dreamcast)
-   return (s64) timer_ms_gettime64();
-#elif defined(GEKKO)  
+   return (s64)timer_ms_gettime64();
+#elif defined(GEKKO)
    return gettime();
 #elif defined(PSP)
    return sceKernelGetSystemTimeWide();
 #elif defined(ANDROID)
-	struct timespec clock_time;
-	clock_gettime(CLOCK_REALTIME , &clock_time);
-	return (s64)clock_time.tv_sec * 1000000 + clock_time.tv_nsec/1000;
+   struct timespec clock_time;
+   clock_gettime(CLOCK_REALTIME, &clock_time);
+   return (s64)clock_time.tv_sec * 1000000 + clock_time.tv_nsec / 1000;
 #elif defined(HAVE_GETTIMEOFDAY)
    struct timeval tv;
    gettimeofday(&tv, NULL);
@@ -1034,7 +1111,8 @@ s64 YabauseGetTicks(void) {
 
 //////////////////////////////////////////////////////////////////////////////
 
-void YabauseSetVideoFormat(int type) {
+void YabauseSetVideoFormat(int type)
+{
    yabsys.IsPal = type;
    yabsys.MaxLineCount = type ? 313 : 263;
 #ifdef WIN32
@@ -1053,7 +1131,7 @@ void YabauseSetVideoFormat(int type) {
    yabsys.tickfreq = 1000;
 #endif
    yabsys.OneFrameTime =
-      type ? (yabsys.tickfreq / 50) : (yabsys.tickfreq * 10000 / 600000);
+       type ? (yabsys.tickfreq / 50) : (yabsys.tickfreq * 10000 / 600000);
    Vdp2Regs->TVSTAT = Vdp2Regs->TVSTAT | (type & 0x1);
    ScspChangeVideoFormat(type);
    YabauseChangeTiming(yabsys.CurSH2FreqType);
@@ -1072,24 +1150,24 @@ void YabauseSpeedySetup(void)
    else
    {
       // Setup the vector table area, etc.(all bioses have it at 0x00000600-0x00000810)
-      for (i = 0; i < 0x210; i+=4)
+      for (i = 0; i < 0x210; i += 4)
       {
-         data = MappedMemoryReadLong(0x00000600+i, NULL);
-         MappedMemoryWriteLong(0x06000000+i, data, NULL);
+         data = MappedMemoryReadLong(0x00000600 + i, NULL);
+         MappedMemoryWriteLong(0x06000000 + i, data, NULL);
       }
 
       // Setup the bios function pointers, etc.(all bioses have it at 0x00000820-0x00001100)
-      for (i = 0; i < 0x8E0; i+=4)
+      for (i = 0; i < 0x8E0; i += 4)
       {
-         data = MappedMemoryReadLong(0x00000820+i, NULL);
-         MappedMemoryWriteLong(0x06000220+i, data, NULL);
+         data = MappedMemoryReadLong(0x00000820 + i, NULL);
+         MappedMemoryWriteLong(0x06000220 + i, data, NULL);
       }
 
       // I'm not sure this is really needed
-      for (i = 0; i < 0x700; i+=4)
+      for (i = 0; i < 0x700; i += 4)
       {
-         data = MappedMemoryReadLong(0x00001100+i, NULL);
-         MappedMemoryWriteLong(0x06001100+i, data, NULL);
+         data = MappedMemoryReadLong(0x00001100 + i, NULL);
+         MappedMemoryWriteLong(0x06001100 + i, data, NULL);
       }
 
       // Fix some spots in 0x06000210-0x0600032C area
@@ -1112,8 +1190,8 @@ void YabauseSpeedySetup(void)
       MappedMemoryWriteLong(0x0600032C, 0x00001800, NULL);
 
       // Fix SCU interrupts
-      for (i = 0; i < 0x80; i+=4)
-         MappedMemoryWriteLong(0x06000A00+i, 0x0600083C, NULL);
+      for (i = 0; i < 0x80; i += 4)
+         MappedMemoryWriteLong(0x06000A00 + i, 0x0600083C, NULL);
    }
 
    // Set the cpu's, etc. to sane states
@@ -1124,7 +1202,7 @@ void YabauseSpeedySetup(void)
    Cs2Area->reg.CR1 = (Cs2Area->status << 8) | ((Cs2Area->options & 0xF) << 4) | (Cs2Area->repcnt & 0xF);
    Cs2Area->reg.CR2 = (Cs2Area->ctrladdr << 8) | Cs2Area->track;
    Cs2Area->reg.CR3 = (Cs2Area->index << 8) | ((Cs2Area->FAD >> 16) & 0xFF);
-   Cs2Area->reg.CR4 = (u16) Cs2Area->FAD; 
+   Cs2Area->reg.CR4 = (u16)Cs2Area->FAD;
    Cs2Area->satauth = 4;
 
    // Set Master SH2 registers accordingly
@@ -1194,7 +1272,7 @@ void YabauseSpeedySetup(void)
 
 int YabauseQuickLoadGame(void)
 {
-   partition_struct * lgpartition;
+   partition_struct *lgpartition;
    u8 *buffer;
    u32 addr;
    u32 size;
@@ -1221,9 +1299,9 @@ int YabauseQuickLoadGame(void)
       size = (buffer[0xE0] << 24) |
              (buffer[0xE1] << 16) |
              (buffer[0xE2] << 8) |
-              buffer[0xE3];
+             buffer[0xE3];
       blocks = size >> 11;
-      if ((size % 2048) != 0) 
+      if ((size % 2048) != 0)
          blocks++;
 
       // Lastbronx for 0x8000
@@ -1234,7 +1312,7 @@ int YabauseQuickLoadGame(void)
       addr = (buffer[0xF0] << 24) |
              (buffer[0xF1] << 16) |
              (buffer[0xF2] << 8) |
-              buffer[0xF3];
+             buffer[0xF3];
 
       // Free Block
       lgpartition->size = 0;
@@ -1245,7 +1323,7 @@ int YabauseQuickLoadGame(void)
       // Copy over ip to 0x06002000
       for (i = 0; i < blocks; i++)
       {
-         if ((lgpartition = Cs2ReadUnFilteredSector(150+i)) == NULL)
+         if ((lgpartition = Cs2ReadUnFilteredSector(150 + i)) == NULL)
             return -1;
 
          buffer = lgpartition->block[lgpartition->numblocks - 1]->data;
@@ -1270,7 +1348,7 @@ int YabauseQuickLoadGame(void)
          lgpartition->numblocks = 0;
       }
 
-      SH2WriteNotify(0x6002000, blocks<<11);
+      SH2WriteNotify(0x6002000, blocks << 11);
 
       // Ok, now that we've loaded the ip, now it's time to load the
       // First Program
@@ -1291,7 +1369,7 @@ int YabauseQuickLoadGame(void)
       lgpartition->numblocks = 0;
 
       // Now then, fetch the root directory's records
-      if ((lgpartition = Cs2ReadUnFilteredSector(dirrec.lba+150)) == NULL)
+      if ((lgpartition = Cs2ReadUnFilteredSector(dirrec.lba + 150)) == NULL)
          return -1;
 
       buffer = lgpartition->block[lgpartition->numblocks - 1]->data;
@@ -1317,7 +1395,7 @@ int YabauseQuickLoadGame(void)
       // Copy over First Program to addr
       for (i = 0; i < blocks; i++)
       {
-         if ((lgpartition = Cs2ReadUnFilteredSector(150+dirrec.lba+i)) == NULL)
+         if ((lgpartition = Cs2ReadUnFilteredSector(150 + dirrec.lba + i)) == NULL)
             return -1;
 
          buffer = lgpartition->block[lgpartition->numblocks - 1]->data;
@@ -1342,7 +1420,7 @@ int YabauseQuickLoadGame(void)
          lgpartition->numblocks = 0;
       }
 
-      SH2WriteNotify(addr, blocks<<11);
+      SH2WriteNotify(addr, blocks << 11);
 
       // Now setup SH2 registers to start executing at ip code
       SH2GetRegisters(MSH2, &MSH2->regs);
@@ -1364,7 +1442,7 @@ int YabauseQuickLoadGame(void)
       // LANGRISSER Dramatic Edition #531
       // This game uses Color ram data written by BIOS
       // So it need to write them before start game on no bios mode.
-      Vdp2WriteWord(0x0E,0); // set color mode to 0
+      Vdp2WriteWord(0x0E, 0); // set color mode to 0
       Vdp2ColorRamWriteWord(0x0, 0x8000);
       Vdp2ColorRamWriteWord(0x2, 0x9908);
       Vdp2ColorRamWriteWord(0x4, 0xCA94);
@@ -1386,7 +1464,6 @@ int YabauseQuickLoadGame(void)
       // Enable Cache
       CurrentSH2 = MSH2;
       MappedMemoryWriteByte(0xfffffe92, 0x11, NULL); // CCR
-
    }
    else
    {
@@ -1409,17 +1486,16 @@ int YabauseQuickLoadGame(void)
 #endif
 
 // non standard function
-char* strdup_ (const char* s)
+char *strdup_(const char *s)
 {
-  size_t slen = strlen(s);
-  char* result = (char*)malloc(slen + 1);
-  if(result == NULL)
-  {
-    return NULL;
-  }
-  memcpy(result, s, slen+1);
-  return result;
+   size_t slen = strlen(s);
+   char *result = (char *)malloc(slen + 1);
+   if (result == NULL)
+   {
+      return NULL;
+   }
+   memcpy(result, s, slen + 1);
+   return result;
 }
-
 
 //////////////////////////////////////////////////////////////////////////////

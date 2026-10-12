@@ -4,6 +4,7 @@ LIBRETRO_COMM_DIR := $(CORE_DIR)/libretro-common
 INCLUDE_DIRS := $(CORE_DIR) \
 	$(SOURCE_DIR) \
 	$(LIBRETRO_COMM_DIR)/include \
+	$(LIBRETRO_COMM_DIR)/include/libchdr \
 	$(SOURCE_DIR)/musashi
 
 SOURCES_S :=
@@ -27,7 +28,7 @@ SOURCES_C := $(SOURCE_DIR)/osdcore.c \
 	$(SOURCE_DIR)/profile.c \
 	$(SOURCE_DIR)/scspdsp.c \
 	$(SOURCE_DIR)/scu.c \
-	$(SOURCE_DIR)/scsp.c \
+	$(SOURCE_DIR)/scu.c \
 	$(SOURCE_DIR)/sh2cache.c \
 	$(SOURCE_DIR)/sh2core.c \
 	$(SOURCE_DIR)/sh2d.c \
@@ -41,8 +42,6 @@ SOURCES_C := $(SOURCE_DIR)/osdcore.c \
 	$(SOURCE_DIR)/ygles.c \
 	$(SOURCE_DIR)/yglshaderes.c \
 	$(SOURCE_DIR)/snddummy.c \
-	$(SOURCE_DIR)/vdp1.c \
-	$(SOURCE_DIR)/vdp2.c \
 	$(SOURCE_DIR)/vidshared.c \
 	$(SOURCE_DIR)/vidsoft.c \
 	$(SOURCE_DIR)/titan/titan.c \
@@ -71,7 +70,12 @@ else
 endif
 
 SOURCES_CXX := $(SOURCE_DIR)/Counter.cpp \
-	$(SOURCE_DIR)/ygl_texture.cpp
+	$(SOURCE_DIR)/ygl_texture.cpp \
+	$(SOURCE_DIR)/scsp.cpp \
+	$(SOURCE_DIR)/vdp1.cpp \
+	$(SOURCE_DIR)/vdp2.cpp \
+	$(SOURCE_DIR)/PlayRecorder.cpp \
+	$(SOURCE_DIR)/jsoncpp.cpp
 
 ifeq ($(HAVE_MUSASHI), 1)
 	SOURCES_C += $(SOURCE_DIR)/musashi/m68kcpu.c \

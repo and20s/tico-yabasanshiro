@@ -1,6 +1,6 @@
 set (CMAKE_SYSTEM_NAME Switch)
 set (CMAKE_SYSTEM_VERSION 1)
-set (CMAKE_SYSTEM_PROCESSOR arm64-v8a)
+set (CMAKE_SYSTEM_PROCESSOR aarch64)
 
 if (NOT DEFINED DEVKITPRO)
 	set (DEVKITPRO "/opt/devkitpro/")
@@ -30,10 +30,10 @@ set(CMAKE_AR ${DEVKITPRO_BIN}${PREFIX}gcc-ar CACHE FILEPATH "" FORCE)
 set(CMAKE_RANLIB ${DEVKITPRO_BIN}${PREFIX}gcc-ranlib )
 set(CMAKE_LINKER ${DEVKITPRO_BIN}${PREFIX}ld )
 
-set( ARCH "-march=armv8-a -mtune=cortex-a57 -mtp=soft -fPIE -D__SWITCH__" )
+set( ARCH "-march=armv8-a+crc+crypto -mtune=cortex-a57  -fPIE -D__SWITCH__" )
 
 set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -g -Wall -O2 -ffunction-sections ${ARCH}")
-set (CMAKE_CXX_FLAGS "${CMAKE_C_FLAGS} ${CMAKE_CXX_FLAGS} -fno-rtti -fno-exceptions")
+set (CMAKE_CXX_FLAGS "${CMAKE_C_FLAGS} ${CMAKE_CXX_FLAGS} -fno-rtti ")
 
 set (CMAKE_C_LINK_FLAGS "-specs=${DEVKITPRO}/libnx/switch.specs ${CMAKE_C_LINK_FLAGS}")
 #set (CMAKE_CXX_LINK_FLAGS "-specs=${DEVKITPRO}/libnx/switch.specs ${CMAKE_CXX_LINK_FLAGS}")
@@ -48,4 +48,4 @@ link_directories( ${link_directories} "${DEVKITPRO}/devkitA64/lib" )
 
 #("${DEVKITPRO}/libnx/lib" "${DEVKITPRO}/portlibs/switch/lib" )
 
-add_definitions( -DNX )
+add_definitions( -DNX -DHAVE_MUSASHI=1 )

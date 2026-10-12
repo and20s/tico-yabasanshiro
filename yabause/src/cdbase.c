@@ -61,6 +61,38 @@ static int LoadBinCueMultiFile(const char *cuefilename, FILE *iso_file);
 static int LoadBinCue(const char *cuefilename, FILE *iso_file);
 int checkCHD(const char *filename );
 
+#if defined(_WIN32) || defined(_WIN64)
+#include <wchar.h>
+#include <windows.h>
+
+FILE* fopen_utf8(const char* utf8_filename, const char* mode) {
+  int len = MultiByteToWideChar(CP_UTF8, 0, utf8_filename, -1, NULL, 0);
+  if (len == 0) return NULL;
+
+  wchar_t* wfilename = (wchar_t*)malloc(len * sizeof(wchar_t));
+  MultiByteToWideChar(CP_UTF8, 0, utf8_filename, -1, wfilename, len);
+
+  len = MultiByteToWideChar(CP_UTF8, 0, mode, -1, NULL, 0);
+  wchar_t* wmode = (wchar_t*)malloc(len * sizeof(wchar_t));
+  MultiByteToWideChar(CP_UTF8, 0, mode, -1, wmode, len);
+
+  FILE* file = _wfopen(wfilename, wmode);
+
+  free(wfilename);
+  free(wmode);
+
+  return file;
+}
+
+#else
+
+FILE* fopen_utf8(const char* utf8_filename, const char* mode) {
+  return fopen(utf8_filename, mode);
+}
+
+#endif
+
+
 
 // Remove this for now, execution on windows fails because of it
 // #include "streams/file_stream_transforms.h"
@@ -75,12 +107,6 @@ extern const char * GetFileDescriptorPath( const char * fileName );
 #endif
 
 #if defined(ANDROID)
-
-// Mac/Linux�p fopen_utf8: UTF-8����������̂܂܎g�p
-FILE* fopen_utf8(const char* utf8_filename, const char* mode) {
-  return fopen(utf8_filename, mode);
-}
-
 // Android 11 does not allow access file directory
 #include <unistd.h> // for dup()
 FILE* idiocy_fopen_fd(const char* fname, const char * mode) {
@@ -104,47 +130,9 @@ FILE* idiocy_fopen_fd(const char* fname, const char * mode) {
   return fopen(fname, mode);
 }
 
-#define fopen_utf8 idiocy_fopen_fd
-
-#elif defined(_WINDOWS)
-
-#include <wchar.h>
-#include <windows.h>
-
-// Windows�p fopen_utf8: UTF-8 -> UTF-16 �ɕϊ����� _wfopen ���g�p
-FILE* fopen_utf8(const char* utf8_filename, const char* mode) {
-  // UTF-8���[�h��UTF-16�ɕϊ�
-  int len = MultiByteToWideChar(CP_UTF8, 0, utf8_filename, -1, NULL, 0);
-  if (len == 0) return NULL;
-
-  wchar_t* wfilename = (wchar_t*)malloc(len * sizeof(wchar_t));
-  MultiByteToWideChar(CP_UTF8, 0, utf8_filename, -1, wfilename, len);
-
-  // ���[�h�������UTF-16�ɕϊ�
-  len = MultiByteToWideChar(CP_UTF8, 0, mode, -1, NULL, 0);
-  wchar_t* wmode = (wchar_t*)malloc(len * sizeof(wchar_t));
-  MultiByteToWideChar(CP_UTF8, 0, mode, -1, wmode, len);
-
-  // _wfopen���g�p
-  FILE* file = _wfopen(wfilename, wmode);
-
-  // ���������
-  free(wfilename);
-  free(wmode);
-
-  return file;
-}
-
-#else
-
-// Mac/Linux�p fopen_utf8: UTF-8����������̂܂܎g�p
-FILE* fopen_utf8(const char* utf8_filename, const char* mode) {
-  return fopen(utf8_filename, mode);
-}
+#define fopen idiocy_fopen_fd
 
 #endif
-
-
 
 
 #ifndef HAVE_WFOPEN
@@ -1097,7 +1085,7 @@ int LoadMDSTracks(const char *mds_filename, FILE *iso_file, mds_session_struct *
                else
                   wcscpy(filename, img_filename);
 
-#if defined(NX) || defined(IOS)
+#if defined(IOS)
                fp = fopen(filename, L"rb");
 #else
                fp = _wfopen(filename, L"rb");
@@ -1903,6 +1891,7 @@ typedef struct ChdInfo_ {
 
 ChdInfo * pChdInfo = NULL;
 
+#ifdef HAVE_LIBCHDR
 int checkCHD(const char *filename ) {
 
   chd_file *chd;
@@ -1914,7 +1903,13 @@ int checkCHD(const char *filename ) {
   return 0;
 
 }
+#else
+int checkCHD(const char *filename ) { return -1; }
+static int LoadCHD(const char *chd_filename, FILE *iso_file) { return -1; }
+#endif
 
+// #ifdef HAVE_LIBCHDR
+#ifdef HAVE_LIBCHDR
 static int LoadCHD(const char *chd_filename, FILE *iso_file)
 {
   int trak_number;
@@ -2121,9 +2116,11 @@ static int LoadCHD(const char *chd_filename, FILE *iso_file)
 
   return 0;
 }
+#endif
 
 
 static int ISOCDReadSectorFADFromCHD(u32 FAD, void *buffer) {
+#ifdef HAVE_LIBCHDR
   int i, j;
   size_t num_read = 0;
   track_info_struct *track = NULL;
@@ -2136,17 +2133,8 @@ static int ISOCDReadSectorFADFromCHD(u32 FAD, void *buffer) {
   {
     for (j = 0; j < disc.session[i].track_num-1; j++)
     {
-      //if (j == 1) {
-      //  int a = 0;
-      //}
       if (loglba < disc.session[i].track[j+1].logframeofs) {
-        //if ((loglba > disc.session[i].track[j].pregap)) {
-       //   loglba -= disc.session[i].track[j].pregap;
-       // }
         physlba = disc.session[i].track[j].physframeofs + (loglba - disc.session[i].track[j].logframeofs);
-        //if (disc.session[i].track[j].ctl_addr == 0x01) {
-        //  physlba += disc.session[i].track[j].pregap;
-        //}
         chdlba = physlba - disc.session[i].track[j].physframeofs + disc.session[i].track[j].chdframeofs;
         track = &disc.session[i].track[j];
         break;
@@ -2187,5 +2175,9 @@ static int ISOCDReadSectorFADFromCHD(u32 FAD, void *buffer) {
   }
 
   return 1;
+#else
+  return 0;
+#endif
 }
+// End of ISOCDReadSectorFADFromCHD
 

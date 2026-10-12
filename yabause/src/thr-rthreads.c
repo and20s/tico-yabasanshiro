@@ -21,13 +21,15 @@
 #ifndef _WIN32
 #include <sched.h>
 #include <unistd.h>
+#if !defined(__SWITCH__) && !defined(HAVE_LIBNX)
 #include <sys/syscall.h>
+#endif
 #include <errno.h>
 #endif
 
 #include "core.h"
-#include "threads.h"
 #include "rthreads/rthreads.h"
+#include "threads.h"
 #include <stdlib.h>
 
 struct thd_s {
@@ -130,6 +132,13 @@ void YabThreadSleep(void)
 	struct thd_s *thd = (struct thd_s *)sthread_tls_get(hnd_key);
 	WaitForSingleObject(thd->cond,INFINITE);
 #endif
+#elif defined(__SWITCH__) || defined(HAVE_LIBNX)
+  // Switch doesn't have pause(), emulate wait or just sleep short time
+  // pause() in standard POSIX waits for a signal.
+  // In rthreads context, this might be expecting a condition variable signal
+  // but lacking the mutex/cond handle here (unlike Win32 path).
+  // Sleeping is a localized fix for the linker.
+  usleep(1000);
 #else
 	pause();
 #endif
@@ -180,6 +189,15 @@ int YabClearEventQueue(YabEventQueue * queue_t)
 	slock_unlock(queue->mutex);
 }
 
+int YabNanosleep(u64 ns) {
+#ifdef _WIN32
+  SleepEx(ns / 1000, 0);
+#else
+  usleep(ns);
+#endif
+  return 0;
+}
+
 void YabThreadUSleep( unsigned int stime )
 {
 #ifdef _WIN32
@@ -199,6 +217,8 @@ void YabThreadSetCurrentThreadAffinityMask(int mask)
 #if defined(_WIN32)
 	SetThreadIdealProcessor(GetCurrentThread(), mask);
 //#elif !defined(ANDROID) // it needs more than android-21
+#elif defined(__SWITCH__) || defined(HAVE_LIBNX)
+// Stub
 #else
 	int err, syscallres;
 	pid_t pid = syscall(SYS_gettid);

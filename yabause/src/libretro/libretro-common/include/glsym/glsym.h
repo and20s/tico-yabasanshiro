@@ -23,12 +23,17 @@
 #ifndef __LIBRETRO_SDK_GLSYM_H__
 #define __LIBRETRO_SDK_GLSYM_H__
 
+#if defined(_OGLES3_) && !defined(HAVE_OPENGLES)
+#define HAVE_OPENGLES 1
+#define HAVE_OPENGLES3 1
+#endif
+
 #include "rglgen.h"
 
 #ifndef HAVE_PSGL
 #if defined(HAVE_OPENGLES2)
 #include "glsym_es2.h"
-#elif defined(HAVE_OPENGLES3)
+#elif defined(HAVE_OPENGLES3) || defined(_OGLES3_)
 #include "glsym_es3.h"
 #else
 #ifdef HAVE_LIBNX

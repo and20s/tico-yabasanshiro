@@ -2,51 +2,151 @@ project(yabause-nx)
 
 yab_port_start()
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14")
 
-#add_subdirectory(pugixml)
-#add_subdirectory(nanogui-sdl)
+# Platform-specific definitions matching build_yabause()
+add_definitions(
+    -D__SWITCH__
+    -DSWITCH
+    -DHAVE_LIBNX
+    -DAARCH64
+    -DNX
+    -DNDEBUG
+    -DHAVE_MUSASHI
+    -DYAB_WANT_SCSP
+    -DYAB_WANT_OPENGL
+    -DYAB_WANT_SH2_CACHE
+    -DYAB_ASYNC_RENDERING
+    -DIMGUI_IMPL_OPENGL_LOADER_CUSTOM
+    -DHAVE_LIBCHDR
+    -DRC_CLIENT_SUPPORTS_HASH=1
+    -D_GNU_SOURCE
+    -D_POSIX_C_SOURCE=200809L
+)
 
-include( ../glfw/external_zlib.cmake )
-include( ../glfw/external_libpng.cmake )
+# Additional optimization and platform flags
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3 -ffunction-sections -fdata-sections -mcpu=cortex-a57 -mtune=cortex-a57 -ffast-math -flto -ftree-vectorize -fomit-frame-pointer")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -ffunction-sections -fdata-sections -mcpu=cortex-a57 -mtune=cortex-a57 -ffast-math -flto -ftree-vectorize -fomit-frame-pointer")
 
-#------------------------------------------------------------------------------
-# nlohmann/json
-#  * sets EXTERNAL_JSON_INCLUDE_DIR 
+add_definitions(
+    -DHAVE_FLOORF=1
+    -DHAVE_NEON=1
+    -D__ARM_NEON__
+)
 
-set(PORT_INCLUDE_DIRS "../" )
-set(PORT_LIBRARIES EGL GLESv2 glapi drm_nouveau nx m SDL2  )
+set(PORT_INCLUDE_DIRS 
+    "../"
+    "${CMAKE_CURRENT_BINARY_DIR}/../"
+    "${DEVKITPRO}/libnx/include"
+    "${DEVKITPRO}/portlibs/switch/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tico/deps/imgui"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tico/deps/imgui/backends"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tico"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tico/deps"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../rcheevos/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../rcheevos/src"
+)
 
-#message("Nlohmann/json dir =" ${EXTERNAL_JSON_INCLUDE_DIR})
+set(MESA_DIR "/mesa-new")
+
+set(PORT_LIBRARIES 
+    ${MESA_DIR}/src/egl/libEGL.a
+    ${MESA_DIR}/src/mapi/es2api/libGLESv2.a
+    ${MESA_DIR}/src/mapi/shared-glapi/libglapi.a
+    ${MESA_DIR}/src/gallium/drivers/nouveau/libnouveau.a
+    ${MESA_DIR}/src/nouveau/codegen/libnouveau_codegen.a
+    ${MESA_DIR}/src/gallium/winsys/nouveau/switch/libnouveauwinsys.a
+    ${MESA_DIR}/libdrm_nouveau/lib/libdrm_nouveau.a
+    nx 
+    m 
+    SDL2
+    SDL2_mixer
+    mpg123
+    modplug
+    opusfile
+    opus
+    vorbisidec
+    ogg
+)
 
 set(yabause_nx_SOURCES
-	main.cpp
-	#InputManager.h
-	#InputManager.cpp
-	#InputConfig.h
-	#InputConfig.cpp
-	#MenuScreen.h
-	#MenuScreen.cpp
+    # Tico entry point
+    tico/TicoMain.cpp
+    # Tico Overlay
+    tico/TicoOverlay.cpp
+    tico/TicoTranslationManager.cpp
+    # YabaSanshiro Config
+    tico/YabaSanshiroConfig.cpp
+    # ImGui core
+    tico/deps/imgui/imgui.cpp
+    tico/deps/imgui/imgui_draw.cpp
+    tico/deps/imgui/imgui_tables.cpp
+    tico/deps/imgui/imgui_widgets.cpp
+    # ImGui backends
+    tico/deps/imgui/backends/imgui_impl_opengl3.cpp
+    # RetroAchievements (rcheevos)
+    # RetroAchievements (rcheevos)
+    ../../../rcheevos/src/rc_client.c
+    ../../../rcheevos/src/rc_client_external.c
+    ../../../rcheevos/src/rc_client_raintegration.c
+    ../../../rcheevos/src/rc_compat.c
+    ../../../rcheevos/src/rc_util.c
+    ../../../rcheevos/src/rc_version.c
+    ../../../rcheevos/src/rapi/rc_api_common.c
+    ../../../rcheevos/src/rapi/rc_api_editor.c
+    ../../../rcheevos/src/rapi/rc_api_info.c
+    ../../../rcheevos/src/rapi/rc_api_runtime.c
+    ../../../rcheevos/src/rapi/rc_api_user.c
+    ../../../rcheevos/src/rcheevos/alloc.c
+    ../../../rcheevos/src/rcheevos/condition.c
+    ../../../rcheevos/src/rcheevos/condset.c
+    ../../../rcheevos/src/rcheevos/consoleinfo.c
+    ../../../rcheevos/src/rcheevos/format.c
+    ../../../rcheevos/src/rcheevos/lboard.c
+    ../../../rcheevos/src/rcheevos/memref.c
+    ../../../rcheevos/src/rcheevos/operand.c
+    ../../../rcheevos/src/rcheevos/rc_validate.c
+    ../../../rcheevos/src/rcheevos/richpresence.c
+    ../../../rcheevos/src/rcheevos/runtime.c
+    ../../../rcheevos/src/rcheevos/runtime_progress.c
+    ../../../rcheevos/src/rcheevos/trigger.c
+    ../../../rcheevos/src/rcheevos/value.c
+    ../../../rcheevos/src/rhash/aes.c
+    ../../../rcheevos/src/rhash/cdreader.c
+    ../../../rcheevos/src/rhash/hash.c
+    ../../../rcheevos/src/rhash/hash_disc.c
+    ../../../rcheevos/src/rhash/hash_encrypted.c
+    ../../../rcheevos/src/rhash/hash_rom.c
+    ../../../rcheevos/src/rhash/hash_zip.c
+    ../../../rcheevos/src/rhash/md5.c
+)
+
+include_directories(
+    ${YABAUSE_INCLUDE_DIR} 
+    ${PORT_INCLUDE_DIRS} 
+    ${Boost_INCLUDE_DIR} 
+    "nanogui-sdl/include" 
+    "nanogui-sdl/ext/eigen"
+)
+
+link_directories(
+    ${DEVKITPRO}/devkitA64/lib/
+    ${DEVKITPRO}/libnx/lib/
+    ${DEVKITPRO}/portlibs/switch/lib/
+    ${LIBCHDR_LIB_DIR}
 ) 
 
-
-include_directories( ${YABAUSE_INCLUDE_DIR} ${PORT_INCLUDE_DIRS} ${Boost_INCLUDE_DIR} "nanogui-sdl/include" "nanogui-sdl/ext/eigen" )
-link_directories( /opt/devkitpro/devkitA64/lib/ /opt/devkitpro/libnx/lib/ /opt/devkitpro/portlibs/switch/lib/  ) 
 add_executable(yabause-nx ${yabause_nx_SOURCES})
-target_link_libraries(yabause-nx yabause ${YABAUSE_LIBRARIES} ${PORT_LIBRARIES}  )
+target_link_libraries(yabause-nx yabause ${YABAUSE_LIBRARIES} ${PORT_LIBRARIES} ${LIBCHDR_LIBRARIES} curl)
 
-set( CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -specs=/opt/devkitpro/libnx/switch.specs -g -Wl,-Map,memory.map" )
+# Linker flags matching build_yabause() architecture and specs
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -specs=${DEVKITPRO}/libnx/switch.specs -g -Wl,-Map,memory.map -Wl,--gc-sections")
 
-#add_dependencies(yabause-nx Json png zlib)
-yab_port_success(yabause-nx)
+# Copy translation, assets, and font files to romfs
+file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/tico/lang" DESTINATION "${CMAKE_CURRENT_SOURCE_DIR}/romfs")
+file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/tico/assets" DESTINATION "${CMAKE_CURRENT_SOURCE_DIR}/romfs")
+file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/tico/fonts" DESTINATION "${CMAKE_CURRENT_SOURCE_DIR}/romfs")
 
-#install(TARGETS yabause-xu4 DESTINATION "/opt/retropie/emulators/yabasanshiro/")
-#install(FILES "README.md" DESTINATION "/opt/retropie/emulators/yabasanshiro/" )
-
-add_custom_command(TARGET yabause-nx
-        POST_BUILD
-        COMMAND /bin/bash ${CMAKE_CURRENT_SOURCE_DIR}/genSwitchExecutables.sh 
-				)
-				
+# POST_BUILD generation is handled by the wrapper script `build_yabasanshiro3_nro.sh`
 install(TARGETS yabause-nx DESTINATION "bin")
-install(FILES "README.md" DESTINATION "." )
+install(FILES "README.md" DESTINATION ".")

@@ -26,11 +26,13 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 #include <string>
 #include <unordered_map>
 
-#include <sys/types.h>
 #include <stdint.h>
+#include <sys/types.h>
 
 #include "debug.h"
 #include "threads.h"
+
+struct SH2_struct;
 
 //****************************************************
 // Defiens
@@ -52,32 +54,44 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 
 #ifdef _WINDOWS
 #include <Windows.h>
-#define ALLOCATE(x) VirtualAlloc(NULL, x, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+#define ALLOCATE(x) \
+  VirtualAlloc(NULL, x, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
 #define FREEMEM(x, a)               \
   if (x)                            \
   {                                 \
     VirtualFree(x, a, MEM_RELEASE); \
     x = NULL;                       \
   }
+#elif defined(__SWITCH__) || defined(HAVE_LIBNX)
+#include <switch.h>
+#define ALLOCATE(x) NULL
+#define FREEMEM(x, a)
 #elif defined(ARCH_IS_LINUX)
 #include <sys/mman.h>
-#define ALLOCATE(x) mmap(NULL, x, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_ANONYMOUS | MAP_FILE | MAP_PRIVATE, -1, 0);
-//#define ALLOCATE(x) mmap ((void*)0x6000000, x, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS ,-1, 0);
+#define ALLOCATE(x)                                 \
+  mmap(NULL, x, PROT_READ | PROT_WRITE | PROT_EXEC, \
+       MAP_ANONYMOUS | MAP_FILE | MAP_PRIVATE, -1, 0);
+// #define ALLOCATE(x) mmap ((void*)0x6000000, x, PROT_READ | PROT_WRITE |
+// PROT_EXEC, MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS ,-1, 0);
 #define FREEMEM(x, a) munmap(x, a);
 
 #elif defined(IOS)
 #include <sys/mman.h>
 
 #include <sys/mman.h>
-#define ALLOCATE(x) mmap(NULL, x, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_ANON | MAP_PRIVATE, -1, 0);
+#define ALLOCATE(x)                                                         \
+  mmap(NULL, x, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_ANON | MAP_PRIVATE, \
+       -1, 0);
 #define FREEMEM(x, a) munmap(x, a);
 
 #else
 #include <sys/mman.h>
-#define ALLOCATE(x) mmap(NULL, x, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_JIT | MAP_ANON | MAP_PRIVATE, -1, 0);
+#define ALLOCATE(x)                                 \
+  mmap(NULL, x, PROT_READ | PROT_WRITE | PROT_EXEC, \
+       MAP_JIT | MAP_ANON | MAP_PRIVATE, -1, 0);
 #define FREEMEM(x, a) munmap(x, a);
-//#define ALLOCATE(x)	malloc(x)
-//#define FREEMEM(x,a)	if(x){ free(x); x = NULL;}
+// #define ALLOCATE(x)	malloc(x)
+// #define FREEMEM(x,a)	if(x){ free(x); x = NULL;}
 #endif
 
 const int MAX_INSTSIZE = 0xFFFF + 1;
@@ -101,9 +115,9 @@ typedef map<u32, CompileStaticsNode> MapCompileStatics;
 // Structs
 //****************************************************
 
-const int NUMOFBLOCKS = 1024 * 4;
+const int NUMOFBLOCKS = 1024 * 8;
 // const int MAXBLOCKSIZE = 3072-(4*4);
-const int MAXBLOCKSIZE = 4096;
+const int MAXBLOCKSIZE = 8192;
 #define MAINMEMORY_SIZE (0x100000);
 #define ROM_SIZE (0x80000);
 
@@ -124,7 +138,8 @@ struct Block
 // Sh2 Registris
 struct tagSH2
 {
-  tagSH2() {
+  tagSH2()
+  {
     memset(GenReg, 0, sizeof(u32) * 16);
     memset(CtrlReg, 0, sizeof(u32) * 3);
     memset(SysReg, 0, sizeof(u32) * 6);
@@ -149,6 +164,8 @@ struct tagSH2
   uintptr_t setmemlong;
   uintptr_t eachclock;
   u32 exitcount;
+  u32 _pad_highwram;  // explicit padding for 8-byte alignment
+  uintptr_t highwram; // HighWram base pointer for inline JIT fast-path
 };
 
 // Instruction
@@ -164,10 +181,7 @@ struct i_desc
 
 extern i_desc opcode_list[];
 
-inline u32 adress_mask(u32 addr)
-{
-  return (addr & 0x000FFFFF) >> 1;
-}
+inline u32 adress_mask(u32 addr) { return (addr & 0x000FFFFF) >> 1; }
 
 // Interrupt Table
 struct dIntcTbl
@@ -191,9 +205,11 @@ struct x86op_desc
   unsigned char write_count;
   unsigned char build_count;
 
-  x86op_desc(void (*ifunc)(), const unsigned short *isize, const unsigned char *isrc,
-             const unsigned char *idest, const unsigned char *ioff1, const unsigned char *iimm,
-             const unsigned char *ioff3, const unsigned char idelay, const unsigned char icycle, const unsigned char iwrite_count = 0)
+  x86op_desc(void (*ifunc)(), const unsigned short *isize,
+             const unsigned char *isrc, const unsigned char *idest,
+             const unsigned char *ioff1, const unsigned char *iimm,
+             const unsigned char *ioff3, const unsigned char idelay,
+             const unsigned char icycle, const unsigned char iwrite_count = 0)
   {
     func = ifunc;
     size = isize;
@@ -222,7 +238,22 @@ private:
   {
     debug_mode_ = false;
     BuildInstructionList();
-    dCode = (Block*)ALLOCATE(sizeof(Block)*NUMOFBLOCKS);
+#if defined(__SWITCH__) || defined(HAVE_LIBNX)
+    size_t size = sizeof(Block) * NUMOFBLOCKS;
+    size = (size + 0xFFF) & ~0xFFF; // Page align
+    if (R_FAILED(jitCreate(&jit_buf, size)))
+    {
+      dCode = NULL;
+    }
+    else
+    {
+      dCode = (Block *)jitGetRwAddr(&jit_buf);
+      rx_offset = (u8 *)jitGetRxAddr(&jit_buf) - (u8 *)jitGetRwAddr(&jit_buf);
+      jitTransitionToWritable(&jit_buf);
+    }
+#else
+    dCode = (Block *)ALLOCATE(sizeof(Block) * NUMOFBLOCKS);
+#endif
 #ifdef SET_DIRTY
     LookupParentTable = new addrs[0x100000 >> 1];
 #else
@@ -233,14 +264,53 @@ private:
     exec_count_ = 0;
     remove_count_ = 0;
   }
+
   ~CompileBlocks()
   {
+#if defined(__SWITCH__) || defined(HAVE_LIBNX)
+    if (dCode)
+    {
+      Result rc = jitClose(&jit_buf);
+      if (R_FAILED(rc))
+      {
+        printf("ERROR: jitClose failed: 0x%x — JIT heap pages may be poisoned!\n", rc);
+      }
+      dCode = NULL;
+    }
+#else
     FREEMEM(dCode, sizeof(Block) * NUMOFBLOCKS);
+#endif
+    if (LookupParentTable)
+    {
+      delete[] LookupParentTable;
+      LookupParentTable = NULL;
+    }
   }
   static CompileBlocks *instance_;
   bool show_code_ = false;
 
 public:
+  static void destroyInstance()
+  {
+    if (instance_ != NULL)
+    {
+      delete instance_;
+      instance_ = NULL;
+    }
+  }
+#if defined(__SWITCH__) || defined(HAVE_LIBNX)
+  Jit jit_buf;
+  ptrdiff_t rx_offset;
+
+  inline void *GetRxAddr(void *rw_addr)
+  {
+    if (!dCode)
+      return rw_addr; // Should not happen if init success
+    return (void *)((u8 *)rw_addr + rx_offset);
+  }
+#else
+  inline void *GetRxAddr(void *rw_addr) { return rw_addr; }
+#endif
   void setShowCode(bool b) { show_code_ = b; }
   static CompileBlocks *getInstance()
   {
@@ -272,11 +342,13 @@ public:
     addr = adress_mask(addr);
     if (LookupParentTable[addr].size() == 0)
       return;
-    for (auto it = LookupParentTable[addr].begin(); it != LookupParentTable[addr].end(); it++)
+    for (auto it = LookupParentTable[addr].begin();
+         it != LookupParentTable[addr].end(); it++)
     {
       if (LookupTable[*it] != NULL)
       {
-        for (u32 i = adress_mask(LookupTable[*it]->b_addr); i <= adress_mask(LookupTable[*it]->e_addr); i++)
+        for (u32 i = adress_mask(LookupTable[*it]->b_addr);
+             i <= adress_mask(LookupTable[*it]->e_addr); i++)
         {
           if (i != addr)
           {
@@ -371,10 +443,7 @@ public:
   int Execute();
   void Undecoded();
 
-  void AddCycle(u32 cycle)
-  {
-    pre_exe_count_ += cycle;
-  }
+  void AddCycle(u32 cycle) { pre_exe_count_ += cycle; }
 
   u32 addcycle_ = 0;
   u32 memcycle_ = 0;
@@ -382,10 +451,7 @@ public:
   void ShowCompileInfo();
   void ResetCompileInfo();
 
-  void onFrame()
-  {
-    m_pCompiler->self_modify_block.clear();
-  }
+  void onFrame() { m_pCompiler->self_modify_block.clear(); }
 
   tagSH2 *getDynaSh() { return m_pDynaSh2; };
 
@@ -436,7 +502,6 @@ extern "C"
   u8 memGetByteNoCache(u32);
   u16 memGetWordNoCache(u32);
   u32 memGetLongNoCache(u32);
-
 }
 
 #ifdef _WINDOWS
@@ -445,10 +510,12 @@ extern "C"
 #define dynaLock()
 #define dynaFree()
 #else
-#define dynaLock() __asm {                         \
+#define dynaLock()                    \
+  __asm {                         \
     __asm push edx /*__asm push ebx*/ \
-}
-#define dynaFree() __asm {/*__asm pop ebx*/          \
+  }
+#define dynaFree() \
+  __asm {/*__asm pop ebx*/          \
    __asm pop edx}
 #endif
 

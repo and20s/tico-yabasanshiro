@@ -60,8 +60,8 @@ set(yabause_SOURCES
 	#ygl_texture.cpp
 	BackupManager.cpp
 	jsoncpp.cpp
-	cd-web.cpp
-	PlayRecorder.cpp
+	##########################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################cd-web.cpp
+	############################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################PlayRecorder.cpp
 	sh2cache.c )
 	add_definitions(-DIMPROVED_SAVESTATES)
 
@@ -94,10 +94,12 @@ endif()
 
 if ("${CMAKE_SYSTEM_NAME}" STREQUAL "Switch")
 add_definitions(-DYAB_PORT_OSD)
-add_definitions(-D_OGLES3_)
-#add_definitions(-DYAB_ASYNC_RENDERING)
+add_definitions(-D_OGL3_)
+add_definitions(-DNX)
+add_definitions(-DHAVE_LIBGL)
+add_definitions(-DYAB_ASYNC_RENDERING)
 add_definitions(-DYAB_PORT_OSD)
-include_directories(./ ./nanovg)		
+include_directories(./ ./nanovg ../../../../../../for_reference/mesa/include)		
 set(yabause_SOURCES
 	${yabause_SOURCES}
 	yglcache.c
@@ -106,7 +108,9 @@ set(yabause_SOURCES
 	nanovg/nanovg.c 
 	nanovg/nanovg_osdcore.h 
 	nanovg/nanovg_osdcore.c
+	sndsdl.c
 	)
+set(YABAUSE_LIBRARIES ${YABAUSE_LIBRARIES} SDL2)
 endif ()
 
 if (IOS)
@@ -182,12 +186,7 @@ if (YAB_WANT_DYNAREC_DEVMIYAX)
 		endif()
 
 		else() # UNIX(GAS)
-			if("${CMAKE_SYSTEM_PROCESSOR}" MATCHES  "arm")
-				enable_language(ASM-ATT)
-				set(yabause_SOURCES 
-				  ${yabause_SOURCES}
-					sh2_dynarec_devmiyax/dynalib_arm.s)
-			elseif("${CMAKE_SYSTEM_PROCESSOR}" MATCHES  "aarch64")
+			if("${CMAKE_SYSTEM_PROCESSOR}" MATCHES  "aarch64" OR "${CMAKE_SYSTEM_PROCESSOR}" MATCHES  "arm64")
 				enable_language(ASM-ATT)
                                 add_definitions(-DAARCH64) 
 				if (IOS) 
@@ -195,6 +194,11 @@ if (YAB_WANT_DYNAREC_DEVMIYAX)
 				else ()
 					set(yabause_SOURCES  ${yabause_SOURCES} sh2_dynarec_devmiyax/dynalib_arm64.s)
 				endif ()
+			elseif("${CMAKE_SYSTEM_PROCESSOR}" MATCHES  "arm")
+				enable_language(ASM-ATT)
+				set(yabause_SOURCES 
+				  ${yabause_SOURCES}
+					sh2_dynarec_devmiyax/dynalib_arm.s)
 			endif ()
 		endif ()
 

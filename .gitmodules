@@ -4,3 +4,6 @@
 [submodule "yabause/src/android/oboe"]
 	path = yabause/src/android/oboe
 	url = https://github.com/google/oboe
+[submodule "rcheevos"]
+	path = rcheevos
+	url = https://github.com/RetroAchievements/rcheevos.git

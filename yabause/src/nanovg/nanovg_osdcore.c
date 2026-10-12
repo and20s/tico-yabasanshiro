@@ -56,30 +56,30 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 static int OSDNanovgInit(void);
 static void OSDNanovgDeInit(void);
 static void OSDNanovgReset(void);
-static void OSDNanovgDisplayMessage(OSDMessage_struct * message, pixel_t * buffer, int w, int h);
-static void OSDNanovgAddFrameProfileData(char * label, u32 data);
+static void OSDNanovgDisplayMessage(OSDMessage_struct *message, pixel_t *buffer, int w, int h);
+static void OSDNanovgAddFrameProfileData(char *label, u32 data);
 static int OSDNanovgUseBuffer(void);
-void OSDNanovgAddLogString(char * log);
+void OSDNanovgAddLogString(char *log);
 
 OSD_struct OSDNnovg = {
-  OSDCORE_NANOVG,
-  "nanovg OSD Interface",
-  OSDNanovgInit,
-  OSDNanovgDeInit,
-  OSDNanovgReset,
-  OSDNanovgDisplayMessage,
-  OSDNanovgUseBuffer,
-  OSDNanovgAddFrameProfileData,
-  OSDNanovgAddLogString
-};
+    OSDCORE_NANOVG,
+    "nanovg OSD Interface",
+    OSDNanovgInit,
+    OSDNanovgDeInit,
+    OSDNanovgReset,
+    OSDNanovgDisplayMessage,
+    OSDNanovgUseBuffer,
+    OSDNanovgAddFrameProfileData,
+    OSDNanovgAddLogString};
 
-static NVGcontext* vg = NULL;
+static NVGcontext *vg = NULL;
 static int fontNormal, fontBold;
 
 #define MAX_HISTORY 4
 #define MAX_PROFILE_CNT 32
 
-typedef struct FrameProfileInfo {
+typedef struct FrameProfileInfo
+{
   char label[MAX_PROFILE_CNT][64];
   u32 time[MAX_PROFILE_CNT];
   int cnt;
@@ -90,58 +90,65 @@ static int current_history_index = 0;
 static int profile_index = 0;
 
 #if defined(__RETORO_ARENA__)
-NVGcontext * getGlobalNanoVGContext();
+NVGcontext *getGlobalNanoVGContext();
 #endif
 
 int OSDNanovgInit(void)
 {
 #if defined(__RETORO_ARENA__)
-  vg =getGlobalNanoVGContext();
+  vg = getGlobalNanoVGContext();
 #else
 #if defined(_OGLES3_)
   vg = nvgCreateGLES3(NVG_ANTIALIAS);
 #else
   vg = nvgCreateGL3(NVG_ANTIALIAS);
 #endif
-#endif  
-  if (vg == NULL) {
+#endif
+  if (vg == NULL)
+  {
     printf("Could not init nanovg.\n");
     return -1;
   }
 
 #if defined(ANDROID)
   fontNormal = nvgCreateFontMem(vg, "sans", Roboto_Regular_ttf, Roboto_Regular_ttf_len, 0);
-  if (fontNormal == -1) {
+  if (fontNormal == -1)
+  {
     printf("Could not add font italic.\n");
     return -1;
   }
   fontBold = nvgCreateFontMem(vg, "sans", Roboto_Bold_ttf, Roboto_Bold_ttf_len, 0);
-  if (fontBold == -1) {
+  if (fontBold == -1)
+  {
     printf("Could not add font bold.\n");
     return -1;
   }
 #else
-  fontNormal = nvgCreateFont(vg, "sans", "./fonts/NotoSansJP-Medium.ttf" );
-  if (fontNormal == -1) {
+  fontNormal = nvgCreateFont(vg, "sans", "./fonts/NotoSansJP-Medium.ttf");
+  if (fontNormal == -1)
+  {
     printf("Could not add font italic.\n");
     fontNormal = nvgCreateFontMem(vg, "sans", Roboto_Regular_ttf, Roboto_Regular_ttf_len, 0);
-    if (fontNormal == -1) {
+    if (fontNormal == -1)
+    {
       printf("Could not add font italic.\n");
       return -1;
     }
   }
   fontBold = nvgCreateFont(vg, "sans-bold", "./fonts/NotoSansJP-Bold.ttf");
-  if (fontBold == -1) {
+  if (fontBold == -1)
+  {
     printf("Could not add font bold.\n");
     fontBold = nvgCreateFontMem(vg, "sans", Roboto_Bold_ttf, Roboto_Bold_ttf_len, 0);
-    if (fontBold == -1) {
+    if (fontBold == -1)
+    {
       printf("Could not add font bold.\n");
       return -1;
-    }    
+    }
   }
 #endif
 
-  memset(frameinfo_histroy, 0, sizeof(FrameProfileInfo)*MAX_HISTORY);
+  memset(frameinfo_histroy, 0, sizeof(FrameProfileInfo) * MAX_HISTORY);
   current_history_index = 0;
   profile_index = 0;
 
@@ -150,13 +157,26 @@ int OSDNanovgInit(void)
 
 void OSDNanovgDeInit(void)
 {
+#if !defined(__RETORO_ARENA__)
+  if (vg != NULL)
+  {
+#if defined(_OGLES3_)
+    nvgDeleteGLES3(vg);
+#else
+    nvgDeleteGL3(vg);
+#endif
+    vg = NULL;
+    printf("OSDNanovgDeInit: NanoVG context destroyed\n");
+  }
+#endif
 }
 
 void OSDNanovgReset(void)
 {
 }
 
-int OSDNanovgUseBuffer() {
+int OSDNanovgUseBuffer()
+{
   return 0;
 }
 
@@ -179,20 +199,23 @@ void OSDPushMessageDirect(char * msg) {
 static char log_histroy[MAX_LOG_HISTORY][128];
 static int current_log_history_index = 0;
 
-void OSDNanovgAddLogString(char * log) {
+void OSDNanovgAddLogString(char *log)
+{
   int index;
   index = current_log_history_index;
   strncpy(log_histroy[index], log, 128);
   current_log_history_index++;
-  if (current_log_history_index >= MAX_LOG_HISTORY) {
+  if (current_log_history_index >= MAX_LOG_HISTORY)
+  {
     current_log_history_index = 0;
   }
 }
 
-
-void OSDNanovgAddFrameProfileData(char * label, u32 data) {
+void OSDNanovgAddFrameProfileData(char *label, u32 data)
+{
   int index;
-  if (MAX_PROFILE_CNT <= profile_index) return;
+  if (MAX_PROFILE_CNT <= profile_index)
+    return;
   index = current_history_index % MAX_HISTORY;
   strncpy(frameinfo_histroy[index].label[profile_index], label, 64);
   frameinfo_histroy[index].time[profile_index] = data;
@@ -200,51 +223,51 @@ void OSDNanovgAddFrameProfileData(char * label, u32 data) {
   profile_index++;
 }
 
-#define TOF(a) (((float)a)/255.0f)
+#define TOF(a) (((float)a) / 255.0f)
 #define BASE_ALPHA (0.8f)
 
 NVGcolor graph_colors[MAX_PROFILE_CNT] = {
-  { TOF(255),TOF(0),TOF(0),BASE_ALPHA },
-  { TOF(255),TOF(255),TOF(0),BASE_ALPHA },
-  { TOF(128),TOF(255),TOF(0),BASE_ALPHA },
-  { TOF(255),TOF(64),TOF(0),BASE_ALPHA },
-  { TOF(0),TOF(255),TOF(255),BASE_ALPHA },
-  { TOF(0),TOF(128),TOF(192),BASE_ALPHA },
-  { TOF(128),TOF(128),TOF(192),BASE_ALPHA },
-  { TOF(255),TOF(0),TOF(255),BASE_ALPHA },
-  { TOF(128),TOF(64),TOF(64),BASE_ALPHA },
-  { TOF(255),TOF(128),TOF(64),BASE_ALPHA },
-  { TOF(0),TOF(255),TOF(0),BASE_ALPHA },
-  { TOF(0),TOF(128),TOF(128),BASE_ALPHA },
-  { TOF(0),TOF(64),TOF(128),BASE_ALPHA },
-  { TOF(128),TOF(128),TOF(255),BASE_ALPHA },
-  { TOF(128),TOF(0),TOF(64),BASE_ALPHA },
-  { TOF(255),TOF(0),TOF(128),BASE_ALPHA },
-  { TOF(128),TOF(0),TOF(0),BASE_ALPHA },
-  { TOF(255),TOF(128),TOF(0),BASE_ALPHA },
-  { TOF(0),TOF(128),TOF(0),BASE_ALPHA },
-  { 0.5, 0.5, 0.5, 0.5 },
-  { 0.5, 0.5, 0.5, 0.5 },
-  { 0.5, 0.5, 0.5, 0.5 },
-  { 0.5, 0.5, 0.5, 0.5 },
-  { 0.5, 0.5, 0.5, 0.5 },
-  { 0.5, 0.5, 0.5, 0.5 },
-  { 0.5, 0.5, 0.5, 0.5 },
-  { 0.5, 0.5, 0.5, 0.5 },
-  { 0.5, 0.5, 0.5, 0.5 },
-  { 0.5, 0.5, 0.5, 0.5 },
-  { 0.5, 0.5, 0.5, 0.5 },
-  { 0.5, 0.5, 0.5, 0.5 },
-  { 0.5, 0.5, 0.5, 0.5 }
-};
+    {TOF(255), TOF(0), TOF(0), BASE_ALPHA},
+    {TOF(255), TOF(255), TOF(0), BASE_ALPHA},
+    {TOF(128), TOF(255), TOF(0), BASE_ALPHA},
+    {TOF(255), TOF(64), TOF(0), BASE_ALPHA},
+    {TOF(0), TOF(255), TOF(255), BASE_ALPHA},
+    {TOF(0), TOF(128), TOF(192), BASE_ALPHA},
+    {TOF(128), TOF(128), TOF(192), BASE_ALPHA},
+    {TOF(255), TOF(0), TOF(255), BASE_ALPHA},
+    {TOF(128), TOF(64), TOF(64), BASE_ALPHA},
+    {TOF(255), TOF(128), TOF(64), BASE_ALPHA},
+    {TOF(0), TOF(255), TOF(0), BASE_ALPHA},
+    {TOF(0), TOF(128), TOF(128), BASE_ALPHA},
+    {TOF(0), TOF(64), TOF(128), BASE_ALPHA},
+    {TOF(128), TOF(128), TOF(255), BASE_ALPHA},
+    {TOF(128), TOF(0), TOF(64), BASE_ALPHA},
+    {TOF(255), TOF(0), TOF(128), BASE_ALPHA},
+    {TOF(128), TOF(0), TOF(0), BASE_ALPHA},
+    {TOF(255), TOF(128), TOF(0), BASE_ALPHA},
+    {TOF(0), TOF(128), TOF(0), BASE_ALPHA},
+    {0.5, 0.5, 0.5, 0.5},
+    {0.5, 0.5, 0.5, 0.5},
+    {0.5, 0.5, 0.5, 0.5},
+    {0.5, 0.5, 0.5, 0.5},
+    {0.5, 0.5, 0.5, 0.5},
+    {0.5, 0.5, 0.5, 0.5},
+    {0.5, 0.5, 0.5, 0.5},
+    {0.5, 0.5, 0.5, 0.5},
+    {0.5, 0.5, 0.5, 0.5},
+    {0.5, 0.5, 0.5, 0.5},
+    {0.5, 0.5, 0.5, 0.5},
+    {0.5, 0.5, 0.5, 0.5},
+    {0.5, 0.5, 0.5, 0.5}};
 
-
-void ProfileDrawGraph() {
+void ProfileDrawGraph()
+{
   int i, j;
   int historyindx;
   float targetY = 500.0f;
 
-  if (current_history_index < MAX_HISTORY) {
+  if (current_history_index < MAX_HISTORY)
+  {
     current_history_index++;
     profile_index = 0;
     return;
@@ -252,7 +275,8 @@ void ProfileDrawGraph() {
 
   historyindx = current_history_index % MAX_HISTORY;
 
-  if (frameinfo_histroy[historyindx].cnt == 0) {
+  if (frameinfo_histroy[historyindx].cnt == 0)
+  {
     current_history_index++;
     profile_index = 0;
     return;
@@ -261,10 +285,12 @@ void ProfileDrawGraph() {
   float startX = 0.0f;
   float width = 32.0f;
 
-  for (i = 0; i < MAX_HISTORY; i++) {
+  for (i = 0; i < MAX_HISTORY; i++)
+  {
 
     float startY = 32;
-    for (j = 0; j < frameinfo_histroy[historyindx].cnt; j++) {
+    for (j = 0; j < frameinfo_histroy[historyindx].cnt; j++)
+    {
 
       float height = frameinfo_histroy[historyindx].time[j] * targetY / 16666.0f;
       nvgBeginPath(vg);
@@ -274,9 +300,11 @@ void ProfileDrawGraph() {
       startY += height;
     }
 
-    if (i == (MAX_HISTORY - 1)) {
+    if (i == (MAX_HISTORY - 1))
+    {
       float textY = 32;
-      for (j = 0; j < frameinfo_histroy[historyindx].cnt; j++) {
+      for (j = 0; j < frameinfo_histroy[historyindx].cnt; j++)
+      {
         char buf[128];
         nvgFillColor(vg, nvgRGBA(255, 255, 255, 255));
         sprintf(buf, "%s:%d", frameinfo_histroy[historyindx].label[j], (int)(frameinfo_histroy[historyindx].time[j]));
@@ -289,7 +317,6 @@ void ProfileDrawGraph() {
     historyindx = (historyindx + 1) % MAX_HISTORY;
   }
 
-
   // Draw target line
   nvgBeginPath(vg);
   nvgMoveTo(vg, 0, targetY + 32);
@@ -297,16 +324,12 @@ void ProfileDrawGraph() {
   nvgStrokeColor(vg, nvgRGBA(255, 0, 0, 255));
   nvgStroke(vg);
 
-
   // Reset indexs;
   current_history_index++;
   profile_index = 0;
-
 }
 
-
-
-void OSDNanovgDisplayMessage(OSDMessage_struct * message, pixel_t * buffer, int w, int h)
+void OSDNanovgDisplayMessage(OSDMessage_struct *message, pixel_t *buffer, int w, int h)
 {
   int LeftX = 8;
   int Width = 500;
@@ -319,22 +342,24 @@ void OSDNanovgDisplayMessage(OSDMessage_struct * message, pixel_t * buffer, int 
   int i = 0;
 
   VIDCore->GetGlSize(&vidwidth, &vidheight);
-  
 
-  if (message->type == OSDMSG_FPS) {
+  if (message->type == OSDMSG_FPS)
+  {
     LeftX = 8;
   }
-  else if (message->type == OSDMSG_RECORD) {
+  else if (message->type == OSDMSG_RECORD)
+  {
     LeftX = vidwidth - 8;
   }
-  else {
+  else
+  {
     return;
   }
 
   Width = vidwidth - 2 * LeftX;
 
-
-  switch (message->type) {
+  switch (message->type)
+  {
   case OSDMSG_STATUS:
     TxtY = vidheight - (Height + TxtY);
     break;
@@ -342,21 +367,19 @@ void OSDNanovgDisplayMessage(OSDMessage_struct * message, pixel_t * buffer, int 
 
   msglength = strlen(message->message);
 
-
-
   nvgBeginFrame(vg, vidwidth, vidheight, 1.0f);
-
 
   nvgFontSize(vg, fontsize);
   nvgFontFace(vg, "sans");
-  
-  if (message->type == OSDMSG_FPS) {
+
+  if (message->type == OSDMSG_FPS)
+  {
 
     nvgBeginPath(vg);
     nvgRect(vg, 0, 0, 320 + 8, 32);
     nvgFillColor(vg, nvgRGBA(8, 8, 8, 128));
     nvgFill(vg);
-    
+
     nvgFillColor(vg, nvgRGBA(255, 255, 255, 255));
     nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
     nvgText(vg, LeftX, TxtY, message->message, NULL);
@@ -365,10 +388,12 @@ void OSDNanovgDisplayMessage(OSDMessage_struct * message, pixel_t * buffer, int 
     nvgFontSize(vg, fontsize);
     int linecnt = (vidheight - TxtY) / fontsize;
     int start_point = current_log_history_index - linecnt;
-    if (start_point < 0) {
+    if (start_point < 0)
+    {
       start_point = MAX_LOG_HISTORY + start_point;
     }
-    for (i = 0; i < linecnt; i++) {
+    for (i = 0; i < linecnt; i++)
+    {
       nvgText(vg, LeftX, TxtY, log_histroy[start_point], NULL);
       start_point++;
       start_point %= MAX_LOG_HISTORY;
@@ -377,10 +402,11 @@ void OSDNanovgDisplayMessage(OSDMessage_struct * message, pixel_t * buffer, int 
     ProfileDrawGraph();
   }
 
-  if (message->type == OSDMSG_RECORD) {
+  if (message->type == OSDMSG_RECORD)
+  {
 
     nvgBeginPath(vg);
-    nvgRect(vg, LeftX - (strlen(message->message)*(fontsize/2)), 0, 320 + 8, 32);
+    nvgRect(vg, LeftX - (strlen(message->message) * (fontsize / 2)), 0, 320 + 8, 32);
     nvgFillColor(vg, nvgRGBA(8, 8, 8, 128));
     nvgFill(vg);
 
@@ -390,9 +416,7 @@ void OSDNanovgDisplayMessage(OSDMessage_struct * message, pixel_t * buffer, int 
   }
 
   nvgEndFrame(vg);
-
 }
-
 
 #if 0
 OSD_struct *OSDCoreList[] = {
@@ -402,4 +426,3 @@ OSD_struct *OSDCoreList[] = {
   NULL
 };
 #endif
-
