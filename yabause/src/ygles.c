@@ -1060,54 +1060,9 @@ void YglDrawCpuFramebufferWrite(int target)
   glBindFramebuffer(GL_FRAMEBUFFER, drawFboId);
 }
 
-void VIDOGLVdp1ReadFrameBuffer(u32 type, u32 addr, void *out)
+// Creates the objects reading the VDP1 framebuffer back uses. Needs the GL context.
+static void YglVdp1ReadBackCreate(void)
 {
-  u32 x = 0;
-  u32 y = 0;
-  int tvmode = (Vdp1Regs->TVMR & 0x7);
-  switch (tvmode)
-  {
-  case 0: // 16bit 512x256
-  case 2: // 16bit 512x256
-  case 4: // 16bit 512x256
-    y = (addr >> 10) & 0x1FF;
-    x = (addr & 0x3FF) >> 1;
-    break;
-  case 1: // 8bit 1024x256
-    y = (addr >> 10) & 0x3FF;
-    x = addr & 0x3FF;
-    break;
-  case 3: // 8bit 512x512
-    y = (addr >> 9) & 0x1FF;
-    x = addr & 0x1FF;
-    break;
-  defalut:
-    y = 0;
-    x = 0;
-    break;
-  }
-
-  const int Line = y;
-  const int Pix = x;
-  if (_Ygl->cpu_framebuffer_write[_Ygl->drawframe] || (Pix >= Vdp1Regs->systemclipX2 || Line >= Vdp1Regs->systemclipY2))
-  {
-    switch (type)
-    {
-    case 0:
-      *(u8 *)out = T1ReadByte(Vdp1FrameBuffer[_Ygl->drawframe], addr);
-      break;
-    case 1:
-      *(u16 *)out = T1ReadWord(Vdp1FrameBuffer[_Ygl->drawframe], addr);
-      break;
-    case 2:
-      *(u32 *)out = T1ReadLong(Vdp1FrameBuffer[_Ygl->drawframe], addr);
-      break;
-    default:
-      break;
-    }
-    return;
-  }
-
   if (_Ygl->smallfbo == 0)
   {
     GLuint error;
@@ -1163,12 +1118,13 @@ void VIDOGLVdp1ReadFrameBuffer(u32 type, u32 addr, void *out)
     YabThreadUnLock(_Ygl->mutex);
   }
 
-  while (_Ygl->vpd1_running)
-  {
-    YabThreadYield();
-  }
+}
 
-  YabThreadLock(_Ygl->mutex);
+// Copies the VDP1 frame into memory, at _Ygl->pFrameBuffer (NULL if that fails),
+// unless this frame's copy is already there. Needs the GL context; the caller holds
+// _Ygl->mutex.
+static void YglVdp1ReadBack(void)
+{
   if (_Ygl->pFrameBuffer == NULL)
   {
     FrameProfileAdd("ReadFrameBuffer start");
@@ -1186,29 +1142,135 @@ void VIDOGLVdp1ReadFrameBuffer(u32 type, u32 addr, void *out)
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, _Ygl->smallfbo);
     glDisable(GL_SCISSOR_TEST);
     glBlitFramebuffer(0, 0, _Ygl->width, _Ygl->height, 0, 0, _Ygl->rwidth, _Ygl->rheight, GL_COLOR_BUFFER_BIT, GL_LINEAR);
-    YGLLOG("VIDOGLVdp1ReadFrameBuffer %d %08X\n", _Ygl->drawframe, addr);
+    YGLLOG("VIDOGLVdp1ReadFrameBuffer %d\n", _Ygl->drawframe);
     FrameProfileAdd("ReadFrameBuffer unlock");
     glBindFramebuffer(GL_FRAMEBUFFER, _Ygl->smallfbo);
     glBindBuffer(GL_PIXEL_PACK_BUFFER, _Ygl->vdp1pixelBufferID);
     glReadPixels(0, 0, _Ygl->rwidth, _Ygl->rheight, GL_RGBA, GL_UNSIGNED_BYTE, 0);
     _Ygl->pFrameBuffer = (unsigned int *)glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, _Ygl->rwidth * (_Ygl->rheight) * 4, GL_MAP_READ_BIT);
     glBindFramebuffer(GL_FRAMEBUFFER, _Ygl->default_fbo);
-
-    if (_Ygl->pFrameBuffer == NULL)
-    {
-      switch (type)
-      {
-      case 1:
-        *(u16 *)out = 0x0000;
-        break;
-      case 2:
-        *(u32 *)out = 0x00000000;
-        break;
-      }
-      YabThreadUnLock(_Ygl->mutex);
-      return;
-    }
     FrameProfileAdd("ReadFrameBuffer end");
+  }
+}
+
+#ifdef NX
+// On the Switch only the thread holding the GL context may use it: two threads using
+// the GPU at once through Mesa's nouveau driver hangs the console, so with async
+// rendering (the VDP thread holds the context) the emulation thread asks the render
+// thread for the copy (VdpNxReadVdp1FrameBuffer, before taking the VRAM lock) and then
+// reads it from memory. Games that read the VDP1 framebuffer with the CPU (Burning
+// Rangers loading a level) used to abort here.
+
+// Whether reading 'addr' needs a fresh copy from the render thread: not when it is
+// served from memory (CPU-written frames, outside the clip area) or this frame's copy
+// is already there.
+int YglNxVdp1ReadNeedsCopy(u32 addr)
+{
+  u32 x = 0, y = 0;
+  switch (Vdp1Regs->TVMR & 0x7)
+  {
+  case 0: case 2: case 4: y = (addr >> 10) & 0x1FF; x = (addr & 0x3FF) >> 1; break;
+  case 1: y = (addr >> 10) & 0x3FF; x = addr & 0x3FF; break;
+  case 3: y = (addr >> 9) & 0x1FF; x = addr & 0x1FF; break;
+  default: break;
+  }
+  if (_Ygl->cpu_framebuffer_write[_Ygl->drawframe] ||
+      x >= Vdp1Regs->systemclipX2 || y >= Vdp1Regs->systemclipY2)
+    return 0;
+  return _Ygl->pFrameBuffer == NULL;
+}
+
+// Render thread
+void YglNxVdp1ReadBack(void)
+{
+  YglVdp1ReadBackCreate();
+  YabThreadLock(_Ygl->mutex);
+  YglVdp1ReadBack();
+  YabThreadUnLock(_Ygl->mutex);
+}
+#endif
+
+void VIDOGLVdp1ReadFrameBuffer(u32 type, u32 addr, void *out)
+{
+  u32 x = 0;
+  u32 y = 0;
+  int tvmode = (Vdp1Regs->TVMR & 0x7);
+  switch (tvmode)
+  {
+  case 0: // 16bit 512x256
+  case 2: // 16bit 512x256
+  case 4: // 16bit 512x256
+    y = (addr >> 10) & 0x1FF;
+    x = (addr & 0x3FF) >> 1;
+    break;
+  case 1: // 8bit 1024x256
+    y = (addr >> 10) & 0x3FF;
+    x = addr & 0x3FF;
+    break;
+  case 3: // 8bit 512x512
+    y = (addr >> 9) & 0x1FF;
+    x = addr & 0x1FF;
+    break;
+  defalut:
+    y = 0;
+    x = 0;
+    break;
+  }
+
+  const int Line = y;
+  const int Pix = x;
+  if (_Ygl->cpu_framebuffer_write[_Ygl->drawframe] || (Pix >= Vdp1Regs->systemclipX2 || Line >= Vdp1Regs->systemclipY2))
+  {
+    switch (type)
+    {
+    case 0:
+      *(u8 *)out = T1ReadByte(Vdp1FrameBuffer[_Ygl->drawframe], addr);
+      break;
+    case 1:
+      *(u16 *)out = T1ReadWord(Vdp1FrameBuffer[_Ygl->drawframe], addr);
+      break;
+    case 2:
+      *(u32 *)out = T1ReadLong(Vdp1FrameBuffer[_Ygl->drawframe], addr);
+      break;
+    default:
+      break;
+    }
+    return;
+  }
+
+#ifdef NX
+  // with async rendering the render thread made the copy (see YglNxVdp1ReadBack)
+  const int on_render_thread = VdpIsAsyncRendering();
+#else
+  const int on_render_thread = 0;
+#endif
+  if (!on_render_thread)
+  {
+    YglVdp1ReadBackCreate();
+    while (_Ygl->vpd1_running)
+    {
+      YabThreadYield();
+    }
+  }
+
+  YabThreadLock(_Ygl->mutex);
+  if (!on_render_thread)
+    YglVdp1ReadBack();
+  // No copy: the read-back failed (or, with async rendering, the renderer dropped this
+  // frame's copy after it was made), so this reads as blank
+  if (_Ygl->pFrameBuffer == NULL)
+  {
+    switch (type)
+    {
+    case 1:
+      *(u16 *)out = 0x0000;
+      break;
+    case 2:
+      *(u32 *)out = 0x00000000;
+      break;
+    }
+    YabThreadUnLock(_Ygl->mutex);
+    return;
   }
 
   int index;
@@ -5545,6 +5607,16 @@ void YglChangeResolution(int w, int h)
   YglOrtho(&_Ygl->mtxModelView, 0.0f, (float)w, (float)h, 0.0f, 10.0f, 0.0f);
   if (_Ygl->rwidth != w || _Ygl->rheight != h)
   {
+#ifdef NX
+    // The emulation thread reads the VDP1 framebuffer copy (pFrameBuffer, sized
+    // rwidth x rheight) under _Ygl->mutex: hold it while both change. The caller
+    // may hold it already, and the Switch mutex is not recursive.
+    const int lock = !YabThreadIsLockedByCurrentThread(_Ygl->mutex);
+#else
+    const int lock = 0;
+#endif
+    if (lock)
+      YabThreadLock(_Ygl->mutex);
     _Ygl->rwidth = w;
     _Ygl->rheight = h;
     if (_Ygl->CpuWriteFrameBuffer != NULL)
@@ -5565,6 +5637,8 @@ void YglChangeResolution(int w, int h)
       _Ygl->vdp1pixelBufferID = 0;
       _Ygl->pFrameBuffer = NULL;
     }
+    if (lock)
+      YabThreadUnLock(_Ygl->mutex);
 
     if (_Ygl->tmpfbo != 0)
     {

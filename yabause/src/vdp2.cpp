@@ -133,6 +133,11 @@ static int frameLimitShift = 0;
 
 YabEventQueue * command_ = NULL;
 
+#ifdef NX
+// ygles.c: the render thread's copy of the VDP1 framebuffer for the CPU
+extern "C" void YglNxVdp1ReadBack(void);
+#endif
+
 // Forward declarations for globals defined later (needed by Vdp2DeInit reset)
 extern int vdp1_frame;
 extern int show_vdp1_frame;
@@ -897,6 +902,12 @@ extern "C" void * VdpProc( void *arg ){
       YuiRevokeOGLOnThisThread();
       YabAddEventQueue(command_,0);
       break;
+#ifdef NX
+    case VDPEV_NX_READ_VDP1:
+      YglNxVdp1ReadBack();
+      YabAddEventQueue(command_,0);
+      break;
+#endif
     case VDPEV_FINSH:
       printf("VdpProc: FINSH received, shutting down VDP thread\n");
       fflush(stdout);
@@ -3232,6 +3243,13 @@ void VdpResume( void ){
     YabWaitEventQueue(command_);
   }
 }
+
+#ifdef NX
+void VdpNxReadVdp1FrameBuffer( void ){
+  YabAddEventQueue(evqueue, VDPEV_NX_READ_VDP1);
+  YabWaitEventQueue(command_);
+}
+#endif
 
 void VdpRevoke( void ){
   if (VdpIsAsyncRendering() && vdp_proc_running) {

@@ -164,10 +164,24 @@ extern "C" u8 FASTCALL Vdp1FrameBufferReadByte(u32 addr) {
 
 //////////////////////////////////////////////////////////////////////////////
 
+#ifdef NX
+extern "C" int YglNxVdp1ReadNeedsCopy(u32 addr);
+// Only the thread holding the GL context may use it on the Switch: with async
+// rendering the render thread makes this frame's copy of the framebuffer first,
+// before the VRAM lock is taken (the render thread may be waiting for it)
+static void NxPrepareRead(u32 addr) {
+   if (VIDCore->id == 1 /* VIDCORE_OGL */ && VdpIsAsyncRendering() && YglNxVdp1ReadNeedsCopy(addr))
+     VdpNxReadVdp1FrameBuffer();
+}
+#else
+#define NxPrepareRead(addr)
+#endif
+
 extern "C" u16 FASTCALL Vdp1FrameBufferReadWord(u32 addr) {
    addr &= 0x3FFFF;
    if (VIDCore->Vdp1ReadFrameBuffer ){
      u16 val;
+     NxPrepareRead(addr);
      VdpLockVram();
      VIDCore->Vdp1ReadFrameBuffer(1, addr, &val);
      VdpUnLockVram();
@@ -182,6 +196,7 @@ extern "C" u32 FASTCALL Vdp1FrameBufferReadLong(u32 addr) {
    addr &= 0x3FFFF;
    if (VIDCore->Vdp1ReadFrameBuffer ){
      u32 val;
+     NxPrepareRead(addr);
      VdpLockVram();
      VIDCore->Vdp1ReadFrameBuffer(2, addr, &val);
      VdpUnLockVram();

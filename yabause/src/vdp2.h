@@ -461,6 +461,9 @@ void * VdpProc( void *arg );
 #define VDPEV_DIRECT_DRAW 0x200
 #define VDPEV_MAKECURRENT 0x300
 #define VDPEV_REVOKE 0x400
+#ifdef NX
+#define VDPEV_NX_READ_VDP1 0x500
+#endif
 #define VDPEV_FINSH 0xFF00
 
 extern YabEventQueue * evqueue;
@@ -482,6 +485,11 @@ void YglOnUpdateColorRamWord(u32 addr);
 void YglUpdateColorRam();
 void VdpResume( void );
 void VdpRevoke( void );
+#ifdef NX
+// Has the render thread copy the VDP1 framebuffer into memory for the CPU to read
+// (see YglNxVdp1ReadBack), after the drawing already queued, and waits for it
+void VdpNxReadVdp1FrameBuffer( void );
+#endif
 
 // Runtime switch for the threaded (async) VDP rendering model. The
 // compile-time YAB_ASYNC_RENDERING define only sets the default, so ports
