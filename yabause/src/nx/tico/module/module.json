@@ -1,0 +1,45 @@
+{
+  "id": "yabasanshiro",
+  "name": "YabaSanshiro",
+  "nro": "tico-yabasanshiro.nro",
+  "launch": "\"{nro}\" \"ticoSetup\" \"{rom}\" \"{title}\"",
+  "settings": "config/modules/yabasanshiro/settings.json",
+  "config_file": "yabasanshiro.jsonc",
+  "is_libretro": false,
+  "achievements": true,
+  "systems": [
+    {
+      "slug": "saturn",
+      "title": "Sega Saturn",
+      "extensions": [
+        ".cue",
+        ".bin",
+        ".iso",
+        ".chd",
+        ".mdf",
+        ".ccd",
+        ".toc",
+        ".m3u"
+      ],
+      "disc_based": true,
+      "naming": "redump",
+      "games_file": "saturn.json",
+      "retroachievements_id": 39,
+      "bios": [
+        {
+          "any_of": [
+            "saturn_bios.bin",
+            "sega_101.bin",
+            "mpr-17933.bin"
+          ]
+        }
+      ],
+      "colors": {
+        "start": "6F7AE6",
+        "end": "A88FE6",
+        "start_dark": "4F57A8",
+        "end_dark": "7A63A8"
+      }
+    }
+  ]
+}

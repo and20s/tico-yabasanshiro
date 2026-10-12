@@ -1,0 +1,402 @@
+{
+  "core_id": "yabasanshiro",
+  "display_name": "YabaSanshiro",
+  "config_file": "yabasanshiro.jsonc",
+  "slugs": [
+    "saturn"
+  ],
+  "is_libretro": false,
+  "tabs": [
+    {
+      "name": "settings_yabasanshiro_tab_video",
+      "sections": [
+        {
+          "title": "settings_yabasanshiro_section_display",
+          "options": [
+            {
+              "key": "video_format",
+              "label": "settings_yabasanshiro_video_format",
+              "type": "enum",
+              "default": "NTSC",
+              "choices": [
+                {
+                  "label": "NTSC",
+                  "value": "NTSC"
+                },
+                {
+                  "label": "PAL",
+                  "value": "PAL"
+                }
+              ]
+            },
+            {
+              "key": "resolution_mode",
+              "label": "settings_yabasanshiro_internal_resolution",
+              "type": "enum",
+              "default": "Native",
+              "choices": [
+                {
+                  "label": "Native (Window)",
+                  "value": "Native"
+                },
+                {
+                  "label": "4x",
+                  "value": "4x"
+                },
+                {
+                  "label": "2x",
+                  "value": "2x"
+                },
+                {
+                  "label": "Original (Saturn)",
+                  "value": "Original"
+                },
+                {
+                  "label": "720P",
+                  "value": "720P"
+                },
+                {
+                  "label": "1080P",
+                  "value": "1080P"
+                }
+              ]
+            },
+            {
+              "key": "rbg_resolution_mode",
+              "label": "settings_yabasanshiro_rbg_resolution",
+              "type": "enum",
+              "default": "Original",
+              "choices": [
+                {
+                  "label": "Original",
+                  "value": "Original"
+                },
+                {
+                  "label": "2x",
+                  "value": "2x"
+                },
+                {
+                  "label": "720P",
+                  "value": "720P"
+                },
+                {
+                  "label": "1080P",
+                  "value": "1080P"
+                },
+                {
+                  "label": "Fit to Emulation",
+                  "value": "Fit to Emulation"
+                }
+              ]
+            },
+            {
+              "key": "video_filter",
+              "label": "settings_yabasanshiro_video_filter",
+              "type": "enum",
+              "default": "None",
+              "choices": [
+                {
+                  "label": "None",
+                  "value": "None"
+                },
+                {
+                  "label": "FXAA",
+                  "value": "FXAA"
+                },
+                {
+                  "label": "Scanline",
+                  "value": "Scanline"
+                },
+                {
+                  "label": "Bilinear",
+                  "value": "Bilinear"
+                }
+              ]
+            },
+            {
+              "key": "polygon_mode",
+              "label": "settings_yabasanshiro_polygon_generation",
+              "type": "enum",
+              "default": "GPU Tessellation",
+              "choices": [
+                {
+                  "label": "Perspective Correction",
+                  "value": "Perspective Correction"
+                },
+                {
+                  "label": "CPU Tessellation",
+                  "value": "CPU Tessellation"
+                },
+                {
+                  "label": "GPU Tessellation",
+                  "value": "GPU Tessellation"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "settings_yabasanshiro_section_orientation",
+          "options": [
+            {
+              "key": "rotate_screen",
+              "label": "settings_yabasanshiro_rotate_screen",
+              "type": "bool",
+              "default": "disabled"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "settings_yabasanshiro_tab_display",
+      "sections": [
+        {
+          "title": "settings_yabasanshiro_section_viewport",
+          "options": [
+            {
+              "key": "display_mode",
+              "label": "settings_yabasanshiro_display_mode",
+              "type": "enum",
+              "default": "Display",
+              "choices": [
+                {
+                  "label": "Integer",
+                  "value": "Integer"
+                },
+                {
+                  "label": "Display",
+                  "value": "Display"
+                }
+              ]
+            },
+            {
+              "key": "display_size",
+              "label": "settings_yabasanshiro_size",
+              "type": "enum",
+              "default": "4:3",
+              "depends_on": {
+                "key": "display_mode",
+                "value": "Display"
+              },
+              "choices": [
+                {
+                  "label": "Stretch",
+                  "value": "Stretch"
+                },
+                {
+                  "label": "4:3",
+                  "value": "4:3"
+                },
+                {
+                  "label": "16:9",
+                  "value": "16:9"
+                },
+                {
+                  "label": "Original",
+                  "value": "Original"
+                }
+              ]
+            },
+            {
+              "key": "integer_scale",
+              "label": "settings_yabasanshiro_integer_scale",
+              "type": "enum",
+              "default": "Auto",
+              "depends_on": {
+                "key": "display_mode",
+                "value": "Integer"
+              },
+              "choices": [
+                {
+                  "label": "1x",
+                  "value": "1x"
+                },
+                {
+                  "label": "2x",
+                  "value": "2x"
+                },
+                {
+                  "label": "3x",
+                  "value": "3x"
+                },
+                {
+                  "label": "4x",
+                  "value": "4x"
+                },
+                {
+                  "label": "Auto",
+                  "value": "Auto"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "settings_yabasanshiro_tab_performance",
+      "sections": [
+        {
+          "title": "settings_yabasanshiro_section_rendering",
+          "options": [
+            {
+              "key": "async_rendering",
+              "label": "settings_yabasanshiro_async_rendering",
+              "type": "bool",
+              "default": "enabled",
+              "description": "Use separate VDP thread for rendering (better performance)"
+            },
+            {
+              "key": "rbg_use_compute_shader",
+              "label": "settings_yabasanshiro_rbg_compute_shader",
+              "type": "bool",
+              "default": "enabled",
+              "description": "Use compute shader for RBG layer rendering (better performance)"
+            }
+          ]
+        },
+        {
+          "title": "settings_yabasanshiro_section_frame_rate",
+          "options": [
+            {
+              "key": "frame_limit",
+              "label": "settings_yabasanshiro_frame_limit",
+              "type": "enum",
+              "default": "60Hz",
+              "choices": [
+                {
+                  "label": "60Hz (1x Speed)",
+                  "value": "60Hz"
+                },
+                {
+                  "label": "No Limit (Unlimited)",
+                  "value": "No Limit"
+                },
+                {
+                  "label": "120Hz (2x Speed)",
+                  "value": "120Hz"
+                }
+              ]
+            },
+            {
+              "key": "frame_skip",
+              "label": "settings_yabasanshiro_frame_skip",
+              "type": "bool",
+              "default": "enabled"
+            }
+          ]
+        },
+        {
+          "title": "settings_yabasanshiro_section_debug",
+          "options": [
+            {
+              "key": "show_fps",
+              "label": "settings_yabasanshiro_show_fps",
+              "type": "bool",
+              "default": "disabled"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "settings_yabasanshiro_tab_emulation",
+      "sections": [
+        {
+          "title": "settings_yabasanshiro_section_cpu",
+          "options": [
+            {
+              "key": "sh2_cache",
+              "label": "settings_yabasanshiro_sh2_cache",
+              "type": "bool",
+              "default": "enabled"
+            }
+          ]
+        },
+        {
+          "title": "settings_yabasanshiro_section_disc",
+          "options": [
+            {
+              "key": "skip_load",
+              "label": "settings_yabasanshiro_skip_bios_load",
+              "type": "bool",
+              "default": "disabled"
+            }
+          ]
+        },
+        {
+          "title": "settings_yabasanshiro_section_cartridge",
+          "options": [
+            {
+              "key": "cartridge_type",
+              "label": "settings_yabasanshiro_cartridge_type",
+              "type": "enum",
+              "default": "None",
+              "choices": [
+                {
+                  "label": "None",
+                  "value": "None"
+                },
+                {
+                  "label": "1MB RAM Cartridge",
+                  "value": "1MB RAM"
+                },
+                {
+                  "label": "4MB RAM Cartridge",
+                  "value": "4MB RAM"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "settings_yabasanshiro_tab_input",
+      "sections": [
+        {
+          "title": "settings_yabasanshiro_section_controllers",
+          "options": [
+            {
+              "key": "controller_1_mode",
+              "label": "settings_yabasanshiro_controller_1",
+              "type": "enum",
+              "default": "Normal",
+              "choices": [
+                {
+                  "label": "Normal",
+                  "value": "Normal"
+                },
+                {
+                  "label": "3D Pad",
+                  "value": "3D"
+                },
+                {
+                  "label": "Light Gun",
+                  "value": "LightGun"
+                }
+              ]
+            },
+            {
+              "key": "controller_2_mode",
+              "label": "settings_yabasanshiro_controller_2",
+              "type": "enum",
+              "default": "Normal",
+              "choices": [
+                {
+                  "label": "Normal",
+                  "value": "Normal"
+                },
+                {
+                  "label": "3D Pad",
+                  "value": "3D"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

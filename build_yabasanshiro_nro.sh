@@ -139,3 +139,36 @@ else
     echo "ERROR: elf2nro failed to produce $NRO_OUT"
     exit 1
 fi
+
+#---------------------------------------------------------------------------------
+# Module bundle
+#
+# tico discovers a core by reading module.json; the settings definition and the
+# strings that label it travel with the NRO in the same directory. The bundle
+# extracts straight into sdmc:/tico/modules/<id>/.
+#---------------------------------------------------------------------------------
+MODULE_SRC="$YABA_DIR/yabause/src/nx/tico/module"
+MODULE_ID=$(sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$MODULE_SRC/module.json" | head -1)
+MODULE_NRO=$(sed -n 's/.*"nro"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$MODULE_SRC/module.json" | head -1)
+MODULE_OUT="$BUILD_DIR/module/$MODULE_ID"
+
+rm -rf "$BUILD_DIR/module"
+mkdir -p "$MODULE_OUT"
+cp -r "$MODULE_SRC/." "$MODULE_OUT/"
+cp "$NRO_OUT" "$MODULE_OUT/$MODULE_NRO"
+
+# Tico prefers .json.gz when resolving a gamelist.
+if [ -d "$MODULE_OUT/gamelists" ]; then
+    gzip -f -9 "$MODULE_OUT"/gamelists/*.json 2>/dev/null || true
+fi
+
+BUNDLE="$BUILD_DIR/tico-$MODULE_ID-module.zip"
+rm -f "$BUNDLE"
+( cd "$BUILD_DIR/module" && zip -qr "$BUNDLE" "$MODULE_ID" )
+cp "$BUNDLE" "$SCRIPT_DIR/"
+
+echo "======================================"
+echo "Module: $SCRIPT_DIR/$(basename "$BUNDLE")"
+echo "        extracts to sdmc:/tico/modules/$MODULE_ID/"
+echo "======================================"
+find "$MODULE_OUT" -type f | sed "s|$BUILD_DIR/module/|    |"
