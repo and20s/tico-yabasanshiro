@@ -150,6 +150,12 @@ public:
   void genLineinfo(vdp2draw_struct *info);
   void getScreenshot(void ** outbuf, int & width, int & height);
 
+  // This frame's VRAM access pattern, decoded from the same register
+  // snapshot (fixVdp2Regs) the rest of the frame is resolved from. Taking it
+  // from the live Vdp2External.AC_VRAM instead lets it disagree with this
+  // frame's map registers by one line; see Vdp2GetAccessPattern in vdp2.cpp.
+  u8 acVram[4][8] = {};
+
   int genPolygon(
     VdpPipeline ** pipleLine,
     vdp2draw_struct * input,
@@ -338,6 +344,11 @@ public:
     VkCommandBuffer commandBuffer)
   >& f);
 
+  // The platform is about to destroy the presentation surface. Frames are
+  // dropped (emulation keeps running) until the next resize() rebuilds the
+  // swapchain. Safe to call from any thread, and before a window exists.
+  void onSurfaceLost();
+
   // issue #22 debug: per-layer trace of what renderLayersToGBuffer() did for
   // each background layer that owns a G-buffer slice (NBG0-3 / RBG0). Filled
   // every frame the new composite path runs (including F10 paused replays) and
@@ -404,6 +415,9 @@ protected:
   int getCurrentCommandIndex(){
     return frameCount & (MAX_COMMANDBUFFER_COUNT-1);
   }
+
+  // Ends a frame whose swapchain image could not be acquired.
+  void dropUnpresentableFrame();
 
 public:
   // Cross-submit WAR ordering for the per-frame VDP2 resources (TextureManager
@@ -479,7 +493,9 @@ protected:
   // same descriptor set layout) but render into a G-buffer slice instead of the
   // main pass. Rebuilt when the G-buffer render pass changes (resolution
   // change) -- tracked by _gbufferPipelineRenderPass.
-  std::map<uint32_t, VdpPipeline *> _gbufferLayerPipelines;
+  // Key: (prgid << 40) | (winflag << 8) | layer id -- 64-bit because winflag is
+  // itself 32-bit (display window byte plus the cc-window bits).
+  std::map<uint64_t, VdpPipeline *> _gbufferLayerPipelines;
   VkRenderPass _gbufferPipelineRenderPass = VK_NULL_HANDLE;
   VdpPipeline *getGBufferLayerPipeline(VdpPipeline *src);
   // issue #22 (T-015): like getGBufferLayerPipeline but builds the companion
@@ -656,8 +672,12 @@ protected:
 
   void generateOffscreenPath(int width, int height);
   void generateOffscreenRenderer();
-  void renderToOffecreenTarget(VkCommandBuffer commandBuffer, VdpPipeline * render,int ofIndex);
-  void renderEffectToMainTarget(VkCommandBuffer commandBuffer, const UniformBufferObject & ubo, int mode, const glm::vec4 & viewportData, int ofIndex);
+  // pipelineOverride / mosaicOverride: draw with another pipeline object's
+  // VkPipeline while keeping the layer's own descriptors and geometry. Used to
+  // move the window stencil test off the offscreen pass and onto the blit -
+  // see the mosaic branch in drawVdp2.
+  void renderToOffecreenTarget(VkCommandBuffer commandBuffer, VdpPipeline * render,int ofIndex, VdpPipeline * pipelineOverride = nullptr);
+  void renderEffectToMainTarget(VkCommandBuffer commandBuffer, const UniformBufferObject & ubo, int mode, const glm::vec4 & viewportData, int ofIndex, VdpPipeline * mosaicOverride = nullptr);
   void renderWithLineEffectToMainTarget(VdpPipeline * p, VkCommandBuffer commandBuffer, const UniformBufferObject & ubo, VkImageView lineinfo, const glm::vec4 & viewportData, int ofIndex );
   void deleteOfscreenPath();
   int checkCharAccessPenalty(int char_access, int ptn_access);

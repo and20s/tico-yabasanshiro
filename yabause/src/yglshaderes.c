@@ -738,8 +738,24 @@ int Ygl_cleanupMosaic(void * p)
     glViewport(_Ygl->originx, _Ygl->originy, GlWidth, GlHeight);
     glScissor(_Ygl->originx, _Ygl->originy, GlWidth, GlHeight);
   }
+  // The layer itself was drawn into the temporary framebuffer, which has no
+  // stencil attachment, so the window stencil the draw loop set up could not
+  // clip it there - it only exists in the target framebuffer. Re-apply the
+  // window here so the blit that actually puts the layer on screen is the thing
+  // that gets clipped. Without this a mosaiced layer ignores its window
+  // entirely and covers the whole screen.
+  int windowed = (prg->bwin0 || prg->bwin1 || prg->bwinsp);
+  if (windowed) {
+    YglSetupWindow(prg);
+  }
+
   // call blit method
   YglBlitMosaic(_Ygl->tmpfbotex, _Ygl->targetfbo, _Ygl->rwidth, _Ygl->rheight, prg->matrix, prg->mosaic);
+
+  if (windowed) {
+    glDisable(GL_STENCIL_TEST);
+    glStencilFunc(GL_ALWAYS, 0, 0xFF);
+  }
 
   glBindTexture(GL_TEXTURE_2D, YglTM->textureID_in[YglTM->current]);
 

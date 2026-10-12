@@ -122,6 +122,9 @@ public:
                  int mosaicX = 1,
                  int mosaicY = 1,
                  int mosaicMask = 0,
+                 // Slices that also get vertical mosaic. RBG0 is never in it:
+                 // a rotation background is mosaiced horizontally only.
+                 int mosaicVMask = 0,
                  // issue #22 landscape fix: (cos, sin) of the net pre-rotation
                  // angle the fullscreen triangle must apply to match the legacy
                  // pre_rotate_mat (Android swapchain pre-transform + rotate_screen).

@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "profiles": [
+    {
+      "key": "vk:13b5:b8a31030",
+      "name": "ARM Mali-G615 MC6",
+      "source": "aggregated",
+      "videoCore": "4",
+      "polygonGeneration": "3",
+      "useComputeShader": true,
+      "vdp2Composite": "0",
+      "rbgResolution": "4",
+      "resolution": "0"
+    },
+    {
+      "key": "vk:5143:44050a31",
+      "name": "Qualcomm Adreno (TM) 840",
+      "source": "aggregated",
+      "videoCore": "4",
+      "polygonGeneration": "3",
+      "useComputeShader": true,
+      "vdp2Composite": "1",
+      "rbgResolution": "4",
+      "resolution": "0"
+    },
+    {
+      "key": "vk:5143:6010300",
+      "name": "Qualcomm Adreno (TM) A12",
+      "source": "aggregated",
+      "videoCore": "4",
+      "polygonGeneration": "2",
+      "useComputeShader": true,
+      "vdp2Composite": "0",
+      "rbgResolution": "4",
+      "resolution": "2"
+    },
+    {
+      "key": "vk:5143:43050a01",
+      "name": "Qualcomm Adreno (TM) 740",
+      "source": "aggregated",
+      "videoCore": "4",
+      "polygonGeneration": "3",
+      "useComputeShader": true,
+      "vdp2Composite": "1",
+      "rbgResolution": "4"
+    },
+    {
+      "key": "vk:5143:6050002",
+      "name": "Qualcomm Adreno (TM) 650",
+      "source": "aggregated",
+      "videoCore": "4",
+      "polygonGeneration": "2",
+      "useComputeShader": true,
+      "vdp2Composite": "0",
+      "rbgResolution": "4"
+    }
+  ]
+}

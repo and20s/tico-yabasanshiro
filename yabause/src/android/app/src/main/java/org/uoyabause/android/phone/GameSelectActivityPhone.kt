@@ -20,6 +20,7 @@ package org.uoyabause.android.phone
 
 import android.Manifest
 import android.app.UiModeManager
+import android.content.DialogInterface
 import android.content.Intent
 import android.content.res.Configuration
 import android.os.Build
@@ -41,6 +42,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
+import androidx.preference.PreferenceManager
 import com.google.android.gms.ads.AdListener
 import com.google.android.gms.ads.AdRequest
 import com.google.android.gms.ads.AdSize
@@ -51,8 +53,16 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.devmiyax.yabasanshiro.R
+import org.uoyabause.android.BenchmarkActivity
+import org.uoyabause.android.BenchmarkConfirmDialog
+import org.uoyabause.android.DeviceCapabilities
 import org.uoyabause.android.FCMTokenManager
+import org.uoyabause.android.FirstLaunchOffer
+import org.uoyabause.android.GpuProfileStore
 import org.uoyabause.android.Notification
+import org.uoyabause.android.RecommendedSettings
+import org.uoyabause.android.RecommendedSettingsApplier
+import org.uoyabause.android.RecommendedSettingsLabels
 import org.uoyabause.android.ReportListActivity
 import org.uoyabause.android.YabauseApplication
 import org.uoyabause.android.YabauseStorage
@@ -97,6 +107,111 @@ class GameSelectActivityPhone : AppCompatActivity() {
         dialog.show()
     }
 
+    /** True once the benchmark has been offered this launch; see [offerBenchmark]. */
+    private var benchmarkOffered = false
+
+    private val benchmarkLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+            // Nothing to do with the result: BenchmarkActivity saves the profile
+            // and applies the settings itself, precisely because the screen that
+            // launched it is not guaranteed to survive a multi-minute sweep.
+        }
+
+    /**
+     * Makes the first-launch offer StartupActivity decided on, once, on the
+     * screen after the startup one.
+     *
+     * StartupActivity is where the terms of service and the privacy policy are
+     * presented, so it is the wrong place to ask about settings or a measurement
+     * - the offer is handed here instead. Declining either is a normal outcome:
+     * the safe-side settings StartupActivity already wrote stay in effect.
+     */
+    private fun makeFirstLaunchOffer(offer: FirstLaunchOffer) {
+        if (benchmarkOffered) return
+        val gpuKey = intent.getStringExtra(EXTRA_BENCHMARK_GPU_KEY)
+        if (gpuKey == null) {
+            Log.d(TAG, "first launch offer skipped: no gpu key in the intent")
+            return
+        }
+        // Asked once per launch. The flag is what actually enforces that - the
+        // intent's extras come back on a recreation, so clearing them is not
+        // enough on its own.
+        benchmarkOffered = true
+        intent.removeExtra(EXTRA_FIRST_LAUNCH_OFFER)
+        when (offer) {
+            FirstLaunchOffer.RECOMMENDED_SETTINGS -> offerRecommendedSettings(gpuKey)
+            FirstLaunchOffer.BENCHMARK -> offerBenchmark(gpuKey)
+            FirstLaunchOffer.NONE -> Unit
+        }
+    }
+
+    /**
+     * Asks whether to apply the settings the profile database recommends for this
+     * GPU. Lists every recommended setting, the same way the benchmark result
+     * does, so the answer is an informed one. The settings screen's note about
+     * games with their own saved settings is left out: this is the first launch,
+     * so no game has any yet.
+     */
+    private fun offerRecommendedSettings(gpuKey: String) {
+        val caps = DeviceCapabilities.forContext(this)
+        val profile = GpuProfileStore.find(this, gpuKey)
+        if (profile == null) {
+            // StartupActivity saw a profile a moment ago, so this should not
+            // happen; if it does, measuring is the way to get one.
+            offerBenchmark(gpuKey)
+            return
+        }
+        val recommended = RecommendedSettings.forDevice(caps, profile)
+        val prefs = PreferenceManager.getDefaultSharedPreferences(this)
+        val changes = RecommendedSettingsApplier.diff(prefs, recommended)
+        Log.d(TAG, "offering recommended settings for $gpuKey (${changes.size} changes)")
+        if (changes.isEmpty()) return
+
+        val message =
+            getString(R.string.recommended_settings_offer_message) + "\n\n" +
+                RecommendedSettingsApplier
+                    .values(recommended)
+                    .joinToString("\n") { RecommendedSettingsLabels.describe(this, it) }
+        val dialog =
+            MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.apply_recommended_settings)
+                .setMessage(message)
+                .setPositiveButton(R.string.recommended_settings_apply) { _, _ ->
+                    RecommendedSettingsApplier.apply(prefs, recommended)
+                }.setNegativeButton(android.R.string.cancel, null)
+                .create()
+        // Applying settings is a data change, so default D-pad focus goes to Cancel.
+        dialog.setOnShowListener {
+            val button = dialog.getButton(DialogInterface.BUTTON_NEGATIVE)
+            button?.post {
+                button.isFocusable = true
+                button.isFocusableInTouchMode = true
+                button.requestFocus()
+            }
+        }
+        dialog.show()
+    }
+
+    /** Offers the GPU benchmark for a GPU the profile database does not know. */
+    private fun offerBenchmark(gpuKey: String) {
+        val gpuName = intent.getStringExtra(EXTRA_BENCHMARK_GPU_NAME).orEmpty().ifBlank { gpuKey }
+        Log.d(TAG, "offering the benchmark for $gpuKey")
+
+        BenchmarkConfirmDialog.show(
+            activity = this,
+            titleId = R.string.benchmark_confirm_title,
+            messageId = R.string.benchmark_confirm_message,
+            negativeId = R.string.benchmark_confirm_skip,
+        ) {
+            benchmarkLauncher.launch(BenchmarkActivity.intent(this, gpuKey, gpuName))
+        }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean(STATE_BENCHMARK_OFFERED, benchmarkOffered)
+    }
+
     public override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -125,6 +240,22 @@ class GameSelectActivityPhone : AppCompatActivity() {
         } else {
             frg =
                 supportFragmentManager.findFragmentById(CONTENT_VIEW_ID) as GameSelectFragmentPhone2
+        }
+
+        benchmarkOffered = savedInstanceState?.getBoolean(STATE_BENCHMARK_OFFERED, false) ?: false
+        Log.d(
+            TAG,
+            "first launch offer: extra=${intent.getStringExtra(EXTRA_FIRST_LAUNCH_OFFER)} " +
+                "alreadyOffered=$benchmarkOffered gpuKey=${intent.getStringExtra(EXTRA_BENCHMARK_GPU_KEY)}",
+        )
+        val firstLaunchOffer =
+            intent.getStringExtra(EXTRA_FIRST_LAUNCH_OFFER)?.let { name ->
+                FirstLaunchOffer.entries.firstOrNull { it.name == name }
+            }
+        if (!benchmarkOffered && firstLaunchOffer != null && firstLaunchOffer != FirstLaunchOffer.NONE) {
+            // Posted rather than shown inline so the game list is actually on
+            // screen behind the dialog.
+            frame.post { makeFirstLaunchOffer(firstLaunchOffer) }
         }
 
         // Register back press callback for predictive back gesture support
@@ -574,5 +705,14 @@ class GameSelectActivityPhone : AppCompatActivity() {
     companion object {
         private const val TAG = "GameSelectActivityPhone"
         const val CONTENT_VIEW_ID = 10101010
+
+        /**
+         * Set by StartupActivity on a first launch: the name of the
+         * [FirstLaunchOffer] this screen should make.
+         */
+        const val EXTRA_FIRST_LAUNCH_OFFER = "org.uoyabause.android.FirstLaunchOffer"
+        const val EXTRA_BENCHMARK_GPU_KEY = "org.uoyabause.android.OfferBenchmarkGpuKey"
+        const val EXTRA_BENCHMARK_GPU_NAME = "org.uoyabause.android.OfferBenchmarkGpuName"
+        private const val STATE_BENCHMARK_OFFERED = "benchmarkOffered"
     }
 }

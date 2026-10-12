@@ -1543,6 +1543,11 @@ int YabauseQuickLoadGame(void)
       Cs2ResetSelector();
       Cs2GetToc();
 
+      // A real BIOS leaves the slave SH-2 halted until the game issues SSHON,
+      // so the HLE boot does not release it here either (Gungriffon never
+      // issues SSHON on the HLE boot path; see
+      // docs/B20/gungriffon_fmv_framedrop_investigation.md).
+
       // LANGRISSER Dramatic Edition #531
       // This game uses Color ram data written by BIOS
       // So it need to write them before start game on no bios mode.

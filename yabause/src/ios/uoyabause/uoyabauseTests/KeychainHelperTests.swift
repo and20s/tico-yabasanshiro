@@ -1,5 +1,5 @@
 import XCTest
-@testable import uoyabause
+@testable import YabaSnashiro
 
 class KeychainHelperTests: XCTestCase {
     

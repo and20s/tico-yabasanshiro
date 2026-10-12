@@ -1,0 +1,76 @@
+<ja-JP>
+- ストリートファイター ZERO、ヴァンパイアハンターなど、起動直後に黒画面になる不具合を修正
+- デイトナ USA で 3D が表示されない不具合を修正
+- 回転する背景の描画の乱れを修正
+- 端末性能を計測して設定を自動で選ぶ機能を追加。結果は同意した場合のみ送信 (Android)
+</ja-JP>
+
+<en-US>
+- Fixed a black screen right after launch in Street Fighter Zero, Vampire Hunter and other titles
+- Fixed missing 3D graphics in Daytona USA
+- Fixed rendering glitches on rotating backgrounds
+- Graphics settings can now be chosen automatically by benchmarking your device. Results are sent only with your consent (Android)
+</en-US>
+
+<de-DE>
+- Schwarzer Bildschirm direkt nach dem Start in Street Fighter Zero, Vampire Hunter u. a. behoben
+- Fehlende 3D-Grafik in Daytona USA behoben
+- Darstellungsfehler bei rotierenden Hintergründen behoben
+- Grafikeinstellungen per Leistungsmessung automatisch wählbar. Ergebnisse nur mit Zustimmung gesendet (Android)
+</de-DE>
+
+<es-419>
+- Corregida la pantalla negra al iniciar en Street Fighter Zero, Vampire Hunter y otros títulos
+- Corregida la falta de gráficos 3D en Daytona USA
+- Corregidos los fallos de renderizado en fondos giratorios
+- Ajustes gráficos automáticos según el rendimiento del dispositivo. Los resultados solo se envían con tu consentimiento (Android)
+</es-419>
+
+<es-ES>
+- Corregida la pantalla en negro al iniciar en Street Fighter Zero, Vampire Hunter y otros títulos
+- Corregida la falta de gráficos 3D en Daytona USA
+- Corregidos los fallos de renderizado en fondos giratorios
+- Ajustes gráficos automáticos según el rendimiento del dispositivo. Los resultados solo se envían con tu consentimiento (Android)
+</es-ES>
+
+<fr-FR>
+- Correction d'un écran noir juste après le lancement dans Street Fighter Zero, Vampire Hunter, etc.
+- Correction de l'absence de graphismes 3D dans Daytona USA
+- Correction des défauts d'affichage des arrière-plans en rotation
+- Réglages graphiques choisis automatiquement par mesure des performances. Résultats envoyés uniquement avec votre accord (Android)
+</fr-FR>
+
+<id>
+- Memperbaiki layar hitam tepat setelah peluncuran di Street Fighter Zero, Vampire Hunter, dll.
+- Memperbaiki grafis 3D yang hilang di Daytona USA
+- Memperbaiki gangguan render pada latar belakang berputar
+- Pengaturan grafis otomatis dari pengukuran kinerja perangkat. Hasil dikirim hanya dengan persetujuan Anda (Android)
+</id>
+
+<it-IT>
+- Risolta la schermata nera subito dopo l'avvio in Street Fighter Zero, Vampire Hunter e altri titoli
+- Risolta la mancanza di grafica 3D in Daytona USA
+- Risolti i difetti di rendering degli sfondi rotanti
+- Impostazioni grafiche scelte automaticamente misurando le prestazioni. Risultati inviati solo con il tuo consenso (Android)
+</it-IT>
+
+<pt-BR>
+- Corrigida a tela preta logo após a inicialização em Street Fighter Zero, Vampire Hunter e outros títulos
+- Corrigida a ausência de gráficos 3D em Daytona USA
+- Corrigidos os erros de renderização em fundos rotativos
+- Ajustes gráficos escolhidos automaticamente medindo o desempenho. Resultados enviados apenas com seu consentimento (Android)
+</pt-BR>
+
+<th>
+- แก้ไขหน้าจอดำทันทีหลังเปิดเกมใน Street Fighter Zero, Vampire Hunter และเกมอื่นๆ
+- แก้ไขกราฟิก 3D ที่ไม่แสดงใน Daytona USA
+- แก้ไขการแสดงผลผิดพลาดของพื้นหลังที่หมุน
+- ตั้งค่ากราฟิกอัตโนมัติตามประสิทธิภาพของอุปกรณ์ ส่งผลการวัดเมื่อคุณยินยอมเท่านั้น (Android)
+</th>
+
+<zh-CN>
+- 修复街头霸王 ZERO、吸血鬼猎人等游戏启动后立即黑屏的问题
+- 修复代托纳 USA 中 3D 无法显示的问题
+- 修复旋转背景渲染错乱的问题
+- 新增根据设备性能自动选择图形设置的功能，测量结果仅在你同意时发送 (Android)
+</zh-CN>

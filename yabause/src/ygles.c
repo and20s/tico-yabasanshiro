@@ -1319,26 +1319,13 @@ int YglGenFrameBuffer() {
   glBindTexture(GL_TEXTURE_2D, 0);
   rebuild_frame_buffer = 0;
 
-  int base_texture_width = 512;
-  switch (_Ygl->rbg_resolution_mode) {
-  case RBG_RES_ORIGINAL:
-    base_texture_width = 512;
-    break;
-  case RBG_RES_2x:
-    base_texture_width = 1024;
-    break;
-  case RBG_RES_720P:
-    base_texture_width = 1280;
-    break;
-  case RBG_RES_1080P:
-    base_texture_width = 1920;
-    break;
-  case RBG_RES_FIT_TO_EMULATION:
-    base_texture_width = GlWidth;
-    break;
-  default:
-    break;
-  }
+  /* A switch over _Ygl->rbg_resolution_mode used to compute a
+     base_texture_width here. Nothing ever read it, so when RBG_RES_4x was
+     added to the enum this switch was the one place that did not gain a case
+     -- and the omission was invisible precisely because the result was dead.
+     Deleted rather than extended: keeping a per-mode table that no one reads
+     just re-arms the same trap for the next resolution mode. vidogl.c:3653
+     and VIDVulkan.cpp:5373 are the switches that really do map the enum. */
 
   return 0;
 }
@@ -1813,7 +1800,9 @@ void YglCacheQuadGrowShading(YglSprite * input, float * colors, YglCache * cache
   else if (_Ygl->polygonmode == CPU_TESSERATION) {
     YglTriangleGrowShading_in(input, NULL, colors, cache, 0);
   }
-  else if (_Ygl->polygonmode == PERSPECTIVE_CORRECTION) {
+  else {
+    // PERSPECTIVE_CORRECTION and any mode this core does not implement
+    // (never fall through without consuming the cache entry).
     if (YglCheckTriangle(input->vertices)){
       YglTriangleGrowShading_in(input, NULL, colors, cache, 0);
     }
@@ -1833,13 +1822,13 @@ int YglQuadGrowShading(YglSprite * input, YglTexture * output, float * colors, Y
   else if (_Ygl->polygonmode == CPU_TESSERATION) {
     return YglTriangleGrowShading_in(input, output, colors, c, 1);
   }
-  else if (_Ygl->polygonmode == PERSPECTIVE_CORRECTION) {
-    if (YglCheckTriangle(input->vertices)){
-      return YglTriangleGrowShading_in(input, output, colors, c, 1);
-    }
-    return YglQuadGrowShading_in(input, output, colors, c, 1);
+  // PERSPECTIVE_CORRECTION and any mode this core does not implement.
+  // Never return without allocating: callers pass an uninitialized
+  // YglTexture and write to output->textdata right after this call.
+  if (YglCheckTriangle(input->vertices)){
+    return YglTriangleGrowShading_in(input, output, colors, c, 1);
   }
-  return 0;
+  return YglQuadGrowShading_in(input, output, colors, c, 1);
 }
 
 

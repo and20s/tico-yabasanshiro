@@ -612,6 +612,11 @@ void Vdp1Renderer::drawStart(void) {
 
   if (vulkan->getCurrentPolygonMode() == COMPUTE_RASTERIZER && vulkan->getVdp1Compute()) {
     vulkan->getVdp1Compute()->beginFrame();
+    // Hand over the persistent VDP1 state before this frame's commands. A
+    // rasterizer created since the last frame (resize, or a switch from a
+    // graphics mode) starts with none of it, and a game may not re-issue the
+    // local coordinate for a long time. Also picks up a loaded save state.
+    syncComputePersistentState();
     // Effective HD upscale factor for thin-polygon detection. The compute hooks
     // (genPolygon / DistortedSpriteDraw / ...) scale Saturn vertices by
     // vdp1wratio * computeFbScaleX() (similarly for Y), NOT vdp1wratio alone.
@@ -1700,8 +1705,8 @@ void Vdp1Renderer::NormalSpriteDraw(u8 *ram, Vdp1 *regs, u8 *back_framebuffer) {
     return;
   }
 
-  x = CMDXA + localX;
-  y = CMDYA + localY;
+  x = CMDXA + Vdp1Regs->localX;
+  y = CMDYA + Vdp1Regs->localY;
   sprite.w = ((cmd.CMDSIZE >> 8) & 0x3F) * 8;
   sprite.h = cmd.CMDSIZE & 0xFF;
   if (sprite.w == 0 || sprite.h == 0) {
@@ -1836,7 +1841,7 @@ void Vdp1Renderer::ScaledSpriteDraw(u8 *ram, Vdp1 *regs, u8 *back_framebuffer) {
 
   // Compute mode hook (Plan 2 F12). Resolve the CMDCTRL zoom-point bits
   // into 4 explicit vertices (Saturn standard order) without adding
-  // localX/localY -- the state machine inside Vdp1ComputeRasterizer
+  // the local coordinate -- the state machine inside Vdp1ComputeRasterizer
   // applies local coord during appendCommand. We mirror the zoom switch
   // below so compute and graphics paths agree on geometry; only the
   // local-coord baseline differs.
@@ -1907,8 +1912,8 @@ void Vdp1Renderer::ScaledSpriteDraw(u8 *ram, Vdp1 *regs, u8 *back_framebuffer) {
     return;
   }
 
-  x = cmd.CMDXA + localX;
-  y = cmd.CMDYA + localY;
+  x = cmd.CMDXA + Vdp1Regs->localX;
+  y = cmd.CMDYA + Vdp1Regs->localY;
   sprite.w = ((cmd.CMDSIZE >> 8) & 0x3F) * 8;
   sprite.h = cmd.CMDSIZE & 0xFF;
   // CMDSIZE == 0 -> 1x1 fallback, mirroring vidogl.c:4785.
@@ -1921,8 +1926,8 @@ void Vdp1Renderer::ScaledSpriteDraw(u8 *ram, Vdp1 *regs, u8 *back_framebuffer) {
   // Setup Zoom Point
   switch ((cmd.CMDCTRL & 0xF00) >> 8) {
   case 0x0: // Only two coordinates
-    rw = cmd.CMDXC - x + localX;
-    rh = cmd.CMDYC - y + localY;
+    rw = cmd.CMDXC - x + Vdp1Regs->localX;
+    rh = cmd.CMDYC - y + Vdp1Regs->localY;
     if (rw > 0) {
       rw += 1;
     } else {
@@ -2348,14 +2353,14 @@ void Vdp1Renderer::DistortedSpriteDraw(u8 *ram, Vdp1 *regs, u8 *back_framebuffer
 #endif
 #endif
 
-  sprite.vertices[0] = (sprite.vertices[0] + localX) * vdp1wratio;
-  sprite.vertices[1] = (sprite.vertices[1] + localY) * vdp1hratio;
-  sprite.vertices[2] = (sprite.vertices[2] + localX) * vdp1wratio;
-  sprite.vertices[3] = (sprite.vertices[3] + localY) * vdp1hratio;
-  sprite.vertices[4] = (sprite.vertices[4] + localX) * vdp1wratio;
-  sprite.vertices[5] = (sprite.vertices[5] + localY) * vdp1hratio;
-  sprite.vertices[6] = (sprite.vertices[6] + localX) * vdp1wratio;
-  sprite.vertices[7] = (sprite.vertices[7] + localY) * vdp1hratio;
+  sprite.vertices[0] = (sprite.vertices[0] + Vdp1Regs->localX) * vdp1wratio;
+  sprite.vertices[1] = (sprite.vertices[1] + Vdp1Regs->localY) * vdp1hratio;
+  sprite.vertices[2] = (sprite.vertices[2] + Vdp1Regs->localX) * vdp1wratio;
+  sprite.vertices[3] = (sprite.vertices[3] + Vdp1Regs->localY) * vdp1hratio;
+  sprite.vertices[4] = (sprite.vertices[4] + Vdp1Regs->localX) * vdp1wratio;
+  sprite.vertices[5] = (sprite.vertices[5] + Vdp1Regs->localY) * vdp1hratio;
+  sprite.vertices[6] = (sprite.vertices[6] + Vdp1Regs->localX) * vdp1wratio;
+  sprite.vertices[7] = (sprite.vertices[7] + Vdp1Regs->localY) * vdp1hratio;
 
   tmp = cmd.CMDSRCA;
   tmp <<= 16;
@@ -2432,10 +2437,7 @@ void Vdp1Renderer::SystemClipping(u8 *ram, Vdp1 *regs) {
     Vdp1Regs->systemclipY1 = 0;
     Vdp1Regs->systemclipX2 = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x14);
     Vdp1Regs->systemclipY2 = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x16);
-    // Store RAW Saturn coords; applyState scales by the current HD factor
-    // (issue #106 -- resolution-independent persistent state).
-    vulkan->getVdp1Compute()->setSystemClip((s16)Vdp1Regs->systemclipX2,
-                                            (s16)Vdp1Regs->systemclipY2);
+    syncComputePersistentState();
     return;
   }
 
@@ -2475,12 +2477,7 @@ void Vdp1Renderer::UserClipping(u8 *ram, Vdp1 *regs) {
     Vdp1Regs->userclipY1 = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0xE);
     Vdp1Regs->userclipX2 = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x14);
     Vdp1Regs->userclipY2 = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x16);
-    // Store RAW Saturn coords; applyState scales by the current HD factor
-    // (issue #106 -- resolution-independent persistent state).
-    vulkan->getVdp1Compute()->setUserClip((s16)Vdp1Regs->userclipX1,
-                                          (s16)Vdp1Regs->userclipY1,
-                                          (s16)Vdp1Regs->userclipX2,
-                                          (s16)Vdp1Regs->userclipY2);
+    syncComputePersistentState();
     return;
   }
 
@@ -2686,14 +2683,14 @@ void Vdp1Renderer::PolygonDraw(u8 *ram, Vdp1 *regs, u8 *back_framebuffer) {
     }
   }
 
-  sprite.vertices[0] = (sprite.vertices[0] + localX) * vdp1wratio;
-  sprite.vertices[1] = (sprite.vertices[1] + localY) * vdp1hratio;
-  sprite.vertices[2] = (sprite.vertices[2] + localX) * vdp1wratio;
-  sprite.vertices[3] = (sprite.vertices[3] + localY) * vdp1hratio;
-  sprite.vertices[4] = (sprite.vertices[4] + localX) * vdp1wratio;
-  sprite.vertices[5] = (sprite.vertices[5] + localY) * vdp1hratio;
-  sprite.vertices[6] = (sprite.vertices[6] + localX) * vdp1wratio;
-  sprite.vertices[7] = (sprite.vertices[7] + localY) * vdp1hratio;
+  sprite.vertices[0] = (sprite.vertices[0] + Vdp1Regs->localX) * vdp1wratio;
+  sprite.vertices[1] = (sprite.vertices[1] + Vdp1Regs->localY) * vdp1hratio;
+  sprite.vertices[2] = (sprite.vertices[2] + Vdp1Regs->localX) * vdp1wratio;
+  sprite.vertices[3] = (sprite.vertices[3] + Vdp1Regs->localY) * vdp1hratio;
+  sprite.vertices[4] = (sprite.vertices[4] + Vdp1Regs->localX) * vdp1wratio;
+  sprite.vertices[5] = (sprite.vertices[5] + Vdp1Regs->localY) * vdp1hratio;
+  sprite.vertices[6] = (sprite.vertices[6] + Vdp1Regs->localX) * vdp1wratio;
+  sprite.vertices[7] = (sprite.vertices[7] + Vdp1Regs->localY) * vdp1hratio;
 
   color = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x6);
   CMDPMOD = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x4);
@@ -3338,14 +3335,14 @@ void Vdp1Renderer::PolylineDraw(u8 *ram, Vdp1 *regs, u8 *back_framebuffer) {
     return;
   }
 
-  v[0] = localX + (T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x0C));
-  v[1] = localY + (T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x0E));
-  v[2] = localX + (T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x10));
-  v[3] = localY + (T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x12));
-  v[4] = localX + (T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x14));
-  v[5] = localY + (T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x16));
-  v[6] = localX + (T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x18));
-  v[7] = localY + (T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x1A));
+  v[0] = Vdp1Regs->localX + (T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x0C));
+  v[1] = Vdp1Regs->localY + (T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x0E));
+  v[2] = Vdp1Regs->localX + (T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x10));
+  v[3] = Vdp1Regs->localY + (T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x12));
+  v[4] = Vdp1Regs->localX + (T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x14));
+  v[5] = Vdp1Regs->localY + (T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x16));
+  v[6] = Vdp1Regs->localX + (T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x18));
+  v[7] = Vdp1Regs->localY + (T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x1A));
 
   color = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x6);
   CMDPMOD = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x4);
@@ -3625,10 +3622,10 @@ void Vdp1Renderer::LineDraw(u8 *ram, Vdp1 *regs, u8 *back_framebuffer) {
     return;
   }
 
-  v[0] = localX + (T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x0C));
-  v[1] = localY + (T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x0E));
-  v[2] = localX + (T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x10));
-  v[3] = localY + (T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x12));
+  v[0] = Vdp1Regs->localX + (T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x0C));
+  v[1] = Vdp1Regs->localY + (T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x0E));
+  v[2] = Vdp1Regs->localX + (T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x10));
+  v[3] = Vdp1Regs->localY + (T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x12));
 
   color = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x6);
   CMDPMOD = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0x4);
@@ -3702,21 +3699,29 @@ void Vdp1Renderer::LineDraw(u8 *ram, Vdp1 *regs, u8 *back_framebuffer) {
 }
 
 void Vdp1Renderer::LocalCoordinate(u8 *ram, Vdp1 *regs) {
+  // Recorded in Vdp1Regs whatever the polygon mode, so the value survives a
+  // switch to the other drawing path.
+  Vdp1Regs->localX = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0xC);
+  Vdp1Regs->localY = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0xE);
   if (vulkan->getCurrentPolygonMode() == COMPUTE_RASTERIZER && vulkan->getVdp1Compute()) {
-    auto sext12 = [](u16 v) -> s16 {
-        return (v & 0x1000) ? (s16)(v | 0xE000) : (s16)(v & ~0xE000);
-    };
-    u16 cmdxa = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0xC);
-    u16 cmdya = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0xE);
-    // Store RAW Saturn coords; applyState scales by the current HD factor.
-    // Keeping the persistent state resolution-independent fixes the shift
-    // after a resolution change when the game omits LocalCoordinate on a
-    // later frame (issue #106).
-    vulkan->getVdp1Compute()->setLocalCoord(sext12(cmdxa), sext12(cmdya));
-    return;
+    syncComputePersistentState();
   }
-  localX = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0xC);
-  localY = T1ReadWord(Vdp1Ram, Vdp1Regs->addr + 0xE);
+}
+
+void Vdp1Renderer::syncComputePersistentState() {
+  Vdp1ComputeRasterizer *compute = vulkan->getVdp1Compute();
+  if (compute == nullptr) return;
+  auto sext12 = [](u16 v) -> s16 {
+      return (v & 0x1000) ? (s16)(v | 0xE000) : (s16)(v & ~0xE000);
+  };
+  // Store RAW Saturn coords; applyState scales by the current HD factor.
+  // Keeping the persistent state resolution-independent fixes the shift
+  // after a resolution change when the game omits LocalCoordinate on a
+  // later frame (issue #106).
+  compute->setLocalCoord(sext12((u16)Vdp1Regs->localX), sext12((u16)Vdp1Regs->localY));
+  compute->setSystemClip((s16)Vdp1Regs->systemclipX2, (s16)Vdp1Regs->systemclipY2);
+  compute->setUserClip((s16)Vdp1Regs->userclipX1, (s16)Vdp1Regs->userclipY1,
+                       (s16)Vdp1Regs->userclipX2, (s16)Vdp1Regs->userclipY2);
 }
 
 // F18: Bake VDP2 sprite-priority / color-calc / shadow / sprite-window
@@ -3768,6 +3773,24 @@ void Vdp1Renderer::readPriority(vdp1cmd_struct *cmd, int *priority, int *colorcl
   // is the sprite is RGB or LUT (in fact, LUT can use bank color, we just hope it won't...)
   if ((SPCLMD & 0x20) && (cmd->CMDCOLR & 0x8000)) {
     // RGB data, use register 0
+    *priority = 0;
+    *colorcl = 0;
+    return;
+  }
+
+  // Texture part drawn in RGB color mode (CMDPMOD color mode 5): CMDCOLR is
+  // *ignored* by the hardware (VDP1 manual 6.4 "RGB mode -> this word is
+  // ignored"), the raw 16-bit texel reaches the frame buffer unchanged. VDP2
+  // then sees MSB=1 and treats the priority / color calculation / shadow bits
+  // as 0 (VDP2 manual 9.1), i.e. register slot 0 -- same as mednafen
+  // T_DrawSpriteData. Without this, whatever stale value the game left in the
+  // ignored CMDCOLR field selects the sprite priority slot, so RGB sprites
+  // float above VDP2 layers they should sit behind. Command types 0..3 are the
+  // textured parts; for polygon/polyline/line CMDCOLR *is* the color and the
+  // CMDPMOD color mode field carries no meaning, so they must not take this
+  // path.
+  if ((SPCLMD & 0x20) && ((cmd->CMDCTRL & 0xF) <= 3) &&
+      (((cmd->CMDPMOD >> 3) & 0x7) == 5)) {
     *priority = 0;
     *colorcl = 0;
     return;
@@ -4342,8 +4365,29 @@ void Vdp1Renderer::readTexture(vdp1cmd_struct *cmd, YglSprite *sprite, CharTextu
           if (dot & 0x8000 && (fixVdp2Regs->SPCTL & 0x20)) {
             *texture->textdata++ = VDP1COLOR(0, colorcl, priority, 0, 0, VDP1COLOR16TO24(dot));
           } else {
-            // Vdp1MaskSpritePixel(fixVdp2Regs->SPCTL & 0xF, &dot, &colorcl); //ToDo
-            *texture->textdata++ = VDP1COLOR(1, colorcl, priority, 0, 0, dot);
+            // 16bpp palette pixel: apply the per-pixel Vdp1ProcessSpritePixel
+            // split, exactly like the 4bpp LUT path (case 1 above) and the
+            // compute rasterizer's sample16bppRGB. Emitting the command-level
+            // priority/colorcl together with the full unmasked 16-bit index
+            // made palette sprite types > 0 (Mr. Bones forest skeleton =
+            // sprite type 7) lose the per-pixel priority slot (dot>>12)&7, so
+            // they were discarded whenever that PRISA slot held 0.
+            // Per-pixel locals: the decode must not clobber the command-level
+            // priority/colorcl that the other branches of this loop still use
+            // (the compute shader is stateless per pixel, so this keeps the
+            // graphics path bit-identical to it).
+            // CMDPMOD MSB shadow and the normal-shadow color are already
+            // handled by the branch above, so only the sprite-type normal
+            // shadow flag is consulted here -- same as the compute path.
+            u16 temp = (u16)dot;
+            int px_shadow = 0, px_normalshadow = 0, px_priority = 0, px_colorcl = 0;
+            Vdp1ProcessSpritePixel(fixVdp2Regs->SPCTL & 0xF, &temp, &px_shadow, &px_normalshadow, &px_priority,
+                                   &px_colorcl);
+            if (px_normalshadow) {
+              *texture->textdata++ = VDP1COLOR(1, 0, px_priority, 1, 0, 0);
+            } else {
+              *texture->textdata++ = VDP1COLOR(1, px_colorcl, px_priority, 0, 0, temp);
+            }
           }
         }
       }

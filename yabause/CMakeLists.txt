@@ -14,12 +14,20 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(YAB_PACKAGE yabause)
 set(YAB_VERSION_MAJOR 1)
 set(YAB_VERSION_MINOR 20)
-set(YAB_VERSION_PATCH 28)
+set(YAB_VERSION_PATCH 46)
 set(YAB_VERSION "${YAB_VERSION_MAJOR}.${YAB_VERSION_MINOR}.${YAB_VERSION_PATCH}")
 
 include(GetGitRevisionDescription)
 get_git_head_revision(GIT_REFSPEC GIT_SHA1)
-string(SUBSTRING ${GIT_SHA1} 0 6 GIT_SHA1_MINI )
+# Packaging must not fail just because the sha could not be resolved (shallow
+# clone, exported tarball, unusual worktree layout).
+if(NOT GIT_SHA1 OR GIT_SHA1 STREQUAL "GITDIR-NOTFOUND")
+    set(GIT_SHA1_MINI "nogit0")
+else()
+    string(SUBSTRING "${GIT_SHA1}" 0 6 GIT_SHA1_MINI)
+endif()
+
+enable_testing()
 
 set(CPACK_SOURCE_GENERATOR TGZ)
 set(CPACK_PACKAGE_VENDOR "devMiyax")

@@ -372,3 +372,63 @@ Yabause is not initialized, can't manage backup ram.|Yabause未初始化, 无法
 http://www.emu-compatibility.com/yabause/index.php?lang=uk|http://www.emu-compatibility.com/yabause/index.php?lang=uk
 http://www.monkeystudio.org|http://www.monkeystudio.org
 toolBar|工具栏
+Yaba Sanshiro Setup|Yaba Sanshiro 安装向导
+Next|下一步
+Back|上一步
+Finish|完成
+Graphics|图形
+Choose the preset that matches your PC. You can change any of this later in Settings.|选择与您的电脑相匹配的预设。您可以稍后在设置中更改此项。
+Setting|设置项
+Controls|操作控制
+Press each button on your keyboard or gamepad when it is highlighted.|高亮显示时，请按下键盘或手柄上对应的按钮。
+Press the input for|按下对应的输入键，用于
+All buttons are set.|所有按钮均已设置。
+Games|游戏
+Tell Yaba Sanshiro where your games are.|告诉 Yaba Sanshiro 您的游戏所在位置。
+Do not use an optical drive|不使用光驱
+Choose the folder that contains your games|选择包含您游戏的文件夹
+Ready|准备就绪
+Review your choices before applying them.|在应用之前请检查您的选择。
+High - modern high-end GPU and CPU|高 - 现代高端 GPU 和 CPU
+Medium - mid-range GPU and CPU|中 - 中端 GPU 和 CPU
+Low - older GPU and CPU|低 - 较旧的 GPU 和 CPU
+Vulkan is not available in this build, so only the Low preset can be used.|此版本不支持 Vulkan，因此只能选择“低”预设。
+Which device do you want to play with?|您想使用哪种设备进行游戏？
+Press the input you want to use.|请按下您想要使用的输入。
+Previous button|上一个按钮
+Skip this button|跳过此按钮
+Skip input setup|跳过输入设置
+Folder that contains your CHD or ISO files|包含您的 CHD 或 ISO 文件的文件夹
+Browse...|浏览...
+Optical drive to play discs from|用于播放光盘的光驱
+Both are optional. You can set them later in Settings.|两项均为可选。您可以稍后在设置中进行配置。
+These settings will be applied when you press Finish.|按下“完成”后将应用这些设置。
+Vulkan Video|Vulkan Video
+OpenGL|OpenGL
+Other video core|其他视频核心
+Polygon Generation|多边形生成方式
+Compute Rasterizer|Compute Rasterizer
+GPU Tessellation|GPU Tessellation
+Internal Resolution|内部分辨率
+RBG Resolution|RBG 分辨率
+OpenAL Sound Interface|OpenAL音频接口
+Other sound core|其他音频核心
+SCSP sync count per frame|每帧 SCSP 同步次数
+Time Synchronization Mode|时间同步模式
+Synchronize to CPU|与 CPU 同步
+Run Setup &Wizard...|运行设置向导(&W)...
+Some of these settings only take effect when Yaba Sanshiro starts. Please restart it.|部分设置只有在 Yaba Sanshiro 启动时才会生效，请重新启动。
+Buttons assigned|已分配按键
+Not set|未设置
+Keyboard|键盘
+Keyboard / Mouse|键盘 / 鼠标
+not a known gamepad|未知的手柄
+Unknown device|未知设备
+not connected|未连接
+This gamepad is recognised. It works without any setup.|已识别此手柄，无需任何设置即可使用。
+This device cannot be set up automatically. Assign each button on the next page.|此设备无法自动设置。请在下一页为每个按键分配对应输入。
+Use the default assignment|使用默认分配
+Input device|输入设备
+Native (native resolution of Window)|原生（窗口原生分辨率）
+Fit to Emulation Resolution|适应模拟分辨率
+Use compute shader for RBG generation|使用计算着色器生成 RBG

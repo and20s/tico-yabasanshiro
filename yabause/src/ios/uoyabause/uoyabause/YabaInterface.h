@@ -65,9 +65,84 @@ int YSDeleteBackupFile( int index );
 NSString* YSGetBackupFile( int index );
 int YSPutFile( NSString* jsonstr  );
 int YSCopy( int target, int file  );
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* Standalone backup RAM access (no emulation running).
+ * Open before calling any YSBupStandalone* function, close when done. */
+int  YSBupStandaloneOpen(const char *buppath, const char *cartpath, int carttype);
+void YSBupStandaloneClose(void);
+
+/* One save entry. Mirrors saveinfo_struct plus what the UI needs. */
+typedef struct {
+    char filename[12];
+    char comment[11];
+    unsigned char language;
+    unsigned char year;
+    unsigned char month;
+    unsigned char day;
+    unsigned char hour;
+    unsigned char minute;
+    unsigned char week;
+    unsigned int  datasize;
+    unsigned short blocksize;
+} YSBupSave;
+
+/* Fills buffer with up to maxCount saves of the given device.
+ * Returns the number written, or -1 on failure. */
+int YSBupStandaloneList(int deviceId, YSBupSave *buffer, int maxCount);
+
+/* Fills the out params with byte/block counts of the device.
+ * Returns 0 on success. */
+int YSBupStandaloneStatus(int deviceId, unsigned int *totalSize, unsigned int *freeSize,
+                          unsigned int *totalBlock, unsigned int *freeBlock);
+
+/* Deletes a save by name. Returns 0 on success. */
+int YSBupStandaloneDelete(int deviceId, const char *savename);
+
+/* Copies a save between two devices of the OPEN session.
+ * Returns 0 on success, -2 when the destination has no room, -1 otherwise. */
+int YSBupStandaloneCopy(int srcDeviceId, int dstDeviceId, const char *savename);
+
+/* Test helper: writes a synthetic save into the open session.
+ * Returns 0 on success. */
+int YSBupStandaloneCreateForTest(int deviceId, const char *name, const char *comment,
+                                 const void *data, int dataSize);
+
+/* Exports the raw save bytes of a save in the open session.
+ * On success *buffer holds malloc'd bytes the caller must free().
+ * Returns 0 on success. */
+int YSBupStandaloneExport(int deviceId, const char *savename,
+                          void **buffer, int *size);
+
+/* Imports raw save bytes into the open session.
+ * saturnDate is the packed value from YSBupEncodeDate.
+ * Returns 0 on success, -2 when the device has no room, -1 otherwise. */
+int YSBupStandaloneImport(int deviceId, const char *name, const char *comment,
+                          unsigned char language, unsigned int saturnDate,
+                          const void *data, int dataSize);
+
+/* Packs a calendar date the way saveinfo_struct.date expects.
+ * Returns 0 when the date cannot be represented. */
+unsigned int YSBupEncodeDate(int year, int month, int day, int hour, int minute);
+
+#ifdef __cplusplus
+}
+#endif
+
 void YSUpdateCheat(NSArray* stringArray);
 NSString* YSGetCurrentGameCode();
+// Implemented in Swift via @_cdecl. Xcode 26 emits this declaration in
+// YabaSnashiro-Swift.h as SWIFT_EXTERN (extern "C") plus SWIFT_NOEXCEPT, so the
+// C++ view here must match both the linkage and the exception specification;
+// otherwise the two declarations conflict in .mm translation units.
+#ifdef __cplusplus
+extern "C" void YSOnBackupWrite(const char *fname, int deviceId, const void *before, const void *after, int size) noexcept;
+#else
 void YSOnBackupWrite(const char *fname, int deviceId, const void *before, const void *after, int size);
+#endif
 
 
 // RetroAchievements integration functions
@@ -136,6 +211,14 @@ char* YabauseRA_CreateAchievementListJSON(int category, int grouping);
 
 // Challenge Indicator JSON creation (includes badge URL and achievement details)
 char* YabauseRA_CreateChallengeIndicatorJSON(const void* achievement);
+
+/* Generate the RetroAchievements MD5 hash for a game file without
+ * loading it into the emulator. Writes a 32-char hash + NUL terminator.
+ * Returns 1 on success, 0 on failure. bufferSize must be >= 33. */
+int YabauseRA_GenerateGameHash(const char* path, char* buffer, int bufferSize);
+
+/* Session token of the currently logged-in RA user, or NULL. */
+const char* YabauseRA_GetUserApiToken(void);
 
 #ifdef __cplusplus
 }

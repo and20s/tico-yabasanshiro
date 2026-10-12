@@ -1,4 +1,5 @@
 import UIKit
+import SwiftUI
 //import MetalANGLE
 import GameController
 import AVFoundation
@@ -1230,21 +1231,56 @@ class GameViewController: MGLKViewController,MGLKViewControllerDelegate,Draggabl
 
     }
 
-    func presentBackupFileListViewController() {
-        let bfVC = BackupFileListViewController()
-        bfVC.completionHandler = {  data in
-            self.isPaused = false
-        }
+    // MARK: - Backup write metadata
 
-        let navController = UINavigationController(rootViewController: bfVC)
-        navController.modalPresentationStyle = .pageSheet
-        present(navController, animated: true, completion: nil)
-        
-        // Notify delegate that modal was presented
-        gdelegate?.didPresentModal(navController)
+    /// Called when the emulator writes a save. Stores the game title, product
+    /// number and a screenshot so the backup tab can display them.
+    func recordBackupWriteMetadata(saveFilename: String, deviceId: Int32) {
+        let fileKey = backupFileKey(forDeviceId: deviceId)
+        BackupMetadataStore().record(gameTitle: backupGameTitle(),
+                                     productNumber: productNumber ?? "",
+                                     fileKey: fileKey, filename: saveFilename)
+
+        DispatchQueue.main.async { [weak self] in
+            guard let image = self?.captureCurrentFrame() else { return }
+            BackupScreenshotStore().save(image, fileKey: fileKey, filename: saveFilename)
+        }
+    }
+
+    /// Device 0 is the internal memory. Device 1 is the cartridge, whose size
+    /// is given by the CART_* value the core is running with. The "cartridge"
+    /// setting stores that CART_* value directly, not an index into the picker
+    /// list, and loadSettings copies it straight into _cart.
+    private func backupFileKey(forDeviceId deviceId: Int32) -> String {
+        if deviceId == BackupFile.internalMemory.deviceId {
+            return BackupFile.internalMemory.fileKey
+        }
+        let match = BackupFile.allCases.first {
+            $0 != .internalMemory && $0.cartType == _cart
+        }
+        return match?.fileKey ?? BackupFile.cartridge4Mbit.fileKey
+    }
+
+    /// Human readable name of the running game. Only the disc path is known
+    /// here, so its file name without extension is used.
+    private func backupGameTitle() -> String {
+        guard let path = selectedFile, !path.isEmpty else { return "" }
+        return ((path as NSString).lastPathComponent as NSString).deletingPathExtension
+    }
+
+    /// Current emulator frame. Must be called on the main thread.
+    private func captureCurrentFrame() -> UIImage? {
+        return glView?.snapshot
     }
 
     func presentCheatViewController() {
+        // Cheats are one of the five things Pro buys. The gate is presented
+        // from here rather than at the two call sites so neither can forget.
+        guard ProEntitlement().allowsAction else {
+            presentProGate(reason: String(localized: "Cheats need a subscription or the full version.",
+                                          comment: "Reason the pro gate opened from cheats"))
+            return
+        }
         let tabCheatVC = TabCheatViewController.newInstance(gameId: YSGetCurrentGameCode(), currentCheatCodes: nil)
         tabCheatVC.completionHandler = {
             self.isPaused = false
@@ -1252,9 +1288,36 @@ class GameViewController: MGLKViewController,MGLKViewControllerDelegate,Draggabl
         let navController = UINavigationController(rootViewController: tabCheatVC)
         navController.modalPresentationStyle = .pageSheet
         present(navController, animated: true, completion: nil)
-        
+
         // Notify delegate that modal was presented
         gdelegate?.didPresentModal(navController)
+    }
+
+    /// Shows the SwiftUI gate from UIKit. The in-game screens are the last
+    /// ones that cannot present it directly.
+    ///
+    /// The sheet can close three ways: the Cancel button, an interactive
+    /// swipe, or the automatic dismiss after a successful purchase. All
+    /// three end up calling SwiftUI's environment `dismiss()`, which tears
+    /// down the hosting controller's view the same way regardless of route.
+    /// `onDisappear` hooks that one shared point instead of any single
+    /// dismissal mechanism, so it fires for all three and mirrors how the
+    /// sibling refusals (hardcore-mode alert, failed sign-in) resume on
+    /// their way out.
+    private func presentProGate(reason: String) {
+        let sheet = ProGateSheet(reason: ProGateReason(reason)) {
+            ProEntitlementStore.shared.refresh()
+        }
+        .onDisappear { [weak self] in
+            self?.isPaused = false
+            self?.gdelegate?.didDismissModal()
+        }
+        let host = UIHostingController(rootView: sheet)
+        host.modalPresentationStyle = .pageSheet
+        present(host, animated: true) { [weak self] in
+            self?.isPaused = true
+        }
+        gdelegate?.didPresentModal(host)
     }
 
     func presentLeaderBoardViewController() {
@@ -1476,5 +1539,8 @@ public func YSOnBackupWrite(fname: UnsafePointer<CChar>, deviceId: Int32, before
 
     // ゲームのonBackUpUpdatedメソッドを呼び出す
     gameViewController.currentGame?.onBackUpUpdated(fname: fileName, before: beforeData, after: afterData)
+    // Record which game wrote this save, and capture the current frame, so the
+    // backup tab can show them. Only affects saves written from now on.
+    gameViewController.recordBackupWriteMetadata(saveFilename: fileName, deviceId: deviceId)
 }
 

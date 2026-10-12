@@ -12,17 +12,22 @@
 #include <MetalANGLE/GLES3/gl3.h>
 #import <MetalANGLE/MGLKViewController.h>
 #include <string>
+#include <string.h>
 #include "../../../BackupManager.h"
+#include "../../../bios.h"
+#include "../../../bupstandalone.h"
 #include "../../../cheat.h"
 #include "../../../cs2.h"
 #include "../../../retroachievements/yabause_ra_integration_cwrapper.h"
+#include "../../../retroachievements/yabause_ra_integration.h"
+#include "../../../retroachievements/rcheevos/include/rc_hash.h"
+#include "../../../retroachievements/rcheevos/include/rc_client.h"
 
 // Use rcheevos integration if available, fallback to iOS implementation
 // Set to 0 to use iOS fallback, 1 to use rcheevos C++ wrapper
 #define USE_RCHEEVOS_INTEGRATION 0
 
 extern "C" {
-
 
 #define CART_NONE            0
 #define CART_PAR             1
@@ -247,26 +252,37 @@ const char * GetCartridgePath(void){
     switch(_cart) {
         case CART_NONE:
             fileName = @"cart/none.ram";
+            break;
         case CART_PAR:
             fileName = @"cart/par.ram";
+            break;
         case CART_BACKUPRAM4MBIT:
             fileName = @"cart/backup4.ram";
+            break;
         case CART_BACKUPRAM8MBIT:
             fileName = @"cart/backup8.ram";
+            break;
         case CART_BACKUPRAM16MBIT:
             fileName = @"cart/backup16.ram";
+            break;
         case CART_BACKUPRAM32MBIT:
             fileName = @"cart/backup32.ram";
+            break;
         case CART_DRAM8MBIT:
             fileName = @"cart/dram8.ram";
+            break;
         case CART_DRAM32MBIT:
             fileName = @"cart/dram32.ram";
+            break;
         case CART_NETLINK:
             fileName = @"cart/netlink.ram";
+            break;
         case CART_ROM16MBIT:
-            fileName = @"cart/om16.ram";
+            fileName = @"cart/rom16.ram";
+            break;
         default:
             fileName = @"cart/invalid.ram";
+            break;
     }
     
     NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
@@ -401,6 +417,197 @@ extern "C" {
 // RetroAchievements integration functions
 #include <dispatch/dispatch.h>
 
+// ---------------------------------------------------------------------------
+// Standalone backup RAM access (no emulation running).
+// ---------------------------------------------------------------------------
+
+int YSBupStandaloneOpen(const char *buppath, const char *cartpath, int carttype) {
+    return YabBupStandaloneOpen(buppath, cartpath, carttype);
+}
+
+void YSBupStandaloneClose(void) {
+    YabBupStandaloneClose();
+}
+
+int YSBupStandaloneList(int deviceId, YSBupSave *buffer, int maxCount) {
+    int numsaves = 0;
+    saveinfo_struct *saves;
+    int i;
+
+    if (buffer == NULL || maxCount <= 0) {
+        return -1;
+    }
+    // BupGetSaveList mallocs the array; the caller owns it (see BackupManager.cpp).
+    saves = BupGetSaveList((u32)deviceId, &numsaves);
+    if (saves == NULL) {
+        return 0;
+    }
+    if (numsaves > maxCount) {
+        numsaves = maxCount;
+    }
+    for (i = 0; i < numsaves; i++) {
+        memcpy(buffer[i].filename, saves[i].filename, 12);
+        memcpy(buffer[i].comment, saves[i].comment, 11);
+        buffer[i].language  = saves[i].language;
+        buffer[i].year      = saves[i].year;
+        buffer[i].month     = saves[i].month;
+        buffer[i].day       = saves[i].day;
+        buffer[i].hour      = saves[i].hour;
+        buffer[i].minute    = saves[i].minute;
+        buffer[i].week      = saves[i].week;
+        buffer[i].datasize  = saves[i].datasize;
+        buffer[i].blocksize = saves[i].blocksize;
+    }
+    free(saves);
+    return numsaves;
+}
+
+int YSBupStandaloneStatus(int deviceId, unsigned int *totalSize, unsigned int *freeSize,
+                          unsigned int *totalBlock, unsigned int *freeBlock) {
+    devicestatus_struct status;
+    if (BiosBUPStatusMem(deviceId, &status) != 0) {
+        return -1;
+    }
+    if (totalSize)  *totalSize  = status.totalsize;
+    if (freeSize)   *freeSize   = status.freesize;
+    if (totalBlock) *totalBlock = status.totalblock;
+    if (freeBlock)  *freeBlock  = status.freeblock;
+    return 0;
+}
+
+int YSBupStandaloneDelete(int deviceId, const char *savename) {
+    if (savename == NULL) {
+        return -1;
+    }
+    // BupDeleteSave returns 0 on success, negative otherwise.
+    return BupDeleteSave((u32)deviceId, savename);
+}
+
+int YSBupStandaloneCopy(int srcDeviceId, int dstDeviceId, const char *savename) {
+    // BupCopySave is a stub in bios.c, so copy is export + import.
+    saveinfo_struct *saves;
+    saveinfo_struct header;
+    int numsaves = 0;
+    int i;
+    int found = 0;
+    char *buf = NULL;
+    int bufsize = 0;
+    int result;
+
+    if (savename == NULL) {
+        return -1;
+    }
+
+    saves = BupGetSaveList((u32)srcDeviceId, &numsaves);
+    if (saves == NULL) {
+        return -1;
+    }
+    for (i = 0; i < numsaves; i++) {
+        if (strncmp(saves[i].filename, savename, 11) == 0) {
+            header = saves[i];
+            found = 1;
+            break;
+        }
+    }
+    free(saves);
+    if (!found) {
+        return -1;
+    }
+
+    // BiosBUPExport mallocs *buf; the caller owns it (see BackupManager.cpp).
+    if (BiosBUPExport((u32)srcDeviceId, savename, &buf, &bufsize) != 0) {
+        return -1;
+    }
+
+    result = BiosBUPImport((u32)dstDeviceId, &header, buf, bufsize);
+    free(buf);
+    if (result == 0) {
+        return 0;
+    }
+    // BiosBUPImport returns 4 when the save does not fit in the free space and
+    // 8 when no free block run could be found; both mean "destination full".
+    if (result == 4 || result == 8) {
+        return -2;
+    }
+    return -1;
+}
+
+int YSBupStandaloneCreateForTest(int deviceId, const char *name, const char *comment,
+                                 const void *data, int dataSize) {
+    saveinfo_struct header;
+    if (name == NULL || comment == NULL || data == NULL || dataSize <= 0) {
+        return -1;
+    }
+    memset(&header, 0, sizeof(header));
+    strncpy(header.filename, name, 11);
+    strncpy(header.comment, comment, 10);
+    header.language = 0;
+    // Only "date" is stored in backup RAM; year/month/day/hour/minute/week are
+    // derived from it when reading back. This value decodes to 1998-05-12 09:30
+    // (minutes since the Saturn BUP epoch).
+    header.date = 9657210u;
+    header.year = 18;      /* 1998 */
+    header.month = 5;
+    header.day = 12;
+    header.hour = 9;
+    header.minute = 30;
+    header.week = 2;
+    header.datasize = (u32)dataSize;
+    header.blocksize = 0;
+    return BiosBUPImport((u32)deviceId, &header, (const char *)data, dataSize) == 0 ? 0 : -1;
+}
+
+int YSBupStandaloneExport(int deviceId, const char *savename,
+                          void **buffer, int *size) {
+    char *buf = NULL;
+    int bufsize = 0;
+
+    if (savename == NULL || buffer == NULL || size == NULL) {
+        return -1;
+    }
+    if (BiosBUPExport((u32)deviceId, savename, &buf, &bufsize) != 0) {
+        return -1;
+    }
+    *buffer = buf;
+    *size = bufsize;
+    return 0;
+}
+
+int YSBupStandaloneImport(int deviceId, const char *name, const char *comment,
+                          unsigned char language, unsigned int saturnDate,
+                          const void *data, int dataSize) {
+    saveinfo_struct header;
+    int result;
+
+    if (name == NULL || data == NULL || dataSize <= 0) {
+        return -1;
+    }
+
+    memset(&header, 0, sizeof(header));
+    strncpy(header.filename, name, 11);
+    strncpy(header.comment, comment == NULL ? "" : comment, 10);
+    header.language = language;
+    // BiosBUPImport only writes filename, comment, language, date and datasize
+    // into backup RAM; the y/m/d/h/m/week fields are derived from "date" when
+    // the save is listed back, so they do not need to be populated here.
+    header.date = saturnDate;
+    header.datasize = (u32)dataSize;
+    header.blocksize = 0;
+
+    result = BiosBUPImport((u32)deviceId, &header, (const char *)data, dataSize);
+    if (result == 0) {
+        return 0;
+    }
+    if (result == 4 || result == 8) {
+        return -2;
+    }
+    return -1;
+}
+
+unsigned int YSBupEncodeDate(int year, int month, int day, int hour, int minute) {
+    return YabBupEncodeDate(year, month, day, hour, minute);
+}
+
 // Global state for RetroAchievements
 static BOOL ra_initialized = NO;
 static BOOL ra_user_logged_in = NO;
@@ -497,5 +704,36 @@ int YabauseRA_DeserializeProgress(const uint8_t* buffer, size_t buffer_size) {
 // 
 // These functions use the official rcheevos library and follow the integration guide.
 // The iOS-specific direct API implementation has been completely removed.
+
+// Registers the standalone rc_hash cdreader; implemented in the shared core
+// (yabause_ra_integration.cpp).
+void YabauseRA_InitHashCdReader(void);
+
+int YabauseRA_GenerateGameHash(const char* path, char* buffer, int bufferSize) {
+    if (path == NULL || buffer == NULL || bufferSize < 33) {
+        return 0;
+    }
+    // Register the standalone cdreader (idempotent)
+    YabauseRA_InitHashCdReader();
+    char hash[33];
+    if (rc_hash_generate_from_file(hash, RC_CONSOLE_SATURN, path)) {
+        strncpy(buffer, hash, bufferSize);
+        buffer[bufferSize - 1] = '\0';
+        return 1;
+    }
+    return 0;
+}
+
+const char* YabauseRA_GetUserApiToken(void) {
+    YabauseRA::Integration* ra = YabauseRA::Integration::getInstance();
+    if (ra == NULL) {
+        return NULL;
+    }
+    const rc_client_user_t* user = ra->getUserInfo();
+    if (user == NULL || user->token == NULL || strlen(user->token) == 0) {
+        return NULL;
+    }
+    return user->token;
+}
 
 } // extern "C"

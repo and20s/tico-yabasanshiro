@@ -633,6 +633,30 @@ typedef struct {
   Dmac dma_ch1;
   u32 pre_cycle;
   u32 inputCaptureCount;
+
+  // FRT input-capture edges that arrived while FTCSR.ICF was already set
+  // (merged edges). On real hardware the ICI handler is accepted within a
+  // few cycles, so its ICF clear always happens before the next doorbell.
+  // The emulator accepts interrupts at coarser boundaries (dynarec block
+  // ends), so a late handler can clear an ICF that already represents a
+  // NEWER edge, silently dropping it (Gungriffon master/slave handshake
+  // deadlock at mission start). Count merged edges and re-latch ICF on
+  // clear so each real edge produces a handler run.
+  // Transient timing state; deliberately not serialized in save states.
+  u32 frtIcMergedEdges;
+
+  // Set while an ICI handler run is still owed for the currently latched ICF,
+  // i.e. an ICI was raised for it and no FTCSR clear has retired it yet.
+  // Merged edges are banked only while this is set. TIER.ICIE cannot be used
+  // for that test: an ICI handler routinely masks ICIE as its first act, and
+  // a doorbell arriving inside that window must still be banked (Gungriffon II
+  // deadlocks on exactly one such edge). A CPU that never raised an ICI has no
+  // late handler to compensate for, so it never banks and keeps the hardware
+  // level-flag semantics that polling flow control depends on (Azel).
+  // Serialized from state version 7. Older states only carry
+  // frtIcMergedEdges, from which this is approximated - badly, because the
+  // common case is owed with an empty bank.
+  u8 frtIcIntOwed;
   void *ext;
 
   // IF/MA contention approximation state (cycle-cost accuracy Phase 2).
@@ -775,6 +799,12 @@ void FASTCALL SH2OnFrame(SH2_struct *context);
 
 void SH2RemoveInterrupt(SH2_struct *context, u8 vector, u8 level);
 void SH2HandleInterrupts(SH2_struct *context);
+
+// YABA_SH2_PROF cycle-attribution profiler (interpreter core only)
+int Sh2ProfEnabled(void);
+u64 Sh2ProfICount(int slave);
+u64 Sh2ProfCycles(int slave);
+void Sh2ProfDump(const char *path, const char *tag);
 
 #ifdef __cplusplus
 }

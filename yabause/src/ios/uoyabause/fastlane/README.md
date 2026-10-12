@@ -31,6 +31,14 @@ Build and sign the application for development
 
 Build Lite version and sign the application for development
 
+### ios refresh_appstore_profiles
+
+```sh
+[bundle exec] fastlane ios refresh_appstore_profiles
+```
+
+Regenerate the App Store provisioning profiles after a capability change
+
 ### ios beta
 
 ```sh
@@ -47,6 +55,14 @@ Build and sign the application for distribution, upload to TestFlight
 
 Build and sign the application for distribution, upload to TestFlight
 
+### ios upload_screenshots
+
+```sh
+[bundle exec] fastlane ios upload_screenshots
+```
+
+Upload the captured screenshots to App Store Connect
+
 ### ios screenshots_all
 
 ```sh
@@ -54,6 +70,14 @@ Build and sign the application for distribution, upload to TestFlight
 ```
 
 Generate new localized screenshots for all targets
+
+### ios upload_release_notes
+
+```sh
+[bundle exec] fastlane ios upload_release_notes
+```
+
+Overwrite the What's New text on App Store Connect from release_notes/
 
 ----
 

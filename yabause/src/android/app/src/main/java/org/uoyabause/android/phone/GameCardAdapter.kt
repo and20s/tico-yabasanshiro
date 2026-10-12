@@ -19,6 +19,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.devmiyax.yabasanshiro.R
+import org.uoyabause.android.FreeGameSlots
 import org.uoyabause.android.GameInfo
 import org.uoyabause.android.GameInfo.Companion.sigin
 import java.io.File
@@ -38,6 +39,21 @@ class GameCardAdapter(
         fun onItemDPadRight(): Boolean
     }
 
+    /**
+     * The paths the free version may play, or null when there is no limit.
+     * Games outside it are drawn dimmed with a lock and open the subscription
+     * gate instead of their detail (FreeGameSlots).
+     */
+    private var unlockedPaths: Set<String>? = null
+
+    fun setUnlockedPaths(paths: Set<String>?) {
+        if (paths == unlockedPaths) return
+        unlockedPaths = paths
+        // Redraw what is already on screen: a purchase landing has to lift the
+        // locks without waiting for the list to be rebuilt.
+        notifyItemRangeChanged(0, itemCount)
+    }
+
     class ViewHolder(
         view: View,
     ) : RecyclerView.ViewHolder(view) {
@@ -47,6 +63,7 @@ class GameCardAdapter(
         val tvMeta: TextView = view.findViewById(R.id.tv_game_meta)
         val ratingBar: RatingBar = view.findViewById(R.id.rating_bar)
         val badgeCloud: ImageView = view.findViewById(R.id.badge_cloud)
+        val badgeLock: ImageView = view.findViewById(R.id.badge_lock)
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
@@ -64,7 +81,8 @@ class GameCardAdapter(
 
         // Accessibility: box art and card contentDescription
         holder.imgBoxart.contentDescription = ctx.getString(R.string.box_art_description, game.game_title)
-        holder.card.contentDescription = game.game_title
+
+        bindLockState(holder, game, ctx)
 
         // Cloud badge
         if (game.isCloudOnly) {
@@ -163,6 +181,29 @@ class GameCardAdapter(
         }
     }
 
+    /**
+     * Dims a locked card and marks it with a lock.
+     *
+     * Dimmed rather than hidden, and still clickable: the card says the game is
+     * there, the lock says why it will not start, and choosing it offers the
+     * subscription that fixes it. Alpha is applied to the content rather than to
+     * the card so the lock and the focus ring stay at full strength.
+     */
+    private fun bindLockState(holder: ViewHolder, game: GameInfo, ctx: android.content.Context) {
+        val locked = FreeGameSlots.isLocked(game, unlockedPaths)
+        val contentAlpha = if (locked) LOCKED_CONTENT_ALPHA else 1.0f
+        holder.imgBoxart.alpha = contentAlpha
+        holder.tvTitle.alpha = contentAlpha
+        holder.tvMeta.alpha = contentAlpha
+        holder.ratingBar.alpha = contentAlpha
+        holder.badgeLock.visibility = if (locked) View.VISIBLE else View.GONE
+        holder.card.contentDescription = if (locked) {
+            ctx.getString(R.string.game_locked_content_description, game.game_title)
+        } else {
+            game.game_title
+        }
+    }
+
     private fun loadBoxart(holder: ViewHolder, game: GameInfo) {
         if (game.image_url.isNullOrEmpty()) {
             Glide
@@ -198,6 +239,13 @@ class GameCardAdapter(
 
     private fun Int.dpToPx(ctx: android.content.Context): Int =
         (this * ctx.resources.displayMetrics.density).toInt()
+
+    companion object {
+        // Above Material's 38% disabled content, which is for a control that
+        // does nothing at all; a locked card still answers, with the gate.
+        // Legible, clearly set apart from the playable cards around it.
+        private const val LOCKED_CONTENT_ALPHA = 0.6f
+    }
 }
 
 class GameDiffCallback : DiffUtil.ItemCallback<GameInfo>() {

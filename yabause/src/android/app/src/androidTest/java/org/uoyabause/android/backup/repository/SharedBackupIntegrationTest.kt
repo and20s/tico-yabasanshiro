@@ -109,12 +109,12 @@ class SharedBackupIntegrationTest {
         val shareInfo = ShareInfo(
             gameTitle = "Sonic the Hedgehog",
             productNumber = "T-12345",
-            comment = "100% completion save",
+            description = "100% completion save",
         )
 
         assertEquals("Sonic the Hedgehog", shareInfo.gameTitle)
         assertEquals("T-12345", shareInfo.productNumber)
-        assertEquals("100% completion save", shareInfo.comment)
+        assertEquals("100% completion save", shareInfo.description)
     }
 
     /**
@@ -125,11 +125,11 @@ class SharedBackupIntegrationTest {
         val shareInfo = ShareInfo(
             gameTitle = "ソニック・ザ・ヘッジホッグ",
             productNumber = "T-12345",
-            comment = "クリアデータ",
+            description = "クリアデータ",
         )
 
         assertEquals("ソニック・ザ・ヘッジホッグ", shareInfo.gameTitle)
-        assertEquals("クリアデータ", shareInfo.comment)
+        assertEquals("クリアデータ", shareInfo.description)
     }
 
     // ==============================

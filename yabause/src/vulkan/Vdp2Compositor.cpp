@@ -145,12 +145,14 @@ uint clampPriority(uint p) {
 // slices are rendered un-mosaic'd, so this read-time snap replicates the block
 // top-left dot across the block (Sega VDP2 manual ch.10). Slices without mosaic
 // (and the whole frame when u_mosaic.z == 0) read v_uv unchanged -- no-op.
+// u_mosaic.w is the subset that also gets vertical mosaic: a rotation
+// background is mosaiced horizontally only, so RBG0 is never in it.
 vec2 uvFor(int which) {
   if (((ubo.u_mosaic.z >> which) & 1) == 0) { return v_uv; }
   float w = float(ubo.u_vwidth);
   float h = float(ubo.u_vheight);
   float mx = float(ubo.u_mosaic.x);
-  float my = float(ubo.u_mosaic.y);
+  float my = (((ubo.u_mosaic.w >> which) & 1) != 0) ? float(ubo.u_mosaic.y) : 1.0;
   float sx = floor(floor(v_uv.x * w) / mx) * mx;
   float sy = floor(floor(v_uv.y * h) / my) * my;
   return vec2((sx + 0.5) / w, (sy + 0.5) / h);
@@ -401,6 +403,59 @@ void main() {
   int topRatio = int((topAttr >> 6) & 0x3Fu);
   ivec3 topColor = colorRGB(idx[0]);
 
+  // Color calc window (ch.12, WCTLD>>8). Evaluated BEFORE the LNCL insertion
+  // and extended-cc stages: on hardware the cc window clears the pixel's
+  // color-calc-enable bit itself (mednafen ApplyWin clears only PIX_CCE), so
+  // every color-calc consumer -- the normal-path LNCL line-color blend below,
+  // the extended fold, and the final top<->second stage -- is suppressed
+  // through the topCcEnable gate. Gating only the final blend (the previous
+  // placement) let the LNCL insertion darken the whole screen when a game
+  // restricts it to a window (EMIT Vol.1 subtitle band). The W0/W1 horizontal
+  // spans live in rows 2/3 of s_lineColor (same packing as the layer display
+  // window) and the sprite window comes from the sprite slice's attr bit 15;
+  // u_ccWindow.x == 0 means no cc window (no behavior change).
+  // u_ccWindow.z: 0 = AND, 1 = OR, 2 = deny everywhere (the hardware case where
+  // the logic bit is set with no window enabled -- color calc off screen-wide).
+  if (ubo.u_ccWindow.x != 0) {
+    bool _ccAllows;
+    if (ubo.u_ccWindow.z == 2) {
+      _ccAllows = false;
+    } else {
+      // _cwx is only compared against the span bounds, it never indexes the
+      // table, so it must be clamped to the SCREEN width. Clamping it to the
+      // line-color texture width (a fixed 512) made every pixel right of x=511
+      // inherit the membership computed at x=511 in 704-dot modes.
+      int _cwx = int(v_uv.x * float(ubo.u_vwidth));
+      if (_cwx < 0) { _cwx = 0; }
+      if (_cwx > ubo.u_vwidth - 1) { _cwx = ubo.u_vwidth - 1; }
+      uvec4 _cw0 = uvec4(texelFetch(s_lineColor, ivec2(ccRow, 2), 0) * 255.0 + 0.5);
+      uvec4 _cw1 = uvec4(texelFetch(s_lineColor, ivec2(ccRow, 3), 0) * 255.0 + 0.5);
+      int _cs0 = int(_cw0.r) | (int(_cw0.g) << 8);
+      int _ce0 = int(_cw0.b) | ((int(_cw0.a) & 0x7F) << 8);
+      int _cs1 = int(_cw1.r) | (int(_cw1.g) << 8);
+      int _ce1 = int(_cw1.b) | ((int(_cw1.a) & 0x7F) << 8);
+      int _cwv = 0;
+      if ((_cw0.a & 0x80u) != 0u && _cwx >= _cs0 && _cwx < _ce0) { _cwv |= 1; }
+      if ((_cw1.a & 0x80u) != 0u && _cwx >= _cs1 && _cwx < _ce1) { _cwv |= 2; }
+      // KNOWN GAP: the sprite window (cc-window bit 2, WCTLD bits 12/13) is not
+      // evaluated here. It is a per-pixel VDP1 signal (framebuffer B byte bit 6,
+      // see Vdp1ComputeRasterizer encodeBByte) that the sprite decoder currently
+      // discards rather than forwarding, so the compositor has no membership to
+      // test. The host mirrors this by never putting bit 2 into u_ccWindow.x
+      // (VIDVulkan.cpp), which keeps the AND/OR evaluation below self-consistent
+      // instead of testing a bit that is always 0.
+      if (ubo.u_ccWindow.z == 0) {
+        _ccAllows = ((_cwv & ubo.u_ccWindow.x) == ubo.u_ccWindow.y);
+      } else {
+        _ccAllows = ((_cwv & ubo.u_ccWindow.x) != ubo.u_ccWindow.y);
+      }
+    }
+    if (!_ccAllows) {
+      topCcEnable = false;
+      topRatio = 0x3F;
+    }
+  }
+
   // Second operand: another opaque layer, or the back screen (no color calc).
   ivec3 secondColor;
   bool secondCcEnable;
@@ -506,40 +561,13 @@ void main() {
     secondColor = topColor;
   }
 
-  // Color calc window (ch.12, WCTLD>>8). When the pixel is outside the cc-window
-  // valid area, skip color calc entirely (vidsoft.c:1079 forces alpha 0x3F) --
-  // the top image passes through opaque. The W0/W1 horizontal spans live in rows
-  // 2/3 of s_lineColor (same packing the layer display window uses); recover the
-  // Saturn line/x from ccRow and v_uv.x * u_vwidth. u_ccWindow.x == 0 means no cc
-  // window -> color calc applies everywhere (the common case, no behavior change).
-  // The kept/inside-valid-area test mirrors injectGBufferWindow's discard gate:
-  // AND mode keeps where (membership & mask) == flag, OR mode where it differs.
-  bool ccWindowAllows = true;
-  if (ubo.u_ccWindow.x != 0) {
-    int _cww = textureSize(s_lineColor, 0).x;
-    int _cwx = int(v_uv.x * float(ubo.u_vwidth));
-    if (_cwx < 0) { _cwx = 0; }
-    if (_cwx >= _cww) { _cwx = _cww - 1; }
-    uvec4 _cw0 = uvec4(texelFetch(s_lineColor, ivec2(ccRow, 2), 0) * 255.0 + 0.5);
-    uvec4 _cw1 = uvec4(texelFetch(s_lineColor, ivec2(ccRow, 3), 0) * 255.0 + 0.5);
-    int _cs0 = int(_cw0.r) | (int(_cw0.g) << 8);
-    int _ce0 = int(_cw0.b) | ((int(_cw0.a) & 0x7F) << 8);
-    int _cs1 = int(_cw1.r) | (int(_cw1.g) << 8);
-    int _ce1 = int(_cw1.b) | ((int(_cw1.a) & 0x7F) << 8);
-    int _cwv = 0;
-    if ((_cw0.a & 0x80u) != 0u && _cwx >= _cs0 && _cwx < _ce0) { _cwv |= 1; }
-    if ((_cw1.a & 0x80u) != 0u && _cwx >= _cs1 && _cwx < _ce1) { _cwv |= 2; }
-    if (ubo.u_ccWindow.z == 0) {
-      ccWindowAllows = ((_cwv & ubo.u_ccWindow.x) == ubo.u_ccWindow.y);
-    } else {
-      ccWindowAllows = ((_cwv & ubo.u_ccWindow.x) != ubo.u_ccWindow.y);
-    }
-  }
-
-  ivec3 result = ccWindowAllows
-      ? blendTopSecondStage(topColor, topRatio, topCcEnable,
-                            secondColor, secondRatio)
-      : topColor;
+  // Color calc window: applied earlier (right after the top layer is
+  // resolved) by clearing topCcEnable/topRatio, so every cc consumer above --
+  // LNCL insertion, extended fold, and this final stage -- was suppressed in
+  // the windowed-out region. blendTopSecondStage passes the top through when
+  // topCcEnable is false, so no separate gate is needed here.
+  ivec3 result = blendTopSecondStage(topColor, topRatio, topCcEnable,
+                                     secondColor, secondRatio);
 
   // Color offset (Sega VDP2 manual ch.13): added AFTER color calc, to the result
   // (= the top image), using the TOP layer's offset (precomputed per slice on the
@@ -820,6 +848,7 @@ void Vdp2Compositor::composite(VkCommandBuffer commandBuffer,
                                int mosaicX,
                                int mosaicY,
                                int mosaicMask,
+                               int mosaicVMask,
                                float rotCos,
                                float rotSin,
                                int backPerLine) {
@@ -874,7 +903,7 @@ void Vdp2Compositor::composite(VkCommandBuffer commandBuffer,
   ubo.mosaic[0] = (mosaicX >= 1) ? mosaicX : 1;
   ubo.mosaic[1] = (mosaicY >= 1) ? mosaicY : 1;
   ubo.mosaic[2] = mosaicMask;
-  ubo.mosaic[3] = 0;
+  ubo.mosaic[3] = mosaicVMask;
 
   int fi = frameIndex;
   frameIndex = (frameIndex + 1) % kFrames;

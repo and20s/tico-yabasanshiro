@@ -620,21 +620,25 @@ void Renderer::_SetupDebug()
     }
 
     if (!validation_found) {
-/*
-      ERR_EXIT(
-        "vkEnumerateInstanceLayerProperties failed to find required validation layer.\n\n"
-        "Please look at the Getting Started guide for additional information.\n",
-        "vkCreateInstance Failure");
-*/
-      exit(-1);
+      // The layer is not installed on this system (on Android it ships as
+      // libVkLayer_khronos_validation.so in jniLibs and is stripped from
+      // release/pro APKs). Run without validation rather than killing the
+      // process: exiting here tears down C++ statics from the emulation
+      // thread while the UI threads are still running, which surfaces as
+      // "pthread_mutex_lock called on a destroyed mutex" plus a SIGSEGV in
+      // RenderThread instead of a diagnosable error.
+      LOGI("Vulkan: %s not found, continuing without validation",
+           instance_validation_layers[0]);
+      return;
     }
-    
+
+  _debug_enabled = true;
 
   _instance_extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
   _instance_extensions.push_back(VK_EXT_DEBUG_REPORT_EXTENSION_NAME);
-  // Validation layer enabled on Android too (libVkLayer_khronos_validation.so
-  // is bundled in jniLibs/arm64-v8a/). Used for ad-hoc debugging -- disable for
-  // release if perf overhead matters.
+  // Reached only when cmake was configured with -DYAB_WANT_VULKAN_VALIDATION=ON
+  // and the layer is actually installed. On Android that means
+  // libVkLayer_khronos_validation.so must be packaged into the APK.
   _instance_layers.push_back("VK_LAYER_KHRONOS_validation");
 
    //_instance_layers.push_back( "VK_LAYER_LUNARG_standard_validation" );
@@ -689,6 +693,11 @@ void vkDebugNameObject(VkDevice device, VkObjectType object_type, uint64_t vulka
 
 void Renderer::_InitDebug()
 {
+  // _SetupDebug() bailed out because the validation layer is not installed,
+  // so VK_EXT_debug_utils / VK_EXT_debug_report were never requested.
+  if (!_debug_enabled) {
+    return;
+  }
 
   CreateDebugUtilsMessengerEXT =
     (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(_instance, "vkCreateDebugUtilsMessengerEXT");
@@ -713,8 +722,11 @@ void Renderer::_InitDebug()
     fvkCreateDebugReportCallbackEXT = (PFN_vkCreateDebugReportCallbackEXT)vkGetInstanceProcAddr(_instance, "vkCreateDebugReportCallbackEXT");
     fvkDestroyDebugReportCallbackEXT = (PFN_vkDestroyDebugReportCallbackEXT)vkGetInstanceProcAddr(_instance, "vkDestroyDebugReportCallbackEXT");
     if (nullptr == fvkCreateDebugReportCallbackEXT || nullptr == fvkDestroyDebugReportCallbackEXT) {
-      assert(0 && "Vulkan ERROR: Can't fetch debug function pointers.");
-      std::exit(-1);
+      // Neither debug-utils nor debug-report is usable. Validation messages
+      // are lost, but that is not worth aborting a running emulator over.
+      LOGI("%s", "Vulkan: no debug callback entry points, validation messages disabled");
+      _debug_enabled = false;
+      return;
     }
 
     fvkCreateDebugReportCallbackEXT(_instance, &_debug_callback_create_info, nullptr, &_debug_report);
@@ -731,6 +743,10 @@ void Renderer::_InitDebug()
 
 void Renderer::_DeInitDebug()
 {
+  if (!_debug_enabled) {
+    return;
+  }
+
   if (_debug_report != VK_NULL_HANDLE) {
     fvkDestroyDebugReportCallbackEXT(_instance, _debug_report, nullptr);
     _debug_report = VK_NULL_HANDLE;

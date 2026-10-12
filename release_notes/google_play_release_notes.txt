@@ -1,110 +1,76 @@
-<en-US>
-- Tenchi o Kurau II: fixed a progress blocker in Stage 3
-- Jikkyou Oshaberi Parodius: fixed a boot failure
-- Lupin the 3rd Chronicles, Dungeons & Dragons Collection: fixed boot failures
-- Die Hard Trilogy, Cyberia: fixed boot failures
-- Bubble Bobble feat. Rainbow Islands: fixed a boot failure
-- Can Can Bunny Premiere 2: fixed a boot failure
-- NHL Powerplay '96, Madden NFL 97, Independence Day: fixed boot failures
-- Added in-app news announcements
-</en-US>
-<de-DE>
-- Tenchi o Kurau II: Blockade in Stage 3 behoben
-- Jikkyou Oshaberi Parodius: Start behoben
-- Lupin the 3rd Chronicles, Dungeons & Dragons Collection: Start behoben
-- Die Hard Trilogy, Cyberia: Start behoben
-- Bubble Bobble feat. Rainbow Islands: Start behoben
-- Can Can Bunny Premiere 2: Start behoben
-- NHL Powerplay '96, Madden NFL 97, Independence Day: Start behoben
-- Neuigkeiten werden jetzt in der App angezeigt
-</de-DE>
-<es-419>
-- Tenchi o Kurau II: corregido un bloqueo en la fase 3
-- Jikkyou Oshaberi Parodius: corregido el arranque
-- Lupin the 3rd Chronicles, Dungeons & Dragons Collection: corregido el arranque
-- Die Hard Trilogy, Cyberia: corregido el arranque
-- Bubble Bobble feat. Rainbow Islands: corregido el arranque
-- Can Can Bunny Premiere 2: corregido el arranque
-- NHL Powerplay '96, Madden NFL 97, Independence Day: corregido el arranque
-- Se anadieron avisos dentro de la app
-</es-419>
-<es-ES>
-- Tenchi o Kurau II: corregido un bloqueo en la fase 3
-- Jikkyou Oshaberi Parodius: corregido el arranque
-- Lupin the 3rd Chronicles, Dungeons & Dragons Collection: corregido el arranque
-- Die Hard Trilogy, Cyberia: corregido el arranque
-- Bubble Bobble feat. Rainbow Islands: corregido el arranque
-- Can Can Bunny Premiere 2: corregido el arranque
-- NHL Powerplay '96, Madden NFL 97, Independence Day: corregido el arranque
-- Anadidos avisos dentro de la app
-</es-ES>
-<fr-FR>
-- Tenchi o Kurau II : blocage au stage 3 corrige
-- Jikkyou Oshaberi Parodius : demarrage corrige
-- Lupin the 3rd Chronicles, Dungeons & Dragons Collection : demarrage corrige
-- Die Hard Trilogy, Cyberia : demarrage corrige
-- Bubble Bobble feat. Rainbow Islands : demarrage corrige
-- Can Can Bunny Premiere 2 : demarrage corrige
-- NHL Powerplay '96, Madden NFL 97, Independence Day : demarrage corrige
-- Ajout des annonces dans l'application
-</fr-FR>
-<id>
-- Tenchi o Kurau II: perbaikan macet di Stage 3
-- Jikkyou Oshaberi Parodius: perbaikan booting
-- Lupin the 3rd Chronicles, Dungeons & Dragons Collection: perbaikan booting
-- Die Hard Trilogy, Cyberia: perbaikan booting
-- Bubble Bobble feat. Rainbow Islands: perbaikan booting
-- Can Can Bunny Premiere 2: perbaikan booting
-- NHL Powerplay '96, Madden NFL 97, Independence Day: perbaikan booting
-- Menambahkan pengumuman di dalam aplikasi
-</id>
-<it-IT>
-- Tenchi o Kurau II: risolto un blocco allo stage 3
-- Jikkyou Oshaberi Parodius: avvio risolto
-- Lupin the 3rd Chronicles, Dungeons & Dragons Collection: avvio risolto
-- Die Hard Trilogy, Cyberia: avvio risolto
-- Bubble Bobble feat. Rainbow Islands: avvio risolto
-- Can Can Bunny Premiere 2: avvio risolto
-- NHL Powerplay '96, Madden NFL 97, Independence Day: avvio risolto
-- Aggiunti gli avvisi nell'app
-</it-IT>
 <ja-JP>
-- 天地を喰らうII 赤壁の戦い: STAGE3 で先に進めなくなる問題を修正
-- 実況おしゃべりパロディウス: 起動しない問題を修正
-- ルパン三世 クロニクル、ダンジョンズ&ドラゴンズ コレクション: 起動しない問題を修正
-- ダイハード トリロジー、サイベリア: 起動しない問題を修正
-- バブルボブル feat. レインボーアイランド: 起動しない問題を修正
-- カンカンバニー プルミエール2: 起動しない問題を修正
-- NHLパワープレイ'96、マッデンNFL 97、インディペンデンス・デイ: 起動しない問題を修正
-- アプリ内でお知らせを表示する機能を追加
+- ストリートファイター ZERO、ヴァンパイアハンターなど、起動直後に黒画面になる不具合を修正
+- デイトナ USA で 3D が表示されない不具合を修正
+- 回転する背景の描画の乱れを修正
+- 端末性能を計測して設定を自動で選ぶ機能を追加。結果は同意した場合のみ送信 (Android)
 </ja-JP>
+
+<en-US>
+- Fixed a black screen right after launch in Street Fighter Zero, Vampire Hunter and other titles
+- Fixed missing 3D graphics in Daytona USA
+- Fixed rendering glitches on rotating backgrounds
+- Graphics settings can now be chosen automatically by benchmarking your device. Results are sent only with your consent (Android)
+</en-US>
+
+<de-DE>
+- Schwarzer Bildschirm direkt nach dem Start in Street Fighter Zero, Vampire Hunter u. a. behoben
+- Fehlende 3D-Grafik in Daytona USA behoben
+- Darstellungsfehler bei rotierenden Hintergründen behoben
+- Grafikeinstellungen per Leistungsmessung automatisch wählbar. Ergebnisse nur mit Zustimmung gesendet (Android)
+</de-DE>
+
+<es-419>
+- Corregida la pantalla negra al iniciar en Street Fighter Zero, Vampire Hunter y otros títulos
+- Corregida la falta de gráficos 3D en Daytona USA
+- Corregidos los fallos de renderizado en fondos giratorios
+- Ajustes gráficos automáticos según el rendimiento del dispositivo. Los resultados solo se envían con tu consentimiento (Android)
+</es-419>
+
+<es-ES>
+- Corregida la pantalla en negro al iniciar en Street Fighter Zero, Vampire Hunter y otros títulos
+- Corregida la falta de gráficos 3D en Daytona USA
+- Corregidos los fallos de renderizado en fondos giratorios
+- Ajustes gráficos automáticos según el rendimiento del dispositivo. Los resultados solo se envían con tu consentimiento (Android)
+</es-ES>
+
+<fr-FR>
+- Correction d'un écran noir juste après le lancement dans Street Fighter Zero, Vampire Hunter, etc.
+- Correction de l'absence de graphismes 3D dans Daytona USA
+- Correction des défauts d'affichage des arrière-plans en rotation
+- Réglages graphiques choisis automatiquement par mesure des performances. Résultats envoyés uniquement avec votre accord (Android)
+</fr-FR>
+
+<id>
+- Memperbaiki layar hitam tepat setelah peluncuran di Street Fighter Zero, Vampire Hunter, dll.
+- Memperbaiki grafis 3D yang hilang di Daytona USA
+- Memperbaiki gangguan render pada latar belakang berputar
+- Pengaturan grafis otomatis dari pengukuran kinerja perangkat. Hasil dikirim hanya dengan persetujuan Anda (Android)
+</id>
+
+<it-IT>
+- Risolta la schermata nera subito dopo l'avvio in Street Fighter Zero, Vampire Hunter e altri titoli
+- Risolta la mancanza di grafica 3D in Daytona USA
+- Risolti i difetti di rendering degli sfondi rotanti
+- Impostazioni grafiche scelte automaticamente misurando le prestazioni. Risultati inviati solo con il tuo consenso (Android)
+</it-IT>
+
 <pt-BR>
-- Tenchi o Kurau II: corrigido um bloqueio na fase 3
-- Jikkyou Oshaberi Parodius: corrigido o inicio
-- Lupin the 3rd Chronicles, Dungeons & Dragons Collection: corrigido o inicio
-- Die Hard Trilogy, Cyberia: corrigido o inicio
-- Bubble Bobble feat. Rainbow Islands: corrigido o inicio
-- Can Can Bunny Premiere 2: corrigido o inicio
-- NHL Powerplay '96, Madden NFL 97, Independence Day: corrigido o inicio
-- Adicionados avisos dentro do app
+- Corrigida a tela preta logo após a inicialização em Street Fighter Zero, Vampire Hunter e outros títulos
+- Corrigida a ausência de gráficos 3D em Daytona USA
+- Corrigidos os erros de renderização em fundos rotativos
+- Ajustes gráficos escolhidos automaticamente medindo o desempenho. Resultados enviados apenas com seu consentimento (Android)
 </pt-BR>
+
 <th>
-- Tenchi o Kurau II: แก้ไขปัญหาติดค้างในด่าน 3
-- Jikkyou Oshaberi Parodius: แก้ไขปัญหาเริ่มเกม
-- Lupin the 3rd Chronicles, Dungeons & Dragons Collection: แก้ไขปัญหาเริ่มเกม
-- Die Hard Trilogy, Cyberia: แก้ไขปัญหาเริ่มเกม
-- Bubble Bobble feat. Rainbow Islands: แก้ไขปัญหาเริ่มเกม
-- Can Can Bunny Premiere 2: แก้ไขปัญหาเริ่มเกม
-- NHL Powerplay '96, Madden NFL 97, Independence Day: แก้ไขปัญหาเริ่มเกม
-- เพิ่มการแจ้งข่าวสารภายในแอป
+- แก้ไขหน้าจอดำทันทีหลังเปิดเกมใน Street Fighter Zero, Vampire Hunter และเกมอื่นๆ
+- แก้ไขกราฟิก 3D ที่ไม่แสดงใน Daytona USA
+- แก้ไขการแสดงผลผิดพลาดของพื้นหลังที่หมุน
+- ตั้งค่ากราฟิกอัตโนมัติตามประสิทธิภาพของอุปกรณ์ ส่งผลการวัดเมื่อคุณยินยอมเท่านั้น (Android)
 </th>
+
 <zh-CN>
-- 吞食天地II 赤壁之战: 修复第三关无法继续的问题
-- 实况欢乐大魔界: 修复无法启动的问题
-- 鲁邦三世 编年史、龙与地下城 合集: 修复无法启动的问题
-- 虎胆龙威 三部曲、Cyberia: 修复无法启动的问题
-- 泡泡龙 feat. 彩虹岛: 修复无法启动的问题
-- Can Can Bunny Premiere 2: 修复无法启动的问题
-- NHL Powerplay '96、Madden NFL 97、Independence Day: 修复无法启动的问题
-- 新增应用内消息公告
+- 修复街头霸王 ZERO、吸血鬼猎人等游戏启动后立即黑屏的问题
+- 修复代托纳 USA 中 3D 无法显示的问题
+- 修复旋转背景渲染错乱的问题
+- 新增根据设备性能自动选择图形设置的功能，测量结果仅在你同意时发送 (Android)
 </zh-CN>

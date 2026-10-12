@@ -219,6 +219,19 @@
                     android:layout_height="wrap_content"
                     android:layout_weight="1" />
 
+                <!-- Report / hide someone else's save. Kept behind an overflow
+                     so these sit apart from the primary Import action. -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btn_more_detail"
+                    style="@style/Widget.Material3.Button.IconButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:contentDescription="@string/more_options"
+                    android:focusable="true"
+                    android:visibility="gone"
+                    app:icon="@drawable/ic_more_vert"
+                    tools:visibility="visible" />
+
                 <!-- Share link button -->
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btn_share_detail"

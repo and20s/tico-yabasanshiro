@@ -47,6 +47,7 @@ import com.bumptech.glide.Glide
 import com.bumptech.glide.request.RequestOptions
 import com.frybits.harmony.getHarmonySharedPreferences
 import com.google.android.material.bottomnavigation.BottomNavigationView
+import com.google.android.material.button.MaterialButton
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.navigation.NavigationBarView
 import com.google.android.material.navigationrail.NavigationRailView
@@ -124,12 +125,6 @@ class GameSelectFragmentPhone2 :
             }
         }
 
-    private val signInActivityLauncher =
-        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            viewModel.presenter?.onSignIn(result.resultCode, result.data)
-            updateAccountIcon()
-        }
-
     private val readRequestLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             if (result.resultCode == Activity.RESULT_OK) {
@@ -189,6 +184,9 @@ class GameSelectFragmentPhone2 :
         layoutLoading = rootView.findViewById(R.id.layout_loading)
         layoutError = rootView.findViewById(R.id.layout_error)
         bannerGameLimit = rootView.findViewById(R.id.banner_game_limit)
+        bannerGameLimit?.findViewById<MaterialButton>(R.id.btn_game_limit_subscribe)?.setOnClickListener {
+            viewModel.presentProGate()
+        }
 
         // SwipeRefresh (disabled - not needed for game list)
         swipeRefresh.isEnabled = false
@@ -294,7 +292,7 @@ class GameSelectFragmentPhone2 :
         // Initial load — check storage migration before proceeding
         checkStorageMigrationThenLoad()
 
-        // Check sign in on first load
+        // Show donation/pin prompt on first load
         if (isFirstUpdate) {
             isFirstUpdate = false
             if (requireActivity().intent?.getBooleanExtra("showPin", false) == true) {
@@ -303,8 +301,6 @@ class GameSelectFragmentPhone2 :
                 } else {
                     ShowPinInFragment.newInstance().show(childFragmentManager, "pin")
                 }
-            } else {
-                viewModel.presenter?.checkSignIn(signInActivityLauncher)
             }
         }
     }
@@ -399,6 +395,22 @@ class GameSelectFragmentPhone2 :
         }
     }
 
+    /**
+     * Shows the subscribe offer, and says how much of the library the limit is
+     * holding back. Hidden entirely while nothing is locked: an offer that
+     * stands there for a user with two games is noise, not information.
+     */
+    private fun updateGameLimitBanner(lockedCount: Int) {
+        val banner = bannerGameLimit ?: return
+        if (lockedCount <= 0) {
+            banner.visibility = View.GONE
+            return
+        }
+        banner.findViewById<TextView>(R.id.tv_game_limit_message)?.text =
+            getString(R.string.game_limit_banner_message, BuildConfig.MAX_FREE_GAMES)
+        banner.visibility = View.VISIBLE
+    }
+
     private fun updateUi(state: GameSelectScreenState) {
         swipeRefresh.isRefreshing = state.isRefreshing
 
@@ -430,17 +442,15 @@ class GameSelectFragmentPhone2 :
                 layoutError.visibility = View.GONE
                 swipeRefresh.visibility = View.VISIBLE
                 stopEmptyStateAnimation()
+                gameAdapter.setUnlockedPaths(state.unlockedPaths)
                 gameAdapter.submitList(listState.games)
 
                 // Update RetroAchievements progress in background
                 updateRetroAchievementsProgress(listState.games)
 
-                // Show/hide game list limit banner
-                bannerGameLimit?.visibility = if (state.isGameListLimited) {
-                    View.VISIBLE
-                } else {
-                    View.GONE
-                }
+                // The offer shows only once the limit is actually costing the
+                // user something, never merely because they are not subscribed.
+                updateGameLimitBanner(state.lockedCount)
 
                 // Landscape: update detail panel
                 if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
@@ -499,6 +509,12 @@ class GameSelectFragmentPhone2 :
                     }
                 }
                 dialog.show()
+            }
+            is GameSelectUiEvent.ShowProGate -> {
+                YabauseApplication.checkDonated(
+                    requireActivity(),
+                    event.messageResId?.let { getString(it) } ?: "",
+                )
             }
             is GameSelectUiEvent.ShowProgress -> {
                 // Could show a progress dialog here
@@ -948,6 +964,10 @@ class GameSelectFragmentPhone2 :
 
     // GameCardAdapter.OnItemClickListener
     override fun onItemClick(position: Int, item: GameInfo) {
+        // A locked game answers with the subscription gate. The card keeps the
+        // click rather than ignoring it: a row that looks present and does
+        // nothing at all says less than one that says why.
+        if (!viewModel.allowOpen(item)) return
         viewModel.selectGame(item)
 
         if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
@@ -965,6 +985,8 @@ class GameSelectFragmentPhone2 :
     }
 
     override fun onItemFocused(position: Int, item: GameInfo) {
+        // Focus alone opens no gate: the D-pad ring still travels over locked
+        // cards, and moving onto one is not a request to play it.
         viewModel.selectGame(item)
         if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
             updateDetailPanel(item)

@@ -117,22 +117,13 @@
                     android:layout_height="match_parent"
                     android:orientation="vertical">
 
-                    <androidx.recyclerview.widget.RecyclerView
-                        android:id="@+id/recycler_games"
-                        android:layout_width="match_parent"
-                        android:layout_height="0dp"
-                        android:layout_weight="1"
-                        android:clipToPadding="false"
-                        android:paddingBottom="80dp"
-                        android:layoutAnimation="@anim/layout_animation_stagger"
-                        tools:listitem="@layout/item_game_card" />
-
                     <!-- Game list limit banner -->
                     <com.google.android.material.card.MaterialCardView
                         android:id="@+id/banner_game_limit"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginHorizontal="@dimen/margin_small"
+                        android:layout_marginTop="@dimen/margin_small"
                         android:layout_marginBottom="@dimen/margin_small"
                         android:visibility="gone"
                         app:cardBackgroundColor="?attr/colorSurfaceContainerHigh"
@@ -142,29 +133,56 @@
                         <LinearLayout
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:orientation="horizontal"
-                            android:gravity="center_vertical"
+                            android:orientation="vertical"
                             android:padding="@dimen/margin_medium">
 
-                            <ImageView
-                                android:layout_width="24dp"
-                                android:layout_height="24dp"
-                                android:src="@drawable/ic_info_24"
-                                android:contentDescription="@string/information"
-                                app:tint="?attr/colorPrimary" />
-
-                            <TextView
-                                android:layout_width="0dp"
+                            <LinearLayout
+                                android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
-                                android:layout_weight="1"
-                                android:layout_marginStart="@dimen/margin_small"
-                                android:text="@string/game_list_limit_banner"
-                                android:textAppearance="?attr/textAppearanceBodySmall"
-                                android:textColor="?attr/colorOnSurfaceVariant" />
+                                android:orientation="horizontal"
+                                android:gravity="center_vertical">
+
+                                <ImageView
+                                    android:layout_width="24dp"
+                                    android:layout_height="24dp"
+                                    android:src="@drawable/ic_lock_24"
+                                    android:contentDescription="@string/game_locked_badge"
+                                    app:tint="?attr/colorPrimary" />
+
+                                <TextView
+                                    android:id="@+id/tv_game_limit_message"
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:layout_marginStart="@dimen/margin_small"
+                                    android:textAppearance="?attr/textAppearanceBodyMedium"
+                                    android:textColor="?attr/colorOnSurfaceVariant"
+                                    tools:text="The free version plays 3 games." />
+
+                            </LinearLayout>
+
+                            <com.google.android.material.button.MaterialButton
+                                android:id="@+id/btn_game_limit_subscribe"
+                                style="@style/Widget.Material3.Button"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_gravity="end"
+                                android:layout_marginTop="@dimen/margin_small"
+                                android:text="@string/game_limit_banner_action" />
 
                         </LinearLayout>
 
                     </com.google.android.material.card.MaterialCardView>
+
+                    <androidx.recyclerview.widget.RecyclerView
+                        android:id="@+id/recycler_games"
+                        android:layout_width="match_parent"
+                        android:layout_height="0dp"
+                        android:layout_weight="1"
+                        android:clipToPadding="false"
+                        android:paddingBottom="80dp"
+                        android:layoutAnimation="@anim/layout_animation_stagger"
+                        tools:listitem="@layout/item_game_card" />
 
                 </LinearLayout>
 

@@ -44,7 +44,10 @@ import com.google.android.gms.analytics.Tracker
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.firebase.FirebaseApp
+import com.google.firebase.analytics.FirebaseAnalytics
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.crashlytics.FirebaseCrashlytics
+import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -70,6 +73,19 @@ class YabauseApplication : MultiDexApplication() {
                 Log.d(tag, "User logged in: ${user.uid}")
                 // Register FCM token when user logs in
                 initializeFcmToken()
+                // Attach the signed-in identity to crash reports and analytics on
+                // every launch, for phone and TV alike. This mirrors what the
+                // removed GameSelectPresenter.checkSignIn() used to do; it is now
+                // only reachable from GameSelectPresenter.onSignIn(), whose sole
+                // caller is the TV screen's explicit sign-in item.
+                //
+                // Deliberately use the opaque uid alone, not displayName/email: it
+                // still lets a crash or analytics event be traced back to an
+                // account via the Firebase console, but no personally identifiable
+                // information leaves the device. Sending PII (e.g. an email
+                // address) to Analytics also violates Google's own terms.
+                FirebaseCrashlytics.getInstance().setUserId(user.uid)
+                FirebaseAnalytics.getInstance(applicationContext).setUserId(user.uid)
             } else {
                 Log.d(tag, "User logged out (or anonymous report session)")
             }
@@ -105,6 +121,9 @@ class YabauseApplication : MultiDexApplication() {
 
         // Create notification channel for admin report notifications
         createNotificationChannel()
+
+        // Subscribe to the release-announcement FCM topic
+        subscribeToReleaseTopic()
 
         // Log.d(tag,"Firebase token: " + FirebaseInstanceId.getInstance().getToken() );
     }
@@ -167,11 +186,39 @@ class YabauseApplication : MultiDexApplication() {
                 val notificationManager = getSystemService(NotificationManager::class.java)
                 notificationManager?.createNotificationChannel(channel)
 
+                val releaseChannel =
+                    NotificationChannel(
+                        CHANNEL_ID_RELEASE,
+                        getString(R.string.notification_channel_release),
+                        NotificationManager.IMPORTANCE_DEFAULT,
+                    ).apply {
+                        description = getString(R.string.notification_channel_release_desc)
+                    }
+                notificationManager?.createNotificationChannel(releaseChannel)
+
                 Log.d(tag, "Notification channel created: $channelId")
             } catch (e: Exception) {
                 Log.e(tag, "Failed to create notification channel", e)
             }
         }
+    }
+
+    /**
+     * Subscribe to the release-announcement FCM topic.
+     * Topic subscription is server-side state and does not require the
+     * POST_NOTIFICATIONS permission; the FCM SDK retries on failure.
+     */
+    private fun subscribeToReleaseTopic() {
+        FirebaseMessaging
+            .getInstance()
+            .subscribeToTopic(FCM_TOPIC_GAME_UPDATES)
+            .addOnCompleteListener { task ->
+                if (task.isSuccessful) {
+                    Log.d(tag, "Subscribed to FCM topic: $FCM_TOPIC_GAME_UPDATES")
+                } else {
+                    Log.e(tag, "Failed to subscribe to FCM topic: $FCM_TOPIC_GAME_UPDATES", task.exception)
+                }
+            }
     } // To enable debug logging use: adb shell setprop log.tag.GAv4 DEBUG
 
 /**
@@ -195,6 +242,14 @@ class YabauseApplication : MultiDexApplication() {
             private set
 
         private const val PREF_SUBSCRIBED = "subscribed"
+
+        // FCM topic for release announcements; must match
+        // notify-firebase-push.py DEFAULT_TOPIC and iOS NotificationCategory.gameUpdates.
+        const val FCM_TOPIC_GAME_UPDATES = "yabasanshiro_game_updates"
+
+        // Notification channel for release announcements; must match
+        // notify-firebase-push.py ANDROID_CHANNEL_ID.
+        const val CHANNEL_ID_RELEASE = "release_notifications"
 
         // Runtime flag: true when remote config disables subscription checking
         // (all users treated as Pro without persisting to SharedPreferences)

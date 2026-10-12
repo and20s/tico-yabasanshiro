@@ -169,6 +169,87 @@ SH2Interface_struct SH2DebugInterpreter = {SH2CORE_DEBUGINTERPRETER,
 fetchfunc fetchlist[0x100];
 
 //////////////////////////////////////////////////////////////////////////////
+// YABA_SH2_PROF: per-PC cycle attribution profiler (interpreter core only).
+//
+// The Gungriffon TrueMotion decode costs ~2x more emulated time than
+// mednafen even though every microbenchmark in tools/sh2timing sits at
+// parity or below. That rules out a flat per-instruction cost error, so the
+// question becomes "which code spends the cycles". This profiler buckets
+// executed instructions and charged cycles by PC (256 bytes per bucket over
+// WorkRAM-H, one catch-all bucket for anything outside it).
+//////////////////////////////////////////////////////////////////////////////
+
+#define SH2PROF_BASE    0x06000000
+#define SH2PROF_SIZE    0x00100000
+#define SH2PROF_SHIFT   8
+#define SH2PROF_BUCKETS (SH2PROF_SIZE >> SH2PROF_SHIFT)
+
+static int sh2prof_v = -1;
+static u64 sh2prof_icount[2];
+static u64 sh2prof_ccount[2];
+static u32 sh2prof_hist_i[2][SH2PROF_BUCKETS + 1];
+static u32 sh2prof_hist_c[2][SH2PROF_BUCKETS + 1];
+
+int Sh2ProfEnabled(void) {
+  if (sh2prof_v < 0)
+    sh2prof_v = (getenv("YABA_SH2_PROF") != NULL);
+  return sh2prof_v;
+}
+
+u64 Sh2ProfICount(int slave) { return sh2prof_icount[slave & 1]; }
+u64 Sh2ProfCycles(int slave) { return sh2prof_ccount[slave & 1]; }
+
+static void sh2prof_note(int slave, u32 pc, u32 cyc) {
+  u32 b = SH2PROF_BUCKETS;    // catch-all bucket
+  u32 off = (pc & 0x0FFFFFFF) - SH2PROF_BASE;
+  if (off < SH2PROF_SIZE)
+    b = off >> SH2PROF_SHIFT;
+  sh2prof_icount[slave]++;
+  sh2prof_ccount[slave] += cyc;
+  sh2prof_hist_i[slave][b]++;
+  sh2prof_hist_c[slave][b] += cyc;
+}
+
+// Writes the non-empty buckets, hottest first, and resets the histogram so
+// the next dump covers only the interval that follows.
+void Sh2ProfDump(const char *path, const char *tag) {
+  FILE *fp;
+  int cpu, i, n;
+  if (!path)
+    return;
+  fp = fopen(path, "a");
+  if (!fp)
+    return;
+  for (cpu = 0; cpu < 2; cpu++) {
+    fprintf(fp, "# %s cpu=%s icount=%llu cycles=%llu\n", tag,
+            cpu ? "slave" : "master",
+            (unsigned long long)sh2prof_icount[cpu],
+            (unsigned long long)sh2prof_ccount[cpu]);
+    for (n = 0; n < 40; n++) {
+      u32 best = 0, bi = 0;
+      for (i = 0; i <= SH2PROF_BUCKETS; i++) {
+        if (sh2prof_hist_c[cpu][i] > best) {
+          best = sh2prof_hist_c[cpu][i];
+          bi = i;
+        }
+      }
+      if (!best)
+        break;
+      fprintf(fp, "%s %08X %u %u\n", cpu ? "S" : "M",
+              (bi == SH2PROF_BUCKETS ? 0u
+                                     : (u32)(SH2PROF_BASE +
+                                             (bi << SH2PROF_SHIFT))),
+              sh2prof_hist_i[cpu][bi], best);
+      sh2prof_hist_c[cpu][bi] = 0;
+      sh2prof_hist_i[cpu][bi] = 0;
+    }
+    memset(sh2prof_hist_c[cpu], 0, sizeof(sh2prof_hist_c[cpu]));
+    memset(sh2prof_hist_i[cpu], 0, sizeof(sh2prof_hist_i[cpu]));
+  }
+  fclose(fp);
+}
+
+//////////////////////////////////////////////////////////////////////////////
 
 void SH2HandleInterrupts(SH2_struct *context) {
   if (context->NumberOfInterrupts != 0) {
@@ -176,10 +257,24 @@ void SH2HandleInterrupts(SH2_struct *context) {
         context->regs.SR.part.I) {
       u32 oldpc = context->regs.PC;
       u32 persr = context->regs.SR.part.I;
+      // Interrupt response time, SH7604 Hardware Manual table 5.8:
+      // 10 + m1 + m2 + m3 states for an IRL interrupt (5 to compare the
+      // priority against the SR mask, then 5 + m1 + m2 + m3 for the
+      // exception sequence itself). m1/m2/m3 are the memory accesses below:
+      // the SR save, the PC save and the vector read. The SCU is external to
+      // the SH-2 and reaches it over IRL3-IRL0 (section 5.1.3), so the IRL
+      // column applies; the on-chip peripheral modules of section 5.2.4 are
+      // DIVU/DMAC/SCI/BSC/WDT/FRT only.
+      // None of this used to be charged at all - the three accesses passed
+      // NULL and threw their cost away - so taking an interrupt was free.
+      u32 excycle = 0;
+      u32 exstates = 10;
       context->regs.R[15] -= 4;
-      MappedMemoryWriteLong(context->regs.R[15], context->regs.SR.all, NULL);
+      MappedMemoryWriteLong(context->regs.R[15], context->regs.SR.all, &excycle);
+      exstates += excycle;
       context->regs.R[15] -= 4;
-      MappedMemoryWriteLong(context->regs.R[15], context->regs.PC, NULL);
+      MappedMemoryWriteLong(context->regs.R[15], context->regs.PC, &excycle);
+      exstates += excycle;
       u32 level = context->interrupts[context->NumberOfInterrupts - 1].level;
       if (level == 0x10) {
         context->regs.SR.part.I = 0xF;
@@ -190,7 +285,9 @@ void SH2HandleInterrupts(SH2_struct *context) {
           context->regs.VBR +
               (context->interrupts[context->NumberOfInterrupts - 1].vector
                << 2),
-          NULL);
+          &excycle);
+      exstates += excycle;
+      context->cycles += exstates;
 
       int Vector = context->interrupts[context->NumberOfInterrupts - 1].vector;
       // LOG("[%s] Exception vecnum=(%x), PC=%08X to %08X, level=%08X",
@@ -3212,7 +3309,12 @@ FASTCALL void SH2InterpreterExec(SH2_struct *context, u32 cycles) {
     SH2idleCheck(context, target_cycle);
 #endif
 
+  const int prof = Sh2ProfEnabled();
+  const int prof_cpu = context->isslave ? 1 : 0;
+
   while (context->cycles < target_cycle) {
+    u32 prof_pc = context->regs.PC;
+    u32 prof_c0 = context->cycles;
 
     // Fetch Instruction
 #ifdef EXEC_FROM_CACHE
@@ -3228,6 +3330,9 @@ FASTCALL void SH2InterpreterExec(SH2_struct *context, u32 cycles) {
 
     // Execute it
     opcodes[context->instruction](context);
+
+    if (prof)
+      sh2prof_note(prof_cpu, prof_pc, context->cycles - prof_c0);
   }
 
   context->pre_cycle = context->cycles - target_cycle;

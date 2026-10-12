@@ -5,7 +5,7 @@ class RetroAchievementsGamePlacardView: UIView {
     // MARK: - UI Components
     private lazy var containerView: UIView = {
         let view = UIView()
-        view.backgroundColor = UIColor.systemBackground.withAlphaComponent(0.6)
+        view.backgroundColor = UIColor.themeSurface.withAlphaComponent(0.6)
         view.layer.cornerRadius = 12
         view.layer.shadowColor = UIColor.black.cgColor
         view.layer.shadowOffset = CGSize(width: 0, height: 4)
@@ -20,7 +20,7 @@ class RetroAchievementsGamePlacardView: UIView {
         imageView.contentMode = .scaleAspectFit
         imageView.layer.cornerRadius = 8
         imageView.layer.masksToBounds = true
-        imageView.backgroundColor = .systemGray5
+        imageView.backgroundColor = .themeSurfaceContainerHighest
         imageView.image = UIImage(systemName: "gamecontroller.fill")
         // Tint color will be set in configureTheme
         imageView.translatesAutoresizingMaskIntoConstraints = false
@@ -65,7 +65,7 @@ class RetroAchievementsGamePlacardView: UIView {
     private lazy var progressBar: UIProgressView = {
         let progress = UIProgressView(progressViewStyle: .default)
         // Progress tint color will be set in configureTheme
-        progress.trackTintColor = .systemGray5
+        progress.trackTintColor = .themeSurfaceContainerHighest
         progress.translatesAutoresizingMaskIntoConstraints = false
         progress.progress = 0.0 // Explicitly set initial progress
         return progress

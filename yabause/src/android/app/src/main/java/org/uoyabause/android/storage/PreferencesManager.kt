@@ -22,6 +22,8 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
 import androidx.preference.PreferenceManager
+import org.uoyabause.android.VideoCore
+import org.uoyabause.android.getStringSafe
 import java.io.File
 
 /**
@@ -82,6 +84,8 @@ class PreferencesManager(
                 val manager = getInstance(context)
                 manager.performV18ToV19Migration(context)
             }
+
+            getInstance(context).dropSoftwareVideoCoreIfNeeded(context)
 
             appMetadata.edit().putInt(KEY_LAST_VERSION_CODE, currentVersionCode).apply()
         }
@@ -195,6 +199,35 @@ class PreferencesManager(
         val prefs = getGlobalPrefs(PREFS_MIGRATION)
         prefs.edit().putBoolean(migrationKey, true).apply()
         Log.d(TAG, "Migration marked as completed: $migrationKey")
+    }
+
+    /**
+     * Drop the software video core (issue: software renderer no longer
+     * supported). A device that still has it stored is moved to Vulkan, or to
+     * OpenGL ES when the device cannot run Vulkan at all.
+     *
+     * Per-game settings are not rewritten here: they are resolved on launch
+     * (see VideoCore.resolve), which also covers games added later.
+     */
+    fun dropSoftwareVideoCoreIfNeeded(context: Context) {
+        if (isMigrationCompleted(VideoCore.MIGRATION_KEY_DROP_SOFTWARE)) return
+
+        try {
+            val prefs = PreferenceManager.getDefaultSharedPreferences(context)
+            val stored = prefs.getStringSafe(VideoCore.KEY, VideoCore.UNSET)
+            if (stored == VideoCore.SOFTWARE) {
+                val vulkanSupported =
+                    context.packageManager.hasSystemFeature(
+                        android.content.pm.PackageManager.FEATURE_VULKAN_HARDWARE_LEVEL,
+                    )
+                val resolved = VideoCore.resolve(stored, vulkanSupported)
+                prefs.edit().putString(VideoCore.KEY, resolved).apply()
+                Log.d(TAG, "Software video core replaced with $resolved")
+            }
+            markMigrationCompleted(VideoCore.MIGRATION_KEY_DROP_SOFTWARE)
+        } catch (e: Exception) {
+            Log.e(TAG, "Dropping the software video core failed", e)
+        }
     }
 
     /**

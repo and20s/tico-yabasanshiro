@@ -90,6 +90,10 @@ class YabauseView :
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
+        // The surface stays valid only until this callback returns, so rendering
+        // has to stop before it does. Without this the Vulkan renderer kept
+        // presenting to the destroyed surface and blocked for good on Mali.
+        YabauseRunnable.surfaceLost()
         YabauseRunnable.lockGL()
         YabauseRunnable.initViewport(null, 0, 0)
         YabauseRunnable.unlockGL()

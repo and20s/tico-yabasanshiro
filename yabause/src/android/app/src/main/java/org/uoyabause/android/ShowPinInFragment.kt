@@ -9,10 +9,10 @@ import android.widget.Button
 import android.widget.TextView
 import androidx.fragment.app.DialogFragment
 import androidx.lifecycle.lifecycleScope
-import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.auth.FirebaseUser
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseUser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -45,21 +45,24 @@ class ShowPinInFragment : DialogFragment() {
 
     fun getIpdToken(user: FirebaseUser) {
         val activity = activity ?: return
-        val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+        val gso = GoogleSignInOptions
+            .Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
             .requestIdToken(getString(org.devmiyax.yabasanshiro.R.string.default_web_client_id))
             .requestEmail()
             .build()
         val client = GoogleSignIn.getClient(activity, gso)
-        client.silentSignIn().addOnSuccessListener { account ->
-            val googleIdToken = account.idToken
-            if (googleIdToken != null) {
-                fetchPinin(googleIdToken)
-            } else {
-                Log.e(javaClass.name, "Google ID token is null from silentSignIn")
+        client
+            .silentSignIn()
+            .addOnSuccessListener { account ->
+                val googleIdToken = account.idToken
+                if (googleIdToken != null) {
+                    fetchPinin(googleIdToken)
+                } else {
+                    Log.e(javaClass.name, "Google ID token is null from silentSignIn")
+                }
+            }.addOnFailureListener { e ->
+                Log.e(javaClass.name, "silentSignIn failed: ${e.message}")
             }
-        }.addOnFailureListener { e ->
-            Log.e(javaClass.name, "silentSignIn failed: ${e.message}")
-        }
     }
 
     private fun fetchPinin(token: String) {

@@ -31,8 +31,6 @@ import android.os.FileUtils
 import android.os.ParcelFileDescriptor
 import android.provider.OpenableColumns
 import android.util.Log
-import android.view.View
-import android.widget.CheckBox
 import android.widget.Toast
 import androidx.activity.result.ActivityResultLauncher
 import androidx.appcompat.app.AlertDialog
@@ -693,6 +691,18 @@ class GameSelectPresenter(
         item: GameInfo,
         launcher: ActivityResultLauncher<Intent>,
     ) {
+        // Last line of defence for the free version's limit. Every route into
+        // the emulator passes through here - the phone list, the TV list and
+        // anything added later that forgets to ask - so a game that shows as
+        // locked cannot be started by finding another way in.
+        if (FreeGameSlots.isLockedNow(item)) {
+            YabauseApplication.checkDonated(
+                targetFragment.requireActivity(),
+                targetFragment.getString(R.string.game_locked_pro_gate_message),
+            )
+            return
+        }
+
         GlobalScope.launch(Dispatchers.IO) {
             val c = Calendar.getInstance()
             item.lastplay_date = c.time
@@ -768,107 +778,6 @@ class GameSelectPresenter(
                 null
             }
         }
-
-    fun checkSignIn(launcher: ActivityResultLauncher<Intent>) {
-        if (targetFragment.activity == null) {
-            return // Activity has benn detached.
-        }
-        val checkPreference =
-            PreferenceManager.getDefaultSharedPreferences(
-                targetFragment.requireActivity(),
-            )
-        val doNotAsk = checkPreference.getBoolean("pref_dont_ask_signin", false)
-        if (doNotAsk == true) {
-            val auth = FirebaseAuth.getInstance()
-            if (auth.currentUser != null) {
-                // Get username using the same logic as currentUserName
-                val username =
-                    when {
-                        !auth.currentUser!!.displayName.isNullOrEmpty() -> auth.currentUser!!.displayName
-                        !auth.currentUser!!.email.isNullOrEmpty() ->
-                            auth.currentUser!!
-                                .email!!
-                                .split("@")
-                                .firstOrNull()
-                                ?: auth.currentUser!!.email
-                        else -> auth.currentUser!!.uid
-                    }
-
-                FirebaseCrashlytics.getInstance().setUserId(username + "_" + auth.currentUser!!.email)
-                mFirebaseAnalytics.setUserId(username + "_" + auth.currentUser!!.email)
-                mFirebaseAnalytics.setUserProperty("name", username + "_" + auth.currentUser!!.email)
-            }
-            return
-        }
-        val view =
-            targetFragment
-                .requireActivity()
-                .layoutInflater
-                .inflate(R.layout.signin, null)
-        val auth = FirebaseAuth.getInstance()
-        if (auth.currentUser == null) {
-            val builder =
-                com.google.android.material.dialog.MaterialAlertDialogBuilder(
-                    targetFragment.requireContext(),
-                )
-            builder
-                .setTitle(R.string.do_you_want_to_sign_in)
-                .setCancelable(false)
-                .setView(view)
-                .setPositiveButton(targetFragment.resources.getString(R.string.accept)) { dialog, _ ->
-                    val cb = view.findViewById<View>(R.id.checkBox_never_ask) as CheckBox
-                    val sharedPrefwrite = PreferenceManager.getDefaultSharedPreferences(targetFragment.requireActivity())
-                    val editor = sharedPrefwrite.edit()
-                    editor.putBoolean("pref_dont_ask_signin", cb.isChecked)
-                    editor.apply()
-                    dialog.dismiss()
-                    launcher.launch(
-                        AuthUI
-                            .getInstance()
-                            .createSignInIntentBuilder()
-                            .setTosAndPrivacyPolicyUrls(
-                                "https://www.yabasanshiro.com/terms-of-use",
-                                "https://www.yabasanshiro.com/privacy",
-                            ).setAvailableProviders(
-                                listOf(
-                                    GoogleBuilder().build(),
-                                    AppleBuilder().build(),
-                                ),
-                            ).build(),
-                    )
-                }.setNegativeButton(targetFragment.resources.getString(R.string.decline)) { dialog, _ ->
-                    val cb = view.findViewById<CheckBox>(R.id.checkBox_never_ask)
-                    if (cb != null) {
-                        val sharedPrefwrite =
-                            PreferenceManager.getDefaultSharedPreferences(
-                                targetFragment.requireActivity(),
-                            )
-                        val editor = sharedPrefwrite.edit()
-                        editor.putBoolean("pref_dont_ask_signin", cb.isChecked)
-                        editor.apply()
-                    }
-                    dialog.cancel()
-                }
-            builder.create().show()
-        } else {
-            // Get username using the same logic as currentUserName
-            val username =
-                when {
-                    !auth.currentUser!!.displayName.isNullOrEmpty() -> auth.currentUser!!.displayName
-                    !auth.currentUser!!.email.isNullOrEmpty() ->
-                        auth.currentUser!!
-                            .email!!
-                            .split("@")
-                            .firstOrNull()
-                            ?: auth.currentUser!!.email
-                    else -> auth.currentUser!!.uid
-                }
-
-            FirebaseCrashlytics.getInstance().setUserId(username + "_" + auth.currentUser!!.email)
-            mFirebaseAnalytics.setUserId(username + "_" + auth.currentUser!!.email)
-            mFirebaseAnalytics.setUserProperty("name", username + "_" + auth.currentUser!!.email)
-        }
-    }
 
     fun fileSelected(file: File) {
         val apath: String = file.absolutePath

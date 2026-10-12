@@ -49,6 +49,10 @@ UIMouseSetting::UIMouseSetting( PerInterface_struct* core, uint port, uint pad, 
 	mScanMasks[ PERMOUSE_RIGHT ] = PERSF_KEY | PERSF_BUTTON | PERSF_HAT;
 	mScanMasks[ PERMOUSE_AXIS ] = PERSF_MOUSEMOVE;
 
+	// Same physical device selector as the other controller dialogs: a Saturn
+	// port is driven by exactly one physical device.
+	installDeviceSelector();
+
 	loadPadSettings();
 	
 	foreach ( QToolButton* tb, findChildren<QToolButton*>() )

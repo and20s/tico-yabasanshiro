@@ -155,12 +155,26 @@
             android:entryValues="@array/entryvalues_polygon_generation_type"
             android:defaultValue="0" />
 
+        <ListPreference
+            android:key="pref_vdp2_composite"
+            android:title="@string/vdp2_composite_type"
+            android:summary="@string/pref_vdp2_composite_summary"
+            android:dialogTitle="@string/choose_vdp2_composite_type"
+            android:entries="@array/entries_vdp2_composite"
+            android:entryValues="@array/entryvalues_vdp2_composite"
+            android:defaultValue="1" />
+
         <SwitchPreferenceCompat
             android:key="pref_use_compute_shader"
             android:title="@string/str_use_compute_shader"
             android:summaryOn="@string/pref_use_compute_shader_summary_on"
             android:summaryOff="@string/pref_use_compute_shader_summary_off"
             android:defaultValue="false" />
+
+        <Preference
+            android:key="pref_apply_recommended"
+            android:title="@string/apply_recommended_settings"
+            android:summary="@string/apply_recommended_settings_summary" />
 
     </PreferenceCategory>
 

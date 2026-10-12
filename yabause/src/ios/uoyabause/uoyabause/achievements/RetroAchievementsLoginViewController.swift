@@ -94,8 +94,8 @@ class RetroAchievementsLoginViewController: UIViewController {
     private let cancelButton: UIButton = {
         let button = UIButton(type: .system)
         button.setTitle(NSLocalizedString("Cancel", comment: "Cancel button"), for: .normal)
-        button.backgroundColor = .systemGray
-        button.setTitleColor(.white, for: .normal)
+        button.backgroundColor = .themeSurfaceContainerHighest
+        button.setTitleColor(.themeOnSurface, for: .normal)
         button.titleLabel?.font = .systemFont(ofSize: 18, weight: .medium)
         button.layer.cornerRadius = 8
         button.translatesAutoresizingMaskIntoConstraints = false

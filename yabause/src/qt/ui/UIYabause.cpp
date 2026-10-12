@@ -37,6 +37,7 @@
 #include "UIMemoryEditor.h"
 #include "UIMemoryTransfer.h"
 #include "UIAbout.h"
+#include "UISetupWizard.h"
 #include "WebLoginWindow.h"
 #include "UIReportList.h"
 #include "../YabauseGL.h"
@@ -45,6 +46,9 @@
 #include "../DebugMcpServer.h"
 
 #include "PlayRecorder.h"
+
+#include <chrono>
+#include <cstdlib>
 
 #include <QCoreApplication>
 #include <QKeyEvent>
@@ -283,7 +287,7 @@ UIYabause::UIYabause( QWidget* parent )
   using std::placeholders::_1;
   p->f_takeScreenshot = std::bind(&UIYabause::takeScreenshot, this, _1);
 
-	QSettings settings("settings.ini", QSettings::IniFormat);
+	QSettings settings(QtYabause::cloudSettingsIniPath(), QSettings::IniFormat);
 	QString appId = settings.value("CloudService/app_id").toString();
 	QString apiKey = settings.value("CloudService/api_key").toString();
 	QString databaseUrl = settings.value("CloudService/database_url").toString();
@@ -341,6 +345,10 @@ void UIYabause::handleFileSelected(const QString& filePath)
 			mYabVulkanWidget->setYabauseThread(mYabauseThread);
 		});
 
+		// The renderer only learns the widget size from a resize; without this
+		// it keeps presenting into the size it started with and the rest of the
+		// widget still shows the game browser underneath.
+		mYabVulkanWidget->updateView();
 		mYabVulkanWidget->update();
 	}
 	else {
@@ -1053,6 +1061,18 @@ void UIYabause::refreshStatesActions()
 	}
 }
 
+// A boolean setting read back from the ini file is the string "true", and
+// toInt() on that is 0 - passing it straight to VideoSetSetting() turns the
+// feature off at the very moment the user switched it on. It only ever looked
+// right because the next startup reads the same key with toBool().
+//
+// Takes a QVariant so it serves both callers: the settings dialog keeps its
+// snapshot as QVariant, the wizard keeps its as QString.
+static int settingAsBool( const QVariant& value )
+{
+	return value.toBool() ? 1 : 0;
+}
+
 void UIYabause::on_aFileSettings_triggered()
 {
 	Settings *s = (QtYabause::settings());
@@ -1178,17 +1198,11 @@ void UIYabause::on_aFileSettings_triggered()
     }
 
 	if (newhash["Video/UseComputeShader"] != hash["Video/UseComputeShader"]) {
-		VideoSetSetting(VDP_SETTING_RBG_USE_COMPUTESHADER, newhash["Video/UseComputeShader"].toInt());
+		VideoSetSetting(VDP_SETTING_RBG_USE_COMPUTESHADER, settingAsBool(newhash["Video/UseComputeShader"]));
 	}
 
-  if (newhash["Video/polygon_generation_mode"] != hash["Video/polygon_generation_modee"]) {
+  if (newhash["Video/polygon_generation_mode"] != hash["Video/polygon_generation_mode"]) {
     VideoSetSetting(VDP_SETTING_POLYGON_MODE, newhash["Video/polygon_generation_mode"].toInt());
-  }
-
-  // issue #22 (T-007): new per-pixel VDP2 composite toggle. Default OFF
-  // (legacy fixed-function path). 0 = legacy, non-zero = new composite.
-  if (newhash["Video/vdp2_new_composite"] != hash["Video/vdp2_new_composite"]) {
-    VideoSetSetting(VDP_SETTING_VDP2_NEW_COMPOSITE, newhash["Video/vdp2_new_composite"].toInt());
   }
 
   if (newhash["General/EmulationSpeed"] != hash["General/EmulationSpeed"]) {
@@ -1206,9 +1220,6 @@ void UIYabause::on_aFileSettings_triggered()
 				fullscreenRequested( false );
 			fullscreenRequested( f );
 		}
-		
-		if (newhash["Video/VideoFormat"] != hash["Video/VideoFormat"])
-			YabauseSetVideoFormat(newhash["Video/VideoFormat"].toInt());
 
 		mYabauseThread->reloadControllers();
 		refreshStatesActions();
@@ -1296,6 +1307,7 @@ void UIYabause::on_aFileOpenISO_triggered()
 				mYabVulkanWidget->setYabauseThread(mYabauseThread);
 			});
 
+			mYabVulkanWidget->updateView();
 			mYabVulkanWidget->update();
 		}
 		else {
@@ -1337,6 +1349,7 @@ void UIYabause::on_aFileOpenSSF_triggered()
 				mYabauseThread->pauseEmulation(false, true, [&]() {
 					mYabVulkanWidget->setYabauseThread(mYabauseThread);
 				});
+				mYabVulkanWidget->updateView();
 				mYabVulkanWidget->update();
 			}
 			else {
@@ -1378,6 +1391,7 @@ void UIYabause::on_aFileOpenCDRom_triggered()
 				mYabauseThread->pauseEmulation(false, true, [&]() {
 					mYabVulkanWidget->setYabauseThread(mYabauseThread);
 				});
+				mYabVulkanWidget->updateView();
 				mYabVulkanWidget->update();
 			}
 			else {
@@ -1436,7 +1450,17 @@ void UIYabause::on_aFileLoadStateAs_triggered()
 }
 
 void UIYabause::takeScreenshot(const char * fname) {
+  // YABA_SHOT_PROF=1: report where the time in a screenshot goes. Capturing
+  // one is reported to stall the emulator for about a second, which no single
+  // step here should cost.
+  const bool prof = (getenv("YABA_SHOT_PROF") != NULL);
+  auto now = []() {
+    return std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+  };
+  const double t_enter = now();
   YabauseLocker locker(mYabauseThread);
+  const double t_lock = now();
 
 	VolatileSettings* vs = QtYabause::volatileSettings();
 	int vidcoretype = vs->value("Video/VideoCore").toInt();
@@ -1445,27 +1469,43 @@ void UIYabause::takeScreenshot(const char * fname) {
 		void* buf = nullptr;
 		int w = 0, h = 0;
 		VIDCore->GetScreenshot(&buf, &w, &h);
+		const double t_get = now();
+		double t_alpha = t_get, t_mirror = t_get, t_write = t_get;
 		if (buf && w > 0 && h > 0) {
 			unsigned char* px = static_cast<unsigned char*>(buf);
 			// Match the standalone yui.cpp behavior: force opaque alpha so PNG
 			// readers don't show the rendered frame as semi-transparent.
 			for (int i = 3; i < w * h * 4; i += 4) px[i] = 0xFF;
+			t_alpha = now();
 			// VIDVulkan::getScreenshot returns RGBA8 in bottom-up order
 			// (default branch reads src[height-1-y] into dst[y]); QImage uses
 			// top-down so flip vertically before writing.
 			QImage img(static_cast<const uchar*>(buf), w, h, w * 4,
 			           QImage::Format_RGBA8888);
 			QImage flipped = img.mirrored(false, true);
+			t_mirror = now();
 			QImageWriter iw(fname);
 			iw.write(flipped);
+			t_write = now();
 		}
 		// Caller frees the malloc'd buffer (see VIDVulkan.cpp:7378).
 		if (buf) free(buf);
+		if (prof) {
+			printf("[SHOT] lock=%.1f get=%.1f alpha=%.1f mirror=%.1f write=%.1f "
+			       "total=%.1f ms (%dx%d)\n",
+			       t_lock - t_enter, t_get - t_lock, t_alpha - t_get,
+			       t_mirror - t_alpha, t_write - t_mirror, now() - t_enter, w, h);
+			fflush(stdout);
+		}
 	}
 	else {
 		QImage screenshot = mYabauseGL->grabFramebuffer();
 		QImageWriter iw(fname);
 		iw.write(screenshot);
+		if (prof) {
+			printf("[SHOT/gl] total=%.1f ms\n", now() - t_enter);
+			fflush(stdout);
+		}
 	}
 
 }
@@ -1557,6 +1597,7 @@ void UIYabause::on_aEmulationRun_triggered()
 		mStackedWidget->setCurrentWidget(mYabVulkanWidget);
     mYabVulkanWidget->setYabauseThread(mYabauseThread);
 		mYabVulkanWidget->show();
+		mYabVulkanWidget->updateView();
 		mYabVulkanWidget->update();
 	}
 	else {
@@ -1841,6 +1882,118 @@ void UIYabause::on_aHelpAbout_triggered()
 {
   YabauseLocker locker(mYabauseThread);
   UIAbout(window()).exec();
+}
+
+
+// Snapshot of every ini key, as a string.
+//
+// Never compare the two snapshots as QVariant: the values read before the
+// wizard come back from the ini as QString, while the ones the wizard has just
+// written are still ints in QSettings' cache, so QVariant equality would report
+// a change that did not happen. The string form is stable in both directions,
+// and it also distinguishes a key that did not exist before (empty) from one
+// the wizard has just written.
+static QHash<QString, QString> settingsSnapshot()
+{
+	QHash<QString, QString> snapshot;
+	Settings* s = QtYabause::settings();
+	const QStringList keys = s->allKeys();
+	Q_FOREACH( const QString& key, keys )
+		snapshot.insert( key, s->value( key ).toString() );
+	return snapshot;
+}
+
+static bool settingChanged( const QHash<QString, QString>& before, const QHash<QString, QString>& after, const QString& key )
+{
+	return before.value( key ) != after.value( key );
+}
+
+void UIYabause::on_aHelpSetupWizard_triggered()
+{
+	// Every modal handler in this file pauses the emulation thread while its
+	// dialog is up. A game must not keep running behind the wizard.
+	YabauseLocker locker( mYabauseThread );
+
+	// The wizard writes straight to the ini, so nothing is applied to the
+	// running emulator unless this handler does it. on_aFileSettings_triggered()
+	// does the same job for the settings dialog; the applicable subset is
+	// duplicated here rather than factored out, because that function is
+	// mostly settings-dialog specific (fullscreen, menu bar, translations,
+	// software renderer threads) and pulling a shared helper out of it would
+	// be a far larger and riskier change than the handful of calls below.
+	const QHash<QString, QString> before = settingsSnapshot();
+
+	UISetupWizard wizard( this );
+	if ( wizard.exec() != QDialog::Accepted )
+		return;
+
+	const QHash<QString, QString> after = settingsSnapshot();
+
+	// Controls. Called unconditionally rather than gated on an Input/ key
+	// having changed: the device page polls PERSDLJoyRefreshDevices() once a
+	// second while it is open, and any hot-plug there tears down and rebuilds
+	// SDL's device table, renumbering indices that live PerPad bindings embed.
+	// A user who replugs a pad while the wizard is up but only changes, say,
+	// the graphics preset would otherwise leave that pad dead until restart,
+	// because nothing under Input/ actually changed.
+	mYabauseThread->reloadControllers();
+
+	// Video settings the renderer picks up at once, applied exactly as
+	// on_aFileSettings_triggered() applies them.
+	if ( settingChanged( before, after, "Video/resolution_mode" ) )
+		VideoSetSetting( VDP_SETTING_RESOLUTION_MODE, after.value( "Video/resolution_mode" ).toInt() );
+
+	if ( settingChanged( before, after, "Video/rbg_resolution_mode" ) )
+		VideoSetSetting( VDP_SETTING_RBG_RESOLUTION_MODE, after.value( "Video/rbg_resolution_mode" ).toInt() );
+
+	if ( settingChanged( before, after, "Video/polygon_generation_mode" ) )
+		VideoSetSetting( VDP_SETTING_POLYGON_MODE, after.value( "Video/polygon_generation_mode" ).toInt() );
+
+	if ( settingChanged( before, after, "Video/UseComputeShader" ) )
+		VideoSetSetting( VDP_SETTING_RBG_USE_COMPUTESHADER, settingAsBool( after.value( "Video/UseComputeShader" ) ) );
+
+	if ( settingChanged( before, after, "Sound/SoundCore" ) )
+		ScspChangeSoundCore( after.value( "Sound/SoundCore" ).toInt() );
+
+	// Settings that are only read while the emulator is starting up. UISettings
+	// routes edits to these through checkRestart(); the wizard writes them
+	// directly, so it has to notice the change itself.
+	//   Video/VideoCore                 - chosen in YabauseThread::initEmulation
+	//   Video/polygon_generation_mode   - VideoSetSetting above only covers the
+	//                                     part the running renderer can switch;
+	//                                     Middle and High differ only here, so
+	//                                     dropping it would silence the notice
+	//                                     for the most likely change of all
+	//   Sound/ScspSync, Sound/ScspMainMode - copied into yabauseinit_struct once
+	QStringList restartKeys;
+	restartKeys << "Video/VideoCore"
+	            << "Video/polygon_generation_mode"
+	            << "Sound/ScspSync"
+	            << "Sound/ScspMainMode";
+
+	bool needsRestart = false;
+	Q_FOREACH( const QString& key, restartKeys )
+	{
+		if ( settingChanged( before, after, key ) )
+			needsRestart = true;
+	}
+
+	if ( needsRestart )
+	{
+		CommonDialogs::information( QtYabause::translate(
+			"Some of these settings only take effect when Yaba Sanshiro starts. Please restart it." ) );
+	}
+
+	// A different disc means the emulation has to come back up around it,
+	// which is what on_aFileSettings_triggered() does for the same two keys.
+	// Done last, after the notice, so that a user who changed both the disc
+	// and a startup-only setting still gets told about the restart.
+	if ( settingChanged( before, after, "General/CdRom" ) ||
+	     settingChanged( before, after, "General/CdRomISO" ) )
+	{
+		if ( mYabauseThread->pauseEmulation( true, true ) )
+			refreshStatesActions();
+	}
 }
 
 

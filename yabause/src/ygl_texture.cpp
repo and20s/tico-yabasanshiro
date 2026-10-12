@@ -296,40 +296,21 @@ const char prg_rbg_rpmd2_2w[] =
 "  }\n";
 
 
+// Rotation parameter mode 3 chooses between A and B with the rotation
+// parameter window and nothing else. In this mode the MSB of BOTH coefficient
+// tables is a plain transparency bit (Sega VDP2 manual table 6.4), so a dot
+// whose selected parameter reports a transparent coefficient is transparent.
+// It must not be re-fetched with the other parameter: the fallback that used
+// to be here filled the half of the screen the window handed to B with A's
+// plane, which made mode 3 render exactly like mode 0 - the switch was
+// invisible. vidsoft has always done it this way.
 const char prg_get_param_mode03[] =
-"  if( isWindowInside( int(posx), int(posy)) ) { "
-"    paramid = 0; \n"
-"    if( para[paramid].coefenab != 0 ){ \n"
-"      if( GetKValue(paramid,posx,posy,ky,lineaddr ) == -1 ) { \n"
-"        paramid=1;\n"
-"        if( para[paramid].coefenab != 0 ){ \n"
-"          if( GetKValue(paramid,posx,posy,ky,lineaddr ) == -1 ) { imageStore(outSurface,texel,vec4(0.0)); return;} \n"
-"        }else{ \n"
-"          ky = para[paramid].ky; \n"
-"          lineaddr = para[paramid].lineaddr; \n"
-"        }\n"
-"      }\n"
-"    }else{\n"
-"      ky = para[paramid].ky; \n"
-"      lineaddr = para[paramid].lineaddr; \n"
-"    }\n"
-"  }else{\n"
-"    paramid = 1; \n"
-"    if( para[paramid].coefenab != 0 ){ \n"
-"      if( GetKValue(paramid,posx,posy,ky,lineaddr ) == -1 ) { \n"
-"        paramid=0;\n"
-"        if( para[paramid].coefenab != 0 ){ \n"
-"          if( GetKValue(paramid,posx,posy,ky,lineaddr ) == -1 ) { imageStore(outSurface,texel,vec4(0.0)); return;} \n"
-"        }else{ \n"
-"          ky = para[paramid].ky; \n"
-"          lineaddr = para[paramid].lineaddr; \n"
-"        }\n"
-"      }\n"
-"    }else{\n"
-"      ky = para[paramid].ky; \n"
-"      lineaddr = para[paramid].lineaddr; \n"
-"    }\n"
-" }\n";
+"  paramid = isWindowInside( int(posx), int(posy)) ? 0 : 1; \n"
+"  ky = para[paramid].ky; \n"
+"  lineaddr = para[paramid].lineaddr; \n"
+"  if( para[paramid].coefenab != 0 ){ \n"
+"    if( GetKValue(paramid,posx,posy,ky,lineaddr ) == -1 ) { imageStore(outSurface,texel,vec4(0.0)); return;} \n"
+"  }\n";
 
 
 const char prg_rbg_xy[] =
@@ -1387,7 +1368,13 @@ public:
 
     error = glGetError();
     // Line color insersion
-    if (rbg->info.LineColorBase != 0 && VDP2_CC_NONE != (rbg->info.blendmode & 0x03)) {
+    // The "_line_" variants pack a CRAM index into R/G and the line colour into B,
+    // so they only work for palette colour modes.  RGB direct modes (colornumber
+    // 3 = 32K, 4 = 16.7M) put a 24-bit colour in cramindex; running them through
+    // the line path drops the blue byte and forces bit 15 on, which turned every
+    // direct colour dot green.  Fall back to the plain pipeline for those.
+    if (rbg->info.LineColorBase != 0 && VDP2_CC_NONE != (rbg->info.blendmode & 0x03)
+        && rbg->info.colornumber < 3) {
       if (fixVdp2Regs->RPMD == 0 || (fixVdp2Regs->RPMD == 3 && (fixVdp2Regs->WCTLD & 0xA) == 0)) {
         if (rbg->info.isbitmap) {
           if (prg_rbg_0_2w_bitmap_8bpp_line_ == 0) {
@@ -3380,7 +3367,13 @@ void RBGGeneratorVulkan::update(VIDVulkan::RBGDrawInfo * rbg, const vdp2rotation
   }
 
   // Line color insersion
-  if (rbg->info.LineColorBase != 0 && VDP2_CC_NONE != (rbg->info.blendmode & 0x03)) {
+  // The "_line_" variants pack a CRAM index into R/G and the line colour into B,
+  // so they only work for palette colour modes.  RGB direct modes (colornumber
+  // 3 = 32K, 4 = 16.7M) put a 24-bit colour in cramindex; running them through the
+  // line path drops the blue byte and forces bit 15 on, which turned every direct
+  // colour dot green.  Fall back to the plain pipeline for those.
+  if (rbg->info.LineColorBase != 0 && VDP2_CC_NONE != (rbg->info.blendmode & 0x03)
+      && rbg->info.colornumber < 3) {
     if (fixVdp2Regs->RPMD == 0 || (fixVdp2Regs->RPMD == 3 && (fixVdp2Regs->WCTLD & 0xA) == 0)) {
       if (rbg->info.isbitmap) {
         if (!prg_rbg_0_2w_bitmap_8bpp_line_) {

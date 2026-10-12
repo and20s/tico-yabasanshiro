@@ -26,6 +26,7 @@ import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.PopupMenu
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.ActivityResultLauncher
@@ -53,6 +54,7 @@ import org.uoyabause.android.auth.AuthState
 import org.uoyabause.android.backup.BackupShareLink
 import org.uoyabause.android.backup.model.LocalBackupFile
 import org.uoyabause.android.backup.model.SharedBackupItem
+import org.uoyabause.android.backup.model.SharedBackupReportReason
 import org.uoyabause.android.backup.viewmodel.BackupUiEvent
 import org.uoyabause.android.backup.viewmodel.SharedBackupSortOrder
 import org.uoyabause.android.backup.viewmodel.SharedBackupUiState
@@ -81,6 +83,11 @@ class SharedBackupSearchFragment :
     private lateinit var layoutLoading: View
 
     private lateinit var chipMyLibrary: Chip
+
+    private lateinit var progressLoadMore: View
+    private lateinit var layoutBlockedFooter: LinearLayout
+    private lateinit var tvBlockedCount: TextView
+    private lateinit var btnShowAllHidden: MaterialButton
 
     private lateinit var adapter: SharedBackupListAdapter
 
@@ -141,6 +148,13 @@ class SharedBackupSearchFragment :
         btnRetry = view.findViewById(R.id.btn_retry)
         layoutLoading = view.findViewById(R.id.layout_loading)
 
+        progressLoadMore = view.findViewById(R.id.progress_load_more)
+        layoutBlockedFooter = view.findViewById(R.id.layout_blocked_footer)
+        tvBlockedCount = view.findViewById(R.id.tv_blocked_count)
+        btnShowAllHidden = view.findViewById(R.id.btn_show_all_hidden)
+        btnShowAllHidden.setOnClickListener { viewModel.unblockAll() }
+        applyGamepadClick(btnShowAllHidden)
+
         // Landscape detail panel
         detailContainer = view.findViewById(R.id.detail_container)
         detailPlaceholder = view.findViewById(R.id.layout_detail_placeholder)
@@ -194,8 +208,21 @@ class SharedBackupSearchFragment :
 
     private fun setupRecyclerView() {
         adapter = SharedBackupListAdapter(this)
-        recyclerView.layoutManager = LinearLayoutManager(requireContext())
+        val layoutManager = LinearLayoutManager(requireContext())
+        recyclerView.layoutManager = layoutManager
         recyclerView.adapter = adapter
+
+        // Fetch the next page as the end of the list comes into view, so the
+        // community list can be walked past the first page.
+        recyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                if (dy <= 0) return
+                val lastVisible = layoutManager.findLastVisibleItemPosition()
+                if (lastVisible >= layoutManager.itemCount - LOAD_MORE_THRESHOLD) {
+                    viewModel.loadMore()
+                }
+            }
+        })
 
         // Disable ViewPager2 tab switching while RecyclerView is scrolling (portrait only)
         if (!isLandscape) {
@@ -211,6 +238,27 @@ class SharedBackupSearchFragment :
         }
     }
 
+    /**
+     * Make a view respond to the gamepad A button the way the existing action
+     * buttons on this screen do.
+     */
+    private fun applyGamepadClick(view: View) {
+        view.setOnKeyListener { v, keyCode, event ->
+            if (event.action == KeyEvent.ACTION_DOWN &&
+                (
+                    keyCode == KeyEvent.KEYCODE_BUTTON_A ||
+                        keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
+                        keyCode == KeyEvent.KEYCODE_ENTER
+                )
+            ) {
+                v.performClick()
+                true
+            } else {
+                false
+            }
+        }
+    }
+
     private fun observeViewModel() {
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -223,6 +271,23 @@ class SharedBackupSearchFragment :
                 launch {
                     viewModel.uiEvents.collectLatest { event ->
                         handleUiEvent(event)
+                    }
+                }
+
+                launch {
+                    viewModel.isLoadingMore.collectLatest { loading ->
+                        progressLoadMore.visibility = if (loading) View.VISIBLE else View.GONE
+                    }
+                }
+
+                launch {
+                    viewModel.blockedCount.collectLatest { count ->
+                        layoutBlockedFooter.visibility =
+                            if (count > 0) View.VISIBLE else View.GONE
+                        if (count > 0) {
+                            tvBlockedCount.text =
+                                getString(R.string.hidden_owners_count, count)
+                        }
                     }
                 }
             }
@@ -429,15 +494,18 @@ class SharedBackupSearchFragment :
         val btnRate = detailView.findViewById<MaterialButton>(R.id.btn_rate_detail)
         val btnShare = detailView.findViewById<MaterialButton>(R.id.btn_share_detail)
         val btnDelete = detailView.findViewById<MaterialButton>(R.id.btn_delete_detail)
+        val btnMore = detailView.findViewById<MaterialButton>(R.id.btn_more_detail)
 
         btnImport.setOnClickListener { onImportClick(item) }
         btnRate.setOnClickListener { onRateClick(item) }
         btnShare.setOnClickListener { onShareClick(item) }
         btnDelete.setOnClickListener { onDeleteClick(item) }
         btnDelete.visibility = if (isOwner) View.VISIBLE else View.GONE
+        btnMore.visibility = if (canReport(item)) View.VISIBLE else View.GONE
+        btnMore.setOnClickListener { anchor -> onMoreClick(item, anchor) }
 
         // Gamepad support for buttons
-        val buttons = listOf<View>(btnImport, btnRate, btnShare, btnDelete)
+        val buttons = listOf<View>(btnImport, btnRate, btnShare, btnDelete, btnMore)
         buttons.forEach { button ->
             button.setOnKeyListener { v, keyCode, event ->
                 if (event.action == KeyEvent.ACTION_DOWN) {
@@ -538,6 +606,99 @@ class SharedBackupSearchFragment :
         viewModel.requestDeleteSharedBackup(item)
     }
 
+    override fun canReport(item: SharedBackupItem): Boolean = viewModel.canReport(item)
+
+    override fun onMoreClick(item: SharedBackupItem, anchor: View) {
+        PopupMenu(requireContext(), anchor)
+            .apply {
+                menuInflater.inflate(R.menu.menu_shared_backup_item, menu)
+                setOnMenuItemClickListener { menuItem ->
+                    when (menuItem.itemId) {
+                        R.id.action_report_backup -> {
+                            showReportDialog(item)
+                            true
+                        }
+                        R.id.action_hide_owner -> {
+                            confirmHideOwner(item)
+                            true
+                        }
+                        else -> false
+                    }
+                }
+            }.show()
+    }
+
+    /**
+     * Ask which of the fixed reasons applies. Free text is deliberately not
+     * offered: it would need moderating itself and is not what a reviewer can
+     * act on.
+     */
+    private fun showReportDialog(item: SharedBackupItem) {
+        val reasons = SharedBackupReportReason.entries.toTypedArray()
+        val labels = reasons.map { getString(it.labelRes) }.toTypedArray()
+
+        val dialog = MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.report_dialog_title)
+            .setSingleChoiceItems(labels, 0, null)
+            .setPositiveButton(R.string.report_send) { dlg, _ ->
+                val listView = (dlg as androidx.appcompat.app.AlertDialog).listView
+                val selected = listView.checkedItemPosition.coerceIn(reasons.indices)
+                viewModel.reportBackup(item, reasons[selected])
+            }.setNegativeButton(R.string.cancel, null)
+            .create()
+        dialog.setOnShowListener {
+            val negativeButton = dialog.getButton(android.content.DialogInterface.BUTTON_NEGATIVE)
+            negativeButton?.post {
+                negativeButton.isFocusable = true
+                negativeButton.isFocusableInTouchMode = true
+                negativeButton.requestFocus()
+            }
+        }
+        dialog.show()
+    }
+
+    private fun confirmHideOwner(item: SharedBackupItem) {
+        val dialog = MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.hide_owner_confirm_title)
+            .setMessage(getString(R.string.hide_owner_confirm_message, item.ownerName))
+            .setPositiveButton(R.string.confirm) { _, _ ->
+                viewModel.blockOwner(item)
+                dismissDetailFor(item)
+            }.setNegativeButton(R.string.cancel, null)
+            .create()
+        dialog.setOnShowListener {
+            val negativeButton = dialog.getButton(android.content.DialogInterface.BUTTON_NEGATIVE)
+            negativeButton?.post {
+                negativeButton.isFocusable = true
+                negativeButton.isFocusableInTouchMode = true
+                negativeButton.requestFocus()
+            }
+        }
+        dialog.show()
+    }
+
+    /**
+     * Close whatever is showing the save that just got hidden, so the detail
+     * does not outlive its row.
+     */
+    private fun dismissDetailFor(item: SharedBackupItem) {
+        if (currentDetailItem?.id != item.id) return
+        currentDetailItem = null
+        detailContainer?.let { container ->
+            container.removeAllViews()
+            // showDetailInPanel() removes the placeholder from the container,
+            // so put it back rather than leaving an empty panel.
+            detailPlaceholder?.let { placeholder ->
+                if (placeholder.parent == null) container.addView(placeholder)
+                placeholder.visibility = View.VISIBLE
+            }
+        }
+        (
+            childFragmentManager.findFragmentByTag("shared_backup_detail")
+                as? SharedBackupDetailBottomSheet
+        )?.dismiss()
+    }
+
     // region Toolbar bridge methods (called by parent BackupManagerFragment)
 
     /**
@@ -567,6 +728,13 @@ class SharedBackupSearchFragment :
     // endregion
 
     companion object {
+        /**
+         * How close to the end of the list a scroll must get before the next
+         * page is requested. A few rows of lead time so the fetch overlaps the
+         * remaining scroll instead of stalling at the bottom.
+         */
+        private const val LOAD_MORE_THRESHOLD = 4
+
         fun newInstance(): SharedBackupSearchFragment = SharedBackupSearchFragment()
     }
 }

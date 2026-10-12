@@ -124,6 +124,14 @@ class Notification : FirebaseMessagingService() {
             return
         }
 
+        // Release announcement sent by the release skill (topic message).
+        // This path only runs in foreground; background notification-messages
+        // are shown by the system tray automatically.
+        if (type == "release_notification") {
+            showReleaseNotification(remoteMessage)
+            return
+        }
+
         val intent = Intent(this, GameSelectActivity::class.java)
         intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
         val pendingIntent =
@@ -160,6 +168,44 @@ class Notification : FirebaseMessagingService() {
             }
         val notificationManager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         notificationManager.notify(0 /* ID of notification */, notification)
+    }
+
+    private fun showReleaseNotification(remoteMessage: RemoteMessage) {
+        // Android 13+ requires POST_NOTIFICATIONS to display notifications
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            val permission = android.Manifest.permission.POST_NOTIFICATIONS
+            if (checkSelfPermission(permission) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                Log.e(TAG, "POST_NOTIFICATIONS permission not granted, cannot show release notification")
+                return
+            }
+        }
+
+        val title = remoteMessage.notification?.title ?: getString(R.string.new_version_available)
+        val body = remoteMessage.notification?.body ?: ""
+
+        // Debug builds (.debug suffix) share the store page of the release package
+        val storePackage = packageName.removeSuffix(".debug")
+        val storeIntent = Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=$storePackage"))
+        val pendingIntent =
+            PendingIntent.getActivity(
+                this,
+                0,
+                storeIntent,
+                PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE,
+            )
+        val defaultSoundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+        val builder =
+            NotificationCompat
+                .Builder(this, YabauseApplication.CHANNEL_ID_RELEASE)
+                .setSmallIcon(R.drawable.ic_stat_ss_one)
+                .setContentTitle(title)
+                .setContentText(body)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+                .setAutoCancel(true)
+                .setSound(defaultSoundUri)
+                .setContentIntent(pendingIntent)
+        val notificationManager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        notificationManager.notify(RELEASE_NOTIFICATION_ID, builder.build())
     }
 
     private fun showAdminReportNotification(remoteMessage: RemoteMessage) {
@@ -317,6 +363,7 @@ class Notification : FirebaseMessagingService() {
     companion object {
         private const val TAG = "uoyabause.Notification"
         private const val CHANNEL_ID = "admin_reports"
+        private const val RELEASE_NOTIFICATION_ID = 3001
         const val EXTRA_OPEN_REPORT_LIST = "extra_open_report_list"
         const val EXTRA_PRODUCT_NUMBER = "extra_product_number"
         const val EXTRA_GAME_ID = "extra_game_id"

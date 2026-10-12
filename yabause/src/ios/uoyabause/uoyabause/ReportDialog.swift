@@ -172,7 +172,7 @@ class ReportDialog: UIViewController, UITextViewDelegate {
         // Message Text View
         messageTextView = UITextView()
         messageTextView.translatesAutoresizingMaskIntoConstraints = false
-        messageTextView.layer.borderColor = UIColor.systemGray4.cgColor
+        messageTextView.layer.borderColor = UIColor.themeOutline.cgColor
         messageTextView.layer.borderWidth = 1.0
         messageTextView.layer.cornerRadius = 5.0
         messageTextView.font = UIFont.systemFont(ofSize: 14)

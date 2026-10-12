@@ -42,9 +42,6 @@
 #ifdef __APPLE__
 #include "../permacjoy.h"
 #endif
-#ifdef HAVE_DIRECTINPUT
-#include "../perdx.h"
-#endif
 
 #define PROG_NAME "PERTEST"
 #define VER_NAME "1.0"
@@ -62,9 +59,6 @@ PerInterface_struct *PERCoreList[] = {
 #endif
 #ifdef __APPLE__
 	&PERMacJoy,
-#endif
-#ifdef HAVE_DIRECTINPUT
-	&PERDIRECTX,
 #endif
 	NULL
 };
@@ -85,13 +79,6 @@ CDInterface *CDCoreList[] = { NULL };
 void YuiErrorMsg(const char *string) { }
 
 void YuiSwapBuffers() { }
-
-#ifdef HAVE_DIRECTINPUT
-HWND DXGetWindow()
-{
-	return HWND_DESKTOP;
-}
-#endif
 
 //////////////////////////////////////////////////////////////////////////////
 

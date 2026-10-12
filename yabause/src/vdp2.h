@@ -469,6 +469,12 @@ int VideoSetFilterType( int video_filter_type );
 void vdp2ReqDump();
 void vdp2ReqRestore();
 
+// Decode the per-bank VRAM access pattern from one register snapshot. Use
+// this instead of Vdp2External.AC_VRAM anywhere a frame is resolved from a
+// snapshot, so the pattern cannot disagree with the map registers of the
+// same frame (see the definition in vdp2.cpp).
+void Vdp2GetAccessPattern(const Vdp2 * regs, u8 ac[4][8]);
+
 void VdpLockVram();
 void VdpUnLockVram();
 
@@ -476,6 +482,15 @@ void YglOnUpdateColorRamWord(u32 addr);
 void YglUpdateColorRam();
 void VdpResume( void );
 void VdpRevoke( void );
+
+// Runtime switch for the threaded (async) VDP rendering model. The
+// compile-time YAB_ASYNC_RENDERING define only sets the default, so ports
+// that never call the setter keep their historical behavior. Must be set
+// before YabauseInit()/Vdp2Init() - the VDP thread and its event queues
+// are created there and the mode must not change while emulation is
+// initialized.
+void VdpSetAsyncRendering(int enable);
+int VdpIsAsyncRendering(void);
 
 #ifdef __cplusplus
 }

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<document type="com.apple.InterfaceBuilder3.CocoaTouch.Storyboard.XIB" version="3.0" toolsVersion="23094" targetRuntime="iOS.CocoaTouch" propertyAccessControl="none" useAutolayout="YES" useTraitCollections="YES" useSafeAreas="YES" colorMatched="YES" initialViewController="361-BX-4a8">
+<document type="com.apple.InterfaceBuilder3.CocoaTouch.Storyboard.XIB" version="3.0" toolsVersion="23094" targetRuntime="iOS.CocoaTouch" propertyAccessControl="none" useAutolayout="YES" useTraitCollections="YES" useSafeAreas="YES" colorMatched="YES">
     <device id="iPad13_0rounded" orientation="landscape" layout="fullscreen" appearance="light"/>
     <dependencies>
         <deployment identifier="iOS"/>
@@ -9,68 +9,6 @@
         <capability name="documents saved in the Xcode 8 format" minToolsVersion="8.0"/>
     </dependencies>
     <scenes>
-        <!--File Select Controller-->
-        <scene sceneID="OyW-lz-kKL">
-            <objects>
-                <collectionViewController id="7GE-jy-nfd" customClass="FileSelectController" customModule="YabaSnashiro" customModuleProvider="target" sceneMemberID="viewController">
-                    <connections>
-                        <segue destination="p9Z-S9-9Yz" kind="presentation" identifier="toGameView" modalPresentationStyle="fullScreen" id="Gvh-n1-hjQ"/>
-                    </connections>
-                </collectionViewController>
-                <placeholder placeholderIdentifier="IBFirstResponder" id="MZW-2V-Xuq" userLabel="First Responder" customClass="UIResponder" sceneMemberID="firstResponder"/>
-            </objects>
-            <point key="canvasLocation" x="-1032" y="-1134"/>
-        </scene>
-        <!--Yaba Sanshiro 2-->
-        <scene sceneID="CtD-pw-8uS">
-            <objects>
-                <viewController storyboardIdentifier="MainScreenController" id="kww-3B-IA5" customClass="MainScreenController" customModule="YabaSnashiro" customModuleProvider="target" sceneMemberID="viewController">
-                    <view key="view" contentMode="scaleToFill" id="Hc1-5g-glR">
-                        <rect key="frame" x="0.0" y="0.0" width="1376" height="1032"/>
-                        <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
-                        <subviews>
-                            <containerView opaque="NO" contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="qab-t5-be3">
-                                <rect key="frame" x="0.0" y="74" width="1376" height="938"/>
-                                <connections>
-                                    <segue destination="7GE-jy-nfd" kind="embed" id="Kv2-c0-InK"/>
-                                </connections>
-                            </containerView>
-                        </subviews>
-                        <viewLayoutGuide key="safeArea" id="W9w-Z6-tbq"/>
-                        <color key="backgroundColor" red="1" green="1" blue="1" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
-                        <constraints>
-                            <constraint firstItem="qab-t5-be3" firstAttribute="leading" secondItem="W9w-Z6-tbq" secondAttribute="leading" symbolic="YES" id="0Az-w2-qIl"/>
-                            <constraint firstItem="qab-t5-be3" firstAttribute="top" secondItem="W9w-Z6-tbq" secondAttribute="top" symbolic="YES" id="Cg9-kS-Khu"/>
-                            <constraint firstItem="W9w-Z6-tbq" firstAttribute="trailing" secondItem="qab-t5-be3" secondAttribute="trailing" symbolic="YES" id="WbI-67-rxd"/>
-                            <constraint firstItem="W9w-Z6-tbq" firstAttribute="bottom" secondItem="qab-t5-be3" secondAttribute="bottom" symbolic="YES" id="eZo-W9-OSo"/>
-                        </constraints>
-                    </view>
-                    <navigationItem key="navigationItem" title="Yaba Sanshiro 2" id="NHI-fu-wtb">
-                        <barButtonItem key="leftBarButtonItem" style="plain" systemItem="add" id="arF-bU-wWt">
-                            <connections>
-                                <action selector="onAddFile:" destination="kww-3B-IA5" id="Zs8-ug-0JI"/>
-                            </connections>
-                        </barButtonItem>
-                        <barButtonItem key="rightBarButtonItem" id="cRH-G1-UVn">
-                            <button key="customView" opaque="NO" contentMode="scaleToFill" contentHorizontalAlignment="center" contentVerticalAlignment="center" buttonType="system" lineBreakMode="middleTruncation" id="N8h-Be-Hod">
-                                <rect key="frame" x="1299" y="10" width="57" height="30"/>
-                                <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMaxY="YES"/>
-                                <state key="normal" title="Settings"/>
-                            </button>
-                        </barButtonItem>
-                        <connections>
-                            <outlet property="rightBarButtonItem" destination="cRH-G1-UVn" id="rwO-qd-fh0"/>
-                        </connections>
-                    </navigationItem>
-                    <connections>
-                        <outlet property="settingButton" destination="N8h-Be-Hod" id="SvT-5f-wHe"/>
-                        <segue destination="p9Z-S9-9Yz" kind="presentation" identifier="toGameViewFromMain" modalPresentationStyle="fullScreen" id="jv0-d9-rs8"/>
-                    </connections>
-                </viewController>
-                <placeholder placeholderIdentifier="IBFirstResponder" id="u7g-Lk-g0u" userLabel="First Responder" sceneMemberID="firstResponder"/>
-            </objects>
-            <point key="canvasLocation" x="-1042.0289855072465" y="-1923.2142857142856"/>
-        </scene>
         <!--Game View Controller-->
         <scene sceneID="tXr-a1-R10">
             <objects>
@@ -254,28 +192,10 @@
             </objects>
             <point key="canvasLocation" x="367.59656652360519" y="-258.13953488372096"/>
         </scene>
-        <!--Navigation Controller-->
-        <scene sceneID="djp-dK-0QX">
-            <objects>
-                <navigationController automaticallyAdjustsScrollViewInsets="NO" id="361-BX-4a8" sceneMemberID="viewController">
-                    <toolbarItems/>
-                    <navigationBar key="navigationBar" contentMode="scaleToFill" id="oz6-fr-sQg">
-                        <rect key="frame" x="0.0" y="24" width="1376" height="50"/>
-                        <autoresizingMask key="autoresizingMask"/>
-                    </navigationBar>
-                    <nil name="viewControllers"/>
-                    <connections>
-                        <segue destination="kww-3B-IA5" kind="relationship" relationship="rootViewController" id="fkh-rR-UKo"/>
-                    </connections>
-                </navigationController>
-                <placeholder placeholderIdentifier="IBFirstResponder" id="zbC-Ap-102" userLabel="First Responder" sceneMemberID="firstResponder"/>
-            </objects>
-            <point key="canvasLocation" x="-1853" y="-1922"/>
-        </scene>
         <!--Game Main View Controller-->
         <scene sceneID="e9W-er-ptq">
             <objects>
-                <viewController id="p9Z-S9-9Yz" customClass="GameMainViewController" customModule="YabaSnashiro" customModuleProvider="target" sceneMemberID="viewController">
+                <viewController storyboardIdentifier="GameMainViewController" id="p9Z-S9-9Yz" customClass="GameMainViewController" customModule="YabaSnashiro" customModuleProvider="target" sceneMemberID="viewController">
                     <containerView key="view" opaque="NO" contentMode="scaleToFill" id="Pbc-ym-DPw">
                         <rect key="frame" x="0.0" y="0.0" width="1376" height="938"/>
                         <autoresizingMask key="autoresizingMask" widthSizable="YES" flexibleMinY="YES"/>
@@ -290,9 +210,6 @@
             <point key="canvasLocation" x="335" y="-1069"/>
         </scene>
     </scenes>
-    <inferredMetricsTieBreakers>
-        <segue reference="Gvh-n1-hjQ"/>
-    </inferredMetricsTieBreakers>
     <resources>
         <image name="baseline_menu_white_24pt" width="24" height="24"/>
         <image name="pad_l" width="700" height="1080"/>

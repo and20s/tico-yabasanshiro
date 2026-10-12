@@ -469,11 +469,25 @@ vec4 sample16bppRGB(Vdp1Cmd cmd, vec2 uv, bool spd, bool endcEnabled) {
     // "otherwise" branch and need C=1 palette, not C=0 direct.
     if ((word & 0x8000u) == 0u && !spd) return vec4(0);
     if (endcEnabled && word == 0x7FFFu) return vec4(0);
-    if (isShadowFor(word, cmd)) return packShadow(cmd);
     bool spctlRgb = (SPEC_SPRITE_TYPE & 0x20u) != 0u;
-    if ((word & 0x8000u) != 0u && spctlRgb) return packDirect(word, cmd);
-    return packPalette(word, cmd);
+    if ((word & 0x8000u) != 0u && spctlRgb) {
+        if (isShadowFor(word, cmd)) return packShadow(cmd);
+        return packDirect(word, cmd);
+    }
+    // 16bpp palette pixel: per-pixel Vdp1ProcessSpritePixel (getLutSpriteInfo),
+    // mirroring the 4bpp LUT path / vidogl.c readTexture. packPalette(word) kept
+    // the command-level priority/colorcl and the full unmasked 16-bit color
+    // index, so palette sprite types > 0 (Mr. Bones forest skeleton = type 7)
+    // lost the per-pixel priority slot (dot>>12)&7 and were discarded when that
+    // PRISA slot held 0.
+    uint pri; uint cc; uint masked; bool ns;
+    getLutSpriteInfo(word, SPEC_SPRITE_TYPE & 0xFu, pri, cc, masked, ns);
+    bool msb = ((cmd.vdp2Attrs >> 16) & ATTR_MSB_SHADOW) != 0u;
+    if (msb || ns) return packShadowWithPri(pri, cmd);
+    return packPaletteWithAttrs(masked, pri, cc, cmd);
 }
+)GLSL"
+R"GLSL(
 vec4 sample4bppBank(Vdp1Cmd cmd, vec2 uv, uint colorBank, bool spd, bool endcEnabled) {
     uvec2 charSize = cmd.charSize;
     uint u = uint(clamp(uv.x * float(charSize.x), 0.0, float(charSize.x) - 1.0));
@@ -1848,10 +1862,22 @@ vec4 sampleTexel16bppRGB(Vdp1Cmd c, uvec2 t, bool spd, bool endcEnabled) {
     // otherwise                  -> palette (16-bit colorindex)
     if ((word & 0x8000u) == 0u && !spd) return vec4(0);
     if (endcEnabled && word == 0x7FFFu) return vec4(0);
-    if (isShadowFor(word, c)) return packShadow(c);
     bool spctlRgb = (pc.spriteType & 0x20u) != 0u;
-    if ((word & 0x8000u) != 0u && spctlRgb) return packDirect(word, c);
-    return packPalette(word, c);
+    if ((word & 0x8000u) != 0u && spctlRgb) {
+        if (isShadowFor(word, c)) return packShadow(c);
+        return packDirect(word, c);
+    }
+    // 16bpp palette pixel: per-pixel Vdp1ProcessSpritePixel (getLutSpriteInfo),
+    // mirroring the 4bpp LUT path / vidogl.c readTexture. packPalette(word) kept
+    // the command-level priority/colorcl and the full unmasked 16-bit color
+    // index, so palette sprite types > 0 (Mr. Bones forest skeleton = type 7)
+    // lost the per-pixel priority slot (dot>>12)&7 and were discarded when that
+    // PRISA slot held 0.
+    uint pri; uint cc_; uint masked; bool ns;
+    getLutSpriteInfo(word, pc.spriteType & 0xFu, pri, cc_, masked, ns);
+    bool msb = ((c.vdp2Attrs >> 16) & ATTR_MSB_SHADOW) != 0u;
+    if (msb || ns) return packShadowWithPri(pri, c);
+    return packPaletteWithAttrs(masked, pri, cc_, c);
 }
 )GLSL"
 R"GLSL(

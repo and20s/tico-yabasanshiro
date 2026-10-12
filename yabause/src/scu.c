@@ -97,34 +97,6 @@ FILE * slogp = NULL;
 //  - budget becomes timing<<1 (~1 word/cycle)
 //  - a C-bus DMA start charges the initiating CPU the whole transfer
 //    duration (halt approximation; the other CPU is not stalled)
-static int scu_dma_model_new_v = -1;
-
-static int scu_dma_model_new(void)
-{
-  if (scu_dma_model_new_v < 0)
-  {
-    const char *e = getenv("YABA_SCU_DMA_MODEL");
-    scu_dma_model_new_v = (e != NULL && strcmp(e, "new") == 0);
-  }
-  return scu_dma_model_new_v;
-}
-
-static void scu_dma_cbus_block(const scudmainfo_struct *dma)
-{
-  u32 ra, wa, words;
-  if (!scu_dma_model_new() || CurrentSH2 == NULL || SH2Core == NULL)
-    return;
-  ra = dma->ReadAddress & 0x1FFFFFFF;
-  wa = dma->WriteAddress & 0x1FFFFFFF;
-  if (!((ra >= 0x06000000 && ra < 0x06100000) ||
-        (ra >= 0x00200000 && ra < 0x00300000) ||
-        (wa >= 0x06000000 && wa < 0x06100000) ||
-        (wa >= 0x00200000 && wa < 0x00300000)))
-    return;
-  // ~1.07 cycles per 16-bit word measured on the timing disc
-  words = dma->TransferNumber >> 1;
-  SH2Core->AddCycle(CurrentSH2, words + (words >> 4));
-}
 //////////////////////////////////////////////////////////////////////////////
 
 int ScuInit(void) {
@@ -1080,12 +1052,21 @@ void step_dsp_dma(scudspregs_struct *sc) {
 }
 
 
+// SCU manual 3.4, figure 3.20: the Timer 1 mode bit in T1MD is bit 8, not
+// bit 7. Mode 0 raises the Timer 1 interrupt on every line; mode 1 raises it
+// only on the line selected by the Timer 0 compare register, i.e. once per
+// frame. The legacy code tested 0x80, so a game writing the documented 0x101
+// (mode 1 + timer enable) fell into the every-line path and got about 260
+// Timer 1 interrupts per frame instead of one. mednafen ss/scu.inc reads the
+// same bit: Timer1_Mode = (tmp >> 8) & 1.
+#define SCU_T1MD_MODE_BIT 0x100
+
 INLINE void ScuTimer1Exec( u32 timing ) {
   if (ScuRegs->timer1_counter > 0) {
     ScuRegs->timer1_counter = (ScuRegs->timer1_counter - (timing >> 1));
     if (ScuRegs->timer1_counter <= 0) {
       ScuRegs->timer1_set = 1;
-      if ((ScuRegs->T1MD & 0x80) == 0) {
+      if ((ScuRegs->T1MD & SCU_T1MD_MODE_BIT) == 0) {
         ScuSendTimer1();
       }
       else if (ScuRegs->timer0_set == 1) {
@@ -1093,6 +1074,47 @@ INLINE void ScuTimer1Exec( u32 timing ) {
       }
     }
   }
+}
+
+// SCU DMA started by the main CPU can only reach three buses: the A-Bus, the
+// B-Bus and Work RAM-H. See the SCU manual 2.1, figure 2.2 ("DMA transfer
+// areas when started by the main CPU") and the note "WORKRAM-L cannot be used
+// with SCU DMA". The boot ROM, the SMPC, backup RAM, Work RAM-L and the SCU
+// registers are unreachable; a transfer naming one of them does not run at
+// all and raises the DMA-illegal interrupt instead. Returns the bus index
+// (0=A, 1=B, 2=Work RAM-H) or -1 when the address is out of reach.
+static int ScuDmaAddressToBus(u32 addr) {
+  addr &= 0x07FFFFFF;
+  if (addr >= 0x02000000 && addr <= 0x058FFFFF) return 0;
+  if (addr >= 0x05A00000 && addr <= 0x05FBFFFF) return 1;
+  if (addr >= 0x06000000) return 2;
+  return -1;
+}
+
+// True when the transfer the registers currently describe can actually run.
+// YABA_SCU_DMA_TRACE_ILL=1 reports the refused transfers, so a title can be
+// checked for transfers that used to be serviced and now are not.
+static int ScuDmaTransferAllowed(const scudmainfo_struct *dma) {
+  int rb, wb;
+  rb = ScuDmaAddressToBus(dma->ReadAddress);
+  wb = ScuDmaAddressToBus(dma->WriteAddress);
+  if (rb >= 0 && wb >= 0)
+    return 1;
+  {
+    static int trace = -1;
+    static int logged = 0;
+    if (trace < 0)
+      trace = (getenv("YABA_SCU_DMA_TRACE_ILL") != NULL);
+    if (trace && logged < 64) {
+      logged++;
+      printf("[SCUDMA-ILL f%u] level=%d src=%08X(bus %d) dst=%08X(bus %d) n=%d\n",
+             (unsigned)yabsys.frame_count, (int)dma->mode,
+             (unsigned)dma->ReadAddress, rb, (unsigned)dma->WriteAddress, wb,
+             (int)dma->TransferNumber);
+      fflush(stdout);
+    }
+  }
+  return 0;
 }
 
 void ScuSetAddValue(scudmainfo_struct * dmainfo) {
@@ -1321,6 +1343,13 @@ void SucDmaExec(scudmainfo_struct * dma, int * time ) {
 void SucDmaCheck(scudmainfo_struct * dma, int time) {
   int atime = time;
   if (dma->TransferNumber > 0) {
+    if (!ScuDmaTransferAllowed(dma)) {
+      // Unreachable source or destination: nothing is transferred and the
+      // level-end interrupt is not raised. See ScuDmaAddressToBus().
+      dma->TransferNumber = 0;
+      ScuSendDMAIllegal();
+      return;
+    }
     if (dma->ModeAddressUpdate & 0x1000000) {
       while (atime > 0) {
         SucDmaExec(dma, &atime);
@@ -1348,6 +1377,11 @@ void SucDmaCheck(scudmainfo_struct * dma, int time) {
             dma->WriteAddress = MappedMemoryReadLongNocache(dma->InDirectAdress + 4, NULL);
             dma->ReadAddress = MappedMemoryReadLongNocache(dma->InDirectAdress + 8, NULL);
             dma->InDirectAdress += 0xC;
+            if (!ScuDmaTransferAllowed(dma)) {
+              dma->TransferNumber = 0;
+              ScuSendDMAIllegal();
+              return;
+            }
           }
         }
       }
@@ -1391,7 +1425,7 @@ void ScuExec(u32 timing) {
    int i;
 
    if ( ScuRegs->T1MD & 0x1 ){
-     if ( (ScuRegs->T1MD & 0x80) == 0) {
+     if ( (ScuRegs->T1MD & SCU_T1MD_MODE_BIT) == 0) {
        ScuTimer1Exec(timing);
      }
      else {
@@ -1427,7 +1461,7 @@ void ScuExec(u32 timing) {
    }
 #else
   // legacy budget ~8 words/cycle; new model ~1 word/cycle (see top of file)
-  ScuDmaProc(ScuRegs, scu_dma_model_new() ? ((int)timing << 1) : ((int)timing << 4));
+  ScuDmaProc(ScuRegs, (int)timing << 4);
 #endif
 
    // is dsp executing?
@@ -2898,7 +2932,6 @@ void FASTCALL ScuWriteLong(u32 addr, u32 val) {
             ScuDMA(&ScuRegs->dma0);
 #else
             ScuSetAddValue(&ScuRegs->dma0);
-            scu_dma_cbus_block(&ScuRegs->dma0);
             ScuDmaProc(ScuRegs, 128);
 #endif
          }
@@ -2936,7 +2969,6 @@ void FASTCALL ScuWriteLong(u32 addr, u32 val) {
             ScuDMA(&ScuRegs->dma1);
 #else
             ScuSetAddValue(&ScuRegs->dma1);
-            scu_dma_cbus_block(&ScuRegs->dma1);
             ScuDmaProc(ScuRegs,128);
 #endif
       
@@ -2977,7 +3009,6 @@ void FASTCALL ScuWriteLong(u32 addr, u32 val) {
             ScuDMA(&ScuRegs->dma2);
 #else
             ScuSetAddValue(&ScuRegs->dma2);
-            scu_dma_cbus_block(&ScuRegs->dma2);
             ScuDmaProc(ScuRegs, 128);
 #endif
             
@@ -3081,34 +3112,33 @@ void FASTCALL ScuWriteLong(u32 addr, u32 val) {
 
 //////////////////////////////////////////////////////////////////////////////
 
+// Called when the game writes 0 bits to IST: cancel the queued (not yet
+// delivered) interrupts whose status bit was cleared, mirroring mednafen's
+// IPending model. The old implementation indexed the queue with the bit
+// number (interrupts[i] instead of interrupts[ii]) and removed slot 0 on
+// garbage matches; that stayed dormant while IST was almost always 0, but
+// once IST latches events (see SendInterrupt) a routine IST ack
+// could silently drop a queued A-bus CD interrupt (Discworld intermittent
+// boot freeze waiting for CMOK).
 void ScuRemoveInterruptByCPU(u32 pre, u32 after) {
-  for (int i = 0; i < 16; i++) {
-    if (((pre >> i) & 0x01) && (((after >> i) & 0x01) == 0)) {
-      u32 ii, i2;
-      int hit = -1;
-      for (ii = 0; ii < ScuRegs->NumberOfInterrupts; ii++) {
-        if (ScuRegs->interrupts[i].statusbit == (1<<i)) {
-          hit = ii;
-          ScuRegs->IST &= ~ScuRegs->interrupts[i].statusbit;
-          LOG("%s(%0X) is removed at frame %d:%d", ScuGetVectorString(ScuRegs->interrupts[i].vector), ScuRegs->interrupts[i].vector, yabsys.frame_count, yabsys.LineCount);
-          break;
-        }
-      }
-      if (hit != -1) {
-        i2 = 0;
-        for (ii = 0; ii < ScuRegs->NumberOfInterrupts; ii++) {
-          if (ii != hit) {
-            memcpy(&ScuRegs->interrupts[i2], &ScuRegs->interrupts[ii], sizeof(scuinterrupt_struct));
-            i2++;
-          }
-        }
-        ScuRegs->NumberOfInterrupts--;
-      }
+  const u32 cleared = pre & ~after;
+  u32 ii, i2;
+  if (cleared == 0)
+    return;
+  i2 = 0;
+  for (ii = 0; ii < ScuRegs->NumberOfInterrupts; ii++) {
+    if (ScuRegs->interrupts[ii].statusbit & cleared) {
+      LOG("%s(%0X) is removed at frame %d:%d",
+          ScuGetVectorString(ScuRegs->interrupts[ii].vector),
+          ScuRegs->interrupts[ii].vector, yabsys.frame_count, yabsys.LineCount);
+      continue;
     }
+    if (i2 != ii)
+      memcpy(&ScuRegs->interrupts[i2], &ScuRegs->interrupts[ii], sizeof(scuinterrupt_struct));
+    i2++;
   }
+  ScuRegs->NumberOfInterrupts = i2;
 }
-
-static int scu_abus_queue_enabled(void);
 
 void ScuTestInterruptMask()
 {
@@ -3123,8 +3153,7 @@ void ScuTestInterruptMask()
      if (mask & 0x8000){
        // new latch model: consume AIACK only when actually delivering
        // (legacy burned it even while IMS still masked the interrupt)
-       if (ScuRegs->AIACK &&
-           (!scu_abus_queue_enabled() || !(ScuRegs->IMS & 0x8000))){
+       if (ScuRegs->AIACK && !(ScuRegs->IMS & 0x8000)){
          ScuRegs->AIACK = 0;
          if (!(ScuRegs->IMS & 0x8000)) {
 
@@ -3252,45 +3281,33 @@ void ScuRemoveInterrupt(u8 vector, u8 level, u32 statusbit){
 // inside a masked window (and consumed AIACK even without delivering).
 // A lost HIRQ edge deadlocks CD drivers that issue a command with the
 // CD interrupt masked and unmask afterwards (Bio Hazard title freeze
-// with accurate command timings). YABA_SCU_ABUS_QUEUE=old reverts.
-static int scu_abus_queue_v = -1;
-
-static int scu_abus_queue_enabled(void)
-{
-  if (scu_abus_queue_v < 0)
-  {
-    const char *e = getenv("YABA_SCU_ABUS_QUEUE");
-    scu_abus_queue_v = !(e != NULL && strcmp(e, "old") == 0);
-  }
-  return scu_abus_queue_v;
-}
-
+// with accurate command timings).
+// IST latch model: the real SCU latches every interrupt event in IST
+// regardless of the CPU-side SR.I mask; the bit only leaves IST when the
+// request is asserted to a CPU that can accept it (mednafen ss/scu.inc
+// keeps IPending set while the assert slot is busy). The legacy code set
+// the bit and cleared it right after SH2SendInterrupt, so a game that
+// blocks interrupts via SR and polls IST never observes the event --
+// Bug! hangs on the "SEGA AWAY TEAM" screen polling IST bit1 (VBlank-OUT)
+// with SR.I=0xF this way.
 static INLINE void SendInterrupt(u8 vector, u8 level, u16 mask, u32 statusbit) {
 
   // A-BUS?
   if ((mask & 0x8000) ){
-    if (scu_abus_queue_enabled()) {
-      if (ScuRegs->AIACK && !(ScuRegs->IMS & 0x8000)) {
-        ScuRegs->AIACK = 0;
-        SH2SendInterrupt(MSH2, vector, level);
-      }
-      else {
-        // latch: ScuTestInterruptMask() delivers on IMS/AIACK writes
-        if (getenv("YABA_DMAC_DEBUG")) {
-          printf("[ABUS] latched v=%02X AIACK=%d IMS=%08X f=%u\n", vector,
-                 (int)ScuRegs->AIACK, (unsigned)ScuRegs->IMS,
-                 (unsigned)yabsys.frame_count);
-          fflush(stdout);
-        }
-        ScuQueueInterrupt(vector, level, mask, statusbit);
-        ScuRegs->IST |= statusbit;
-      }
-    }
-    else if (ScuRegs->AIACK){
+    if (ScuRegs->AIACK && !(ScuRegs->IMS & 0x8000)) {
       ScuRegs->AIACK = 0;
-      if (!(ScuRegs->IMS & 0x8000)){
-        SH2SendInterrupt(MSH2, vector, level);
+      SH2SendInterrupt(MSH2, vector, level);
+    }
+    else {
+      // latch: ScuTestInterruptMask() delivers on IMS/AIACK writes
+      if (getenv("YABA_DMAC_DEBUG")) {
+        printf("[ABUS] latched v=%02X AIACK=%d IMS=%08X f=%u\n", vector,
+               (int)ScuRegs->AIACK, (unsigned)ScuRegs->IMS,
+               (unsigned)yabsys.frame_count);
+        fflush(stdout);
       }
+      ScuQueueInterrupt(vector, level, mask, statusbit);
+      ScuRegs->IST |= statusbit;
     }
   }else if (!(ScuRegs->IMS & mask)){
 
@@ -3304,7 +3321,11 @@ static INLINE void SendInterrupt(u8 vector, u8 level, u16 mask, u32 statusbit) {
       if (vector == 0x40)
         SH2SendInterrupt(SSH2, 0x43, 2);
     }
-    ScuRegs->IST &= ~statusbit;
+    // Auto-clear only when the master SH2 can take the interrupt now;
+    // while SR.I blocks it, keep the bit latched so IST polling sees it.
+    if (SH2Core != NULL && SH2Core->GetSR != NULL &&
+        level > ((SH2Core->GetSR(MSH2) >> 4) & 0xF))
+      ScuRegs->IST &= ~statusbit;
   }
   else
    {

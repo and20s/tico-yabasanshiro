@@ -11,14 +11,17 @@ Contributors:
 
 #pragma once
 
-// Vulkan validation layer + debug-utils/debug-report wiring. NDEBUG-
-// gated so CMAKE_BUILD_TYPE=Release strips per-call validation and the
-// layer-not-found exit(-1). libVkLayer_khronos_validation.so is also
-// dropped from release/pro APKs by build.gradle's packagingOptions.
-#ifdef NDEBUG
-#define BUILD_ENABLE_VULKAN_DEBUG								0
-#else
+// Vulkan validation layer + debug-utils/debug-report wiring. Opt-in via
+// the YAB_WANT_VULKAN_VALIDATION cmake option (-DYAB_VULKAN_VALIDATION=1),
+// NOT via NDEBUG: a -O0 -g build is the normal way to debug the native core
+// with lldb, and tying validation to it would force every debug build to
+// ship libVkLayer_khronos_validation.so. That layer is dropped from
+// release/pro APKs by build.gradle's packagingOptions and is currently not
+// packaged into the debug APK either, so requiring it is a startup failure.
+#if defined(YAB_VULKAN_VALIDATION) && (YAB_VULKAN_VALIDATION)
 #define BUILD_ENABLE_VULKAN_DEBUG								1
+#else
+#define BUILD_ENABLE_VULKAN_DEBUG								0
 #endif
 
 // VkResult error logging. Cheap (only fires on real errors); always on.

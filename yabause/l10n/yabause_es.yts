@@ -372,3 +372,63 @@ Yabause is not initialized, can't manage backup ram.|Yabause no está inicializa
 http://www.emu-compatibility.com/yabause/index.php?lang=uk|http://www.emu-compatibility.com/yabause/index.php?lang=uk
 http://www.monkeystudio.org|http://www.monkeystudio.org
 toolBar|Barra de herramientas
+Yaba Sanshiro Setup|Configuración de Yaba Sanshiro
+Next|Siguiente
+Back|Atrás
+Finish|Finalizar
+Graphics|Gráficos
+Choose the preset that matches your PC. You can change any of this later in Settings.|Elige el ajuste predefinido que coincida con tu PC. Puedes cambiar esto más adelante en Configuración.
+Setting|Ajuste
+Controls|Controles
+Press each button on your keyboard or gamepad when it is highlighted.|Pulsa cada botón de tu teclado o mando cuando se resalte.
+Press the input for|Pulsa la entrada para
+All buttons are set.|Todos los botones están configurados.
+Games|Juegos
+Tell Yaba Sanshiro where your games are.|Indica a Yaba Sanshiro dónde están tus juegos.
+Do not use an optical drive|No usar una unidad óptica
+Choose the folder that contains your games|Elige la carpeta que contiene tus juegos
+Ready|Listo
+Review your choices before applying them.|Revisa tus elecciones antes de aplicarlas.
+High - modern high-end GPU and CPU|Alto - GPU y CPU modernas de gama alta
+Medium - mid-range GPU and CPU|Medio - GPU y CPU de gama media
+Low - older GPU and CPU|Bajo - GPU y CPU más antiguas
+Vulkan is not available in this build, so only the Low preset can be used.|Vulkan no está disponible en esta compilación, así que solo se puede usar el ajuste Bajo.
+Which device do you want to play with?|¿Con qué dispositivo quieres jugar?
+Press the input you want to use.|Pulsa la entrada que quieres usar.
+Previous button|Botón anterior
+Skip this button|Omitir este botón
+Skip input setup|Omitir configuración de entrada
+Folder that contains your CHD or ISO files|Carpeta que contiene tus archivos CHD o ISO
+Browse...|Examinar...
+Optical drive to play discs from|Unidad óptica desde la que reproducir discos
+Both are optional. You can set them later in Settings.|Ambos son opcionales. Puedes configurarlos más adelante en Configuración.
+These settings will be applied when you press Finish.|Estos ajustes se aplicarán al pulsar Finalizar.
+Vulkan Video|Vulkan Video
+OpenGL|OpenGL
+Other video core|Otro núcleo de vídeo
+Polygon Generation|Generación de Polígonos
+Compute Rasterizer|Compute Rasterizer
+GPU Tessellation|GPU Tessellation
+Internal Resolution|Resolución Interna
+RBG Resolution|Resolución RBG
+OpenAL Sound Interface|Interfaz de Sonido de OpenAL
+Other sound core|Otro núcleo de sonido
+SCSP sync count per frame|Número de sincronizaciones SCSP por fotograma
+Time Synchronization Mode|Modo de Sincronización de Tiempo
+Synchronize to CPU|Sincronizar con la CPU
+Run Setup &Wizard...|&Ejecutar Asistente de Configuración...
+Some of these settings only take effect when Yaba Sanshiro starts. Please restart it.|Algunos de estos ajustes solo surten efecto al iniciar Yaba Sanshiro. Reinícialo.
+Buttons assigned|Botones asignados
+Not set|No establecido
+Keyboard|Teclado
+Keyboard / Mouse|Teclado / Ratón
+not a known gamepad|mando no reconocido
+Unknown device|Dispositivo desconocido
+not connected|no conectado
+This gamepad is recognised. It works without any setup.|Este mando ha sido reconocido. Funciona sin necesidad de configuración.
+This device cannot be set up automatically. Assign each button on the next page.|Este dispositivo no se puede configurar automáticamente. Asigna cada botón en la siguiente página.
+Use the default assignment|Usar la asignación predeterminada
+Input device|Dispositivo de entrada
+Native (native resolution of Window)|Nativa (resolución nativa de la ventana)
+Fit to Emulation Resolution|Ajustar a la resolución de emulación
+Use compute shader for RBG generation|Usar shader de cómputo para la generación de RBG

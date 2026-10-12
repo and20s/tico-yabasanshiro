@@ -19,3 +19,7 @@ fastlane/test_output/
 
 # Development environment files
 secrets.plist
+
+# Bundler
+vendor/bundle/
+.bundle/

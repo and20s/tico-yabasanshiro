@@ -812,6 +812,10 @@ void PerKeyDown(u32 key)
 {
 	unsigned int i = 0;
 
+	// An unbound button holds PERKEY_UNBOUND, so this value must never be
+	// looked up or every unconfigured button on every peripheral fires.
+	if (key == PERKEY_UNBOUND) return;
+
 	while(i < perkeyconfigsize)
 	{
 		if (key == perkeyconfig[i].key)
@@ -827,6 +831,10 @@ void PerKeyDown(u32 key)
 void PerKeyUp(u32 key)
 {
 	unsigned int i = 0;
+
+	// An unbound button holds PERKEY_UNBOUND, so this value must never be
+	// looked up or every unconfigured button on every peripheral fires.
+	if (key == PERKEY_UNBOUND) return;
 
 	while(i < perkeyconfigsize)
 	{
@@ -937,6 +945,9 @@ void PerUpdateConfig(PerBaseConfig_struct * baseconfig, int nelems, void * contr
    {
       perkeyconfig[i].base = baseconfig + j;
       perkeyconfig[i].controller = controller;
+      // realloc() leaves this indeterminate, and a garbage value here would fire
+      // a random Saturn button on an unrelated key or axis.
+      perkeyconfig[i].key = PERKEY_UNBOUND;
       j++;
    }
 }

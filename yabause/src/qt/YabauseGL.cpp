@@ -23,12 +23,35 @@
 #include "VolatileSettings.h"
 #include <QWindow>
 #include <QOpenGLFunctions>
+#include <QSurfaceFormat>
 #include <YabauseThread.h>
 
 
 YabauseGL::YabauseGL( QWidget* p )
   : QOpenGLWidget(p)
 {
+	// Request the context on this widget only. Setting it as the
+	// application-wide default format would also apply it to Qt's backingstore
+	// composition context, which some drivers cannot present from - that turned
+	// the whole window black on Intel UHD Graphics.
+	//
+	// Deliberately no setVersion()/setProfile() here. WGL and GLX return
+	// exactly the version that is asked for, while this renderer needs the
+	// driver's *maximum* compatibility context: its desktop shaders are GLSL
+	// 400 and 430, and it resolves entry points that only exist past 4.3.
+	// NVIDIA happens to hand back 4.6 whatever is asked for, which is why
+	// asking for 3.2 went unnoticed; Intel honours the request literally, so
+	// a 3.2 request yields GLSL 1.50 (no shader compiles) and even a 4.3
+	// request leaves entry points unresolved - both crash during startup with
+	// a call through a null function pointer. Leaving the version unset makes
+	// the driver hand back its best compatibility context (4.6 on Intel UHD).
+	QSurfaceFormat fmt = format();
+	fmt.setSwapBehavior(QSurfaceFormat::DoubleBuffer);
+	fmt.setSwapInterval(0);
+	fmt.setDepthBufferSize(24);
+	fmt.setStencilBufferSize(8);
+	setFormat(fmt);
+
 	setFocusPolicy( Qt::StrongFocus );
 	setUpdateBehavior(QOpenGLWidget::PartialUpdate);
 
@@ -67,7 +90,7 @@ void YabauseGL::resizeGL( int w, int h )
 }
 
 void YabauseGL::paintGL() {
-	// •`‰æˆ—
+	// Drawing
 	//printf("YabauseGL::paintGL");
 
 	if(pYabauseThread) pYabauseThread->execEmulation();

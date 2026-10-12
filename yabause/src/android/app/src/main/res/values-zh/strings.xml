@@ -113,7 +113,7 @@
     <string name="browse_title">Videos by Your Company</string>
     <string name="related_movies">相关视频</string>
     <string name="vertical_grid_title">Vertical Video Grid</string>
-    <string name="delete_confirm">"是否确实要删除此项目？"</string>string&gt;
+    <string name="delete_confirm">"是否确实要删除此项目？"</string>
     <string name="error">错误</string>
     <string name="ok">确定</string>
     <string name="cancel">取消</string>
@@ -169,10 +169,6 @@
     <string name="menu_delete">删除</string>
     <string name="already_have_been">" 如果您已经捐赠，请联系smiyaxdev@gmail.com"</string>
     <string name="close">Close</string>
-    <string name="siginin_message">
-    登录后即可将保存的数据和状态数据备份到云中，并在设备之间共享。\n
-    但是，这些功能是实验性的，因此它们无法按预期工作，规格可能会更改或终止，恕不另行通知。 即使您没有登录，Firebase 等库也会收集信息以改进您的应用。详细的隐私政策可在 https://www.yabasanshiro.com/privacy 找到。
-    </string>
     <string name="pro_version_available">专业版可用！\n\n *添加游戏没有限制\n *在设备之间保存/加载游戏状态\n *没有广告\n\n</string>
     <string name="remaining_installation_count">剩余安装数</string>
     <string name="remaining_installation_count_is">剩余安装数量为 </string>
@@ -207,9 +203,7 @@
     <string name="agreement"> 点击“开始”按钮，即表示您同意<a href="https://www.yabasanshiro.com/terms-of-use">最终用户许可协议</a>。
     注意：<a href="https://www.yabasanshiro.com/privacy">隐私政策</a>描述了数据的处理方式。 YabaSanshiro 将诊断数据发送到 devMiyax 和第三方服务，以帮助改进应用程序。
     </string>
-    <string name="restore_defaults">
-        恢复默认值
-    </string>
+    <string name="restore_defaults">恢复为全局设置</string>
     <string name="last_play_game">最近玩过的游戏:</string>
     <string name="device">设备:</string>
     <string name="auto_backup_memory_sync">自动备份同步</string>
@@ -405,6 +399,20 @@
     <string name="choose_rbg_resolution">选择 RBG（旋转背景）屏幕分辨率</string>
     <string name="menu_set_as_gametitle">设置</string>
     <string name="str_use_compute_shader">使用计算着色器</string>
+    <string name="apply_recommended_settings">为此设备应用推荐设置</string>
+    <string name="apply_recommended_settings_summary">选择适合此设备的渲染设置</string>
+    <string name="recommended_settings_no_change">当前设置已经是推荐值。</string>
+    <string name="recommended_settings_scope_note">这会更改全局默认设置。已经保存了自己设置的游戏将保持不变。</string>
+    <string name="recommended_settings_apply">应用</string>
+    <string name="benchmark_confirm_title">要测量此设备的性能吗？</string>
+    <string name="benchmark_confirm_message">此设备的GPU尚未收录在推荐数据库中。运行三张简短的测试光盘（约一分钟）可让YabaSanshiro自动选择更合适的图形设置。跳过将保持当前的安全默认设置。</string>
+    <string name="benchmark_confirm_run">开始测量</string>
+    <string name="benchmark_confirm_skip">跳过</string>
+    <string name="benchmark_settings_entry_message">此设备的GPU尚未测量，因此没有具体的推荐设置。现在开始测量吗？</string>
+    <string name="benchmark_progress_step">第 %1$d / %2$d 张光盘</string>
+    <string name="benchmark_disc_name_1">VDP1精灵渲染</string>
+    <string name="benchmark_disc_name_2">VDP2背景渲染</string>
+    <string name="benchmark_disc_name_3">VDP2旋转渲染</string>
     <string name="res_1080p">1080p</string>
     <string name="res_720p">720p</string>
     <string name="ar_original">原始</string>
@@ -460,8 +468,6 @@
     <string name="sign_out">退出</string>
     <string name="sign_in">登录</string>
     <string name="agree">我同意</string>
-    <string name="do_you_want_to_sign_in">您要登录吗？</string>
-    <string name="never_ask_me_again">不再询问</string>
     <string name="deleting_file">正在删除文件</string>
     <string name="sure_delete">您确定要删除此文件吗？</string>
     <string name="copy_to_cloud">复制到云端</string>
@@ -479,7 +485,6 @@
     <string name="scsp_sync">每帧 Scsp 同步计数 (1 - 255)</string>
     <string name="need_to_accept">您需要接受使用此应用程序的权限请求。请重新启动。</string>
     <string name="cpu_sync_per_line">模拟优先级</string>
-    <string name="sel_cpu_sync_per_line" />
     <string name="speed">速度</string>
     <string name="accuracy">准确性</string>
     <string name="time_synchronization_mode">声音时间同步模式</string>
@@ -745,8 +750,8 @@
     <string name="menu_save_state_cloud">保存状态到云端</string>
     <string name="menu_load_state_cloud">从云端加载状态</string>
     <string name="report_include_reproduction_data">包含重现数据</string>
-    <string name="restore_defaults_confirm">将所有游戏特定设置重置为默认值?</string>
-    <string name="restore_defaults_success">设置已恢复为默认值</string>
+    <string name="restore_defaults_confirm">放弃此游戏的单独设置并使用全局设置?</string>
+    <string name="restore_defaults_success">已恢复为全局设置</string>
     <string name="create_home_shortcut">创建主屏幕快捷方式</string>
     <string name="shortcut_created">已在主屏幕创建快捷方式</string>
     <string name="shortcut_not_supported">您的设备不支持快捷方式</string>
@@ -886,7 +891,6 @@
     <string name="pro_gate_subscribe">订阅</string>
     <string name="pro_gate_subscribe_with_price">订阅 (%s/年)</string>
     <string name="pro_gate_buy_pro">购买Pro版本</string>
-    <string name="game_list_limit_banner">要查看所有游戏，请订阅或购买Pro版本。</string>
     <string name="pro_feature_only">此功能需要Pro订阅。</string>
     <string name="pro_gate_dialog_title">解锁 YabaSanshiro Pro</string>
     <string name="pro_gate_dialog_subtitle">使用这些高级功能享受完整体验</string>
@@ -928,4 +932,55 @@
     <string name="experimental_notice_title">已启用实验性功能</string>
     <string name="experimental_notice_message">“%1$s”是实验性功能。部分游戏可能出现画面异常。\n\n如果你发现问题，请反馈给我们——你的反馈有助于我们改进。游戏中打开菜单并选择“报告”，会自动附上截图和当前状态。无需登录。</string>
     <string name="experimental_notice_ok">知道了</string>
+
+    <!-- Shared backup: reporting and hiding (issue #159) -->
+    <string name="report_backup">举报</string>
+    <string name="report_dialog_title">举报此存档</string>
+    <string name="report_reason_inappropriate">不当内容</string>
+    <string name="report_reason_spam">垃圾信息或误导内容</string>
+    <string name="report_reason_other">其他</string>
+    <string name="report_send">发送举报</string>
+    <string name="report_sent">举报已发送，谢谢。</string>
+    <string name="report_failed">无法发送举报。</string>
+    <string name="hide_owner">隐藏此用户</string>
+    <string name="hide_owner_confirm_title">隐藏此用户？</string>
+    <string name="hide_owner_confirm_message">%1$s 分享的存档将不再显示在本设备的此列表中。你可以随时取消。</string>
+    <string name="hidden_owners_count">已隐藏的用户 (%1$d)</string>
+    <string name="show_all_hidden">显示全部</string>
+    <string name="shared_backup_load_more_failed">无法加载更多共享存档。</string>
+
+    <!-- Free game limit: locked cards and the subscribe offer -->
+    <string name="game_limit_banner_message">免费版可游玩 %1$d 款游戏。订阅后可解锁全部游戏库。</string>
+    <string name="game_limit_banner_action">解锁全部游戏</string>
+    <string name="game_locked_badge">已锁定</string>
+    <string name="game_locked_content_description">%1$s，免费版中已锁定</string>
+    <string name="game_locked_pro_gate_message">这款游戏超出了免费版的数量上限。</string>
+    <string name="vdp2_composite_type">VDP2 合成</string>
+    <string name="choose_vdp2_composite_type">选择 VDP2 合成方式</string>
+    <string name="pref_vdp2_composite_summary">选择 VDP2 背景层的合成方式</string>
+    <string name="vdp2_composite_new">精确 (逐像素)</string>
+    <string name="vdp2_composite_legacy">快速 (传统)</string>
+    <string name="benchmark_result_title">测量完成</string>
+    <string name="benchmark_result_message">已为此设备选择并应用以下设置。</string>
+    <string name="benchmark_confirm_upload">将结果发送给开发者</string>
+    <string name="benchmark_confirm_upload_note">仅发送设备型号、GPU 和测得的帧率。绝不发送游戏名称、存档数据和账号信息。这些结果用于为该 GPU 选择更合适的默认设置。</string>
+    <string name="notification_channel_release">发布公告</string>
+    <string name="notification_channel_release_desc">关于 YabaSanshiro 新版本的通知</string>
+    <string name="share_backup_link_subject">共享的 Saturn 存档</string>
+    <string name="share_backup_link_text">已共享 %1$s 的存档数据\n%2$s\n%3$s</string>
+    <string name="share_backup_link_chooser">分享存档链接</string>
+    <string name="sharing_backup_progress">正在共享备份…</string>
+    <string name="share_public_consent_title">要公开此存档吗？</string>
+    <string name="share_public_consent_message">共享会上传此存档，任何人都能从社区列表中找到并下载，而不仅限于拥有链接的人。是否继续？</string>
+    <string name="import_shared_backup_title">导入共享存档</string>
+    <string name="import_shared_backup_not_found">未找到该共享存档。它可能已被删除。</string>
+    <string name="import_shared_backup_sign_in">请登录后导入此存档</string>
+    <string name="import_shared_rom_missing_title">游戏不在你的库中</string>
+    <string name="import_shared_rom_missing_message">此存档适用于 \"%1$s\"，但它不在你的库中。你仍可以导入，添加该游戏后即可使用。是否继续？</string>
+    <string name="news_close">关闭</string>
+    <string name="news_read_more">了解更多</string>
+    <string name="news_update">更新</string>
+    <string name="setting_on">开</string>
+    <string name="setting_off">关</string>
+    <string name="recommended_settings_offer_message">建议此设备使用以下设置。要应用吗？</string>
 </resources>

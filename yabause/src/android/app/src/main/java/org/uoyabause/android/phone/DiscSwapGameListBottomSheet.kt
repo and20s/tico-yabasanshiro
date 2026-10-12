@@ -21,15 +21,16 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.devmiyax.yabasanshiro.R
+import org.uoyabause.android.FreeGameSlots
 import org.uoyabause.android.GameInfo
 import org.uoyabause.android.GameInfo.Companion.sigin
 import org.uoyabause.android.YabauseStorage
 import java.io.File
 
 class DiscSwapGameListBottomSheet : BottomSheetDialogFragment() {
-
     interface Listener {
         fun onGameSelectedForDiscSwap(gameInfo: GameInfo)
+
         fun onDiscSwapCancelled()
     }
 
@@ -83,7 +84,12 @@ class DiscSwapGameListBottomSheet : BottomSheetDialogFragment() {
 
         lifecycleScope.launch(Dispatchers.IO) {
             val currentGameCode = arguments?.getString(ARG_CURRENT_GAME_CODE)
-            val allGames = YabauseStorage.dao.getAllSortedByTitle()
+            // Filtered by the same free slots the list uses, rather than by
+            // whichever discs the scan found first: swapping to a locked game
+            // would start it from inside the emulator, where nothing else asks.
+            val allGames = YabauseStorage.dao
+                .getAllSortedByTitle()
+                .filter { !FreeGameSlots.isLockedNow(it) }
             val games = if (currentGameCode.isNullOrBlank()) {
                 allGames
             } else {
@@ -128,6 +134,7 @@ class DiscSwapGameListBottomSheet : BottomSheetDialogFragment() {
                     view.isFocusable = true
                     view.isFocusableInTouchMode = true
                 }
+
                 override fun onChildViewDetachedFromWindow(view: View) {}
             },
         )
@@ -137,15 +144,17 @@ class DiscSwapGameListBottomSheet : BottomSheetDialogFragment() {
         private val games: List<GameInfo>,
         private val onItemClick: (GameInfo) -> Unit,
     ) : RecyclerView.Adapter<DiscSwapAdapter.ViewHolder>() {
-
-        class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        class ViewHolder(
+            view: View,
+        ) : RecyclerView.ViewHolder(view) {
             val imgBoxart: ImageView = view.findViewById(R.id.img_boxart)
             val tvTitle: TextView = view.findViewById(R.id.tv_game_title)
             val tvProduct: TextView = view.findViewById(R.id.tv_product_number)
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
-            val view = LayoutInflater.from(parent.context)
+            val view = LayoutInflater
+                .from(parent.context)
                 .inflate(R.layout.item_disc_swap_game, parent, false)
             return ViewHolder(view)
         }
@@ -189,8 +198,10 @@ class DiscSwapGameListBottomSheet : BottomSheetDialogFragment() {
             holder.itemView.setOnFocusChangeListener { v, hasFocus ->
                 val scale = if (hasFocus) 1.03f else 1.0f
                 val alpha = if (hasFocus) 1.0f else 0.9f
-                v.animate()
-                    .scaleX(scale).scaleY(scale)
+                v
+                    .animate()
+                    .scaleX(scale)
+                    .scaleY(scale)
                     .alpha(alpha)
                     .setDuration(150)
                     .start()
@@ -201,7 +212,8 @@ class DiscSwapGameListBottomSheet : BottomSheetDialogFragment() {
 
         private fun loadBoxart(imageView: ImageView, game: GameInfo) {
             if (game.image_url.isNullOrEmpty()) {
-                Glide.with(imageView)
+                Glide
+                    .with(imageView)
                     .load(R.drawable.missing)
                     .into(imageView)
                 return
@@ -212,12 +224,14 @@ class DiscSwapGameListBottomSheet : BottomSheetDialogFragment() {
                 if (game.isCloudOnly) {
                     url += "?" + sigin
                 }
-                Glide.with(imageView)
+                Glide
+                    .with(imageView)
                     .load(url)
                     .error(R.drawable.missing)
                     .into(imageView)
             } else {
-                Glide.with(imageView)
+                Glide
+                    .with(imageView)
                     .load(game.image_url?.let { File(it) })
                     .error(R.drawable.missing)
                     .into(imageView)
@@ -229,11 +243,9 @@ class DiscSwapGameListBottomSheet : BottomSheetDialogFragment() {
         const val TAG = "DiscSwapGameList"
         private const val ARG_CURRENT_GAME_CODE = "current_game_code"
 
-        fun newInstance(currentGameCode: String?): DiscSwapGameListBottomSheet {
-            return DiscSwapGameListBottomSheet().apply {
-                arguments = Bundle().apply {
-                    putString(ARG_CURRENT_GAME_CODE, currentGameCode)
-                }
+        fun newInstance(currentGameCode: String?): DiscSwapGameListBottomSheet = DiscSwapGameListBottomSheet().apply {
+            arguments = Bundle().apply {
+                putString(ARG_CURRENT_GAME_CODE, currentGameCode)
             }
         }
     }

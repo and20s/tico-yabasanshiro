@@ -3,15 +3,15 @@ scheme("YabaSnashiro")
 
 # A list of devices you want to take the screenshots from
  devices([
-    "iPhone 15",
-    "iPhone 8 Plus",    
-    "iPad Pro 13-inch (M4)"
-#   "iPhone SE",
-#   "iPhone X",
-#   "iPad Pro (12.9-inch)",
-#   "iPad Pro (9.7-inch)",
-#   "Apple TV 1080p",
-#   "Apple Watch Series 6 - 44mm"
+    # One per App Store Connect screenshot set. The names must match the
+    # simulators exactly; snapshot skips a device it cannot find rather than
+    # failing, so a typo silently ships a missing size.
+    # App Store Connect scales the largest size in each family down to the
+    # smaller ones, so these two cover every iPhone and every iPad. The 5.5"
+    # and 12.9" sets are legacy and optional -- and their devices cannot run
+    # a current iOS, which would have put an old UI on the listing.
+    "iPhone 17 Pro Max",      # 6.9", covers all iPhone sizes
+    "iPad Pro 13-inch (M4)"   # 13",  covers all iPad sizes
 ])
 
  languages([
@@ -30,6 +30,11 @@ scheme("YabaSnashiro")
 #scheme("YabaSnashiro-Lite")
 
 # Where should the resulting screenshots be stored?
+
+# Only the screenshot tour. The other UI tests are smoke tests: running them
+# here would multiply their cost by devices x languages for no screenshots.
+only_testing(["YabaSnashiroUITests/ScreenshotTour"])
+
 output_directory("./screenshots")
 
 # remove the '#' to clear all previously generated screenshots before creating new ones

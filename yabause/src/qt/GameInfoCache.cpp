@@ -63,6 +63,15 @@ void GameInfoCache::load() {
         info.displayName = obj.value("displayName").toString();
         info.imageUrl = obj.value("imageUrl").toString();
 
+        // Self-heal: caches written by a run that could not resolve the
+        // CloudService token (e.g. launched from a directory without
+        // settings.ini) carry empty image URLs forever. Recompute from the
+        // product number; keep the stored URL if the token is unavailable
+        // right now so a bad launch cannot poison a good cache.
+        QString recomputed = QGameInfo::coverImageUrl(info.productNumber);
+        if (!recomputed.isEmpty())
+            info.imageUrl = recomputed;
+
         m_entries.insert(it.key(), entry);
     }
 }

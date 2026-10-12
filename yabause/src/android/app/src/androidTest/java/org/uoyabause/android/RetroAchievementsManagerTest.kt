@@ -10,9 +10,7 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.uoyabause.android.GameInfo
-import org.uoyabause.android.achievements.AchievementProgress
 import org.uoyabause.android.achievements.RetroAchievementsManager
-import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 
 /*  Copyright 2019 devMiyax(smiyaxdev@gmail.com)
@@ -136,7 +134,16 @@ class RetroAchievementsManagerTest {
         runBlocking {
             // Create a test file
             val testFile = tempFolder.newFile("reproducible.bin")
-            testFile.writeBytes(byteArrayOf(0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF))
+            testFile.writeBytes(
+                byteArrayOf(
+                    0xAA.toByte(),
+                    0xBB.toByte(),
+                    0xCC.toByte(),
+                    0xDD.toByte(),
+                    0xEE.toByte(),
+                    0xFF.toByte(),
+                ),
+            )
 
             // Execute twice
             val hash1 = raManager.generateGameHash(testFile.absolutePath)
@@ -234,11 +241,11 @@ class RetroAchievementsManagerTest {
             val validHash = "a1b2c3d4e5f6789012345678901234ab"
 
             // Execute
-            val gameId = raManager.resolveGameId(validHash)
+            val progress = raManager.resolveGameId(validHash)
 
             // Verify
-            Assert.assertNotNull("Game ID should not be null for valid hash", gameId)
-            Assert.assertTrue("Game ID should be positive", gameId!! > 0)
+            Assert.assertNotNull("Progress should not be null for valid hash", progress)
+            Assert.assertTrue("Game ID should be positive", progress!!.gameId > 0)
         }
 
     // ========== UT-RM-012: RA未登録ハッシュの場合 ==========
@@ -361,7 +368,7 @@ class RetroAchievementsManagerTest {
 
     // ========== UT-RM-023: 100%達成ゲーム ==========
     @Test
-    fun getGameProgress_completedGame_unlocked Equals Total() =
+    fun getGameProgress_completedGame_unlockedEqualsTotal() =
         runBlocking {
             // Given: Game ID for a completed game (user-specific)
             val gameId = 11259 // Example completed game

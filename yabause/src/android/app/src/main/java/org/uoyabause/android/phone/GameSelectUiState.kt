@@ -32,7 +32,13 @@ data class GameSelectScreenState(
     val isRefreshing: Boolean = false,
     val isSubscribed: Boolean = false,
     val gameCount: Int = 0,
-    val isGameListLimited: Boolean = false,
+    // The paths the free version may play, or null when there is no limit. Held
+    // per game rather than per row so that sorting and searching the list cannot
+    // change which games are locked (FreeGameSlots).
+    val unlockedPaths: Set<String>? = null,
+    // How many games in the whole library the limit is keeping out of reach. The
+    // subscribe banner shows only once this is above zero.
+    val lockedCount: Int = 0,
 )
 
 sealed class GameSelectUiEvent {
@@ -71,4 +77,16 @@ sealed class GameSelectUiEvent {
     data object DismissProgress : GameSelectUiEvent()
 
     data object SignedOut : GameSelectUiEvent()
+
+    /**
+     * The subscription gate was asked for. Running the billing flow needs an
+     * Activity, so the fragment opens it rather than the view model.
+     *
+     * The message says why this particular game will not start; it is null when
+     * the offer came from the banner, which is about the library rather than
+     * about anything the user just chose.
+     */
+    data class ShowProGate(
+        val messageResId: Int?,
+    ) : GameSelectUiEvent()
 }

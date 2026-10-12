@@ -121,7 +121,7 @@ void resetState(Vdp1State& s) {
     //   typically issue these state-only cmds (CMDCTRL types 8/9/10) at the
     //   start of a frame's command list but rely on the values carrying over
     //   when omitted on a later frame (matches Saturn HW + graphics path,
-    //   where Vdp1Renderer::localX/localY are class members that survive
+    //   where Vdp1Regs->localX/localY are persistent registers that survive
     //   beginFrame). Clearing here used to make polygons whose CMDXA-D were
     //   centered around (0,0) (assuming localCoord = screen center from a
     //   prior frame) end up half off-screen on frames that omitted the

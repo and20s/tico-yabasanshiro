@@ -246,6 +246,8 @@
     </property>
     <addaction name="aHelpReport"/>
     <addaction name="aHelpCompatibilityList"/>
+    <addaction name="aHelpSetupWizard"/>
+    <addaction name="separator"/>
     <addaction name="aHelpAbout"/>
     <addaction name="actionCheck_for_updates"/>
    </widget>
@@ -590,6 +592,11 @@
    </property>
    <property name="text">
     <string>Memory Transfer</string>
+   </property>
+  </action>
+  <action name="aHelpSetupWizard">
+   <property name="text">
+    <string>Run Setup &amp;Wizard...</string>
    </property>
   </action>
   <action name="aHelpAbout">

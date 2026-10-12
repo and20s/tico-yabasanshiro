@@ -465,7 +465,8 @@ class BackupManagerFragment : Fragment() {
                             R.string.share_backup_link_text,
                             event.gameTitle,
                             event.url,
-                            org.uoyabause.android.backup.BackupShareLink.hashtags(event.gameTitle),
+                            org.uoyabause.android.backup.BackupShareLink
+                                .hashtags(event.gameTitle),
                         ),
                     )
                 }

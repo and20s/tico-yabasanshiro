@@ -8,7 +8,14 @@ using namespace oboe;
 
 class SndOboeEngine: public oboe::AudioStreamDataCallback {
 private:
+    // Guards the sample ring. Taken by the data callback, so it must never be
+    // held while a stream is stopped or closed: AAudio's stop waits for the
+    // callback in flight to return, and a callback waiting on this lock never
+    // does.
     std::mutex         mLock;
+    // Guards mStream's lifecycle (start / stop / restart). The callback never
+    // takes it.
+    std::mutex         mStreamLock;
     std::shared_ptr<oboe::AudioStream> mStream;
 
   const int NUMSOUNDBLOCKS =4;
@@ -46,6 +53,7 @@ public:
         memset( stereodata16, 0, sizeof(s16) * soundbufsize );
         soundpos = 0;
 
+        std::lock_guard<std::mutex> streamLock(mStreamLock);
         oboe::AudioStreamBuilder builder;
         // The builder set methods can be chained for convenience.
         Result result = builder.setSharingMode(oboe::SharingMode::Exclusive)
@@ -66,16 +74,21 @@ public:
    
     // Call this from Activity onPause()
     void stopAudio() {
-        // Stop, close and delete in case not already closed.
-        std::lock_guard<std::mutex> lock(mLock);
-
-        delete [] stereodata16;
-
-        if (mStream) {
-            mStream->stop();
-            mStream->close();
-            mStream.reset();
+        // Stop, close and delete in case not already closed. The stream is
+        // stopped without mLock (see its comment); once close() returns no
+        // callback can touch the ring, so it is freed after that, not before.
+        {
+            std::lock_guard<std::mutex> streamLock(mStreamLock);
+            if (mStream) {
+                mStream->stop();
+                mStream->close();
+                mStream.reset();
+            }
         }
+
+        std::lock_guard<std::mutex> lock(mLock);
+        delete [] stereodata16;
+        stereodata16 = nullptr;
     }
 
     oboe::DataCallbackResult onAudioReady(oboe::AudioStream *oboeStream, void *audioData, int32_t numFrames) override {
@@ -184,8 +197,10 @@ public:
   }
 
   void restartStream() {
-    std::lock_guard<std::mutex> lock(mLock);
-    
+    // mStreamLock, not mLock: stopping the stream while holding the lock the
+    // data callback takes deadlocks (see mLock).
+    std::lock_guard<std::mutex> streamLock(mStreamLock);
+
     if (mStream) {
         // Save current audio state
         int currentMuteState = muted;

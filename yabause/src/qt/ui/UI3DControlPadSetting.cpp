@@ -87,6 +87,10 @@ UI3DControlPadSetting::UI3DControlPadSetting( PerInterface_struct* core, uint po
 	mScanMasks[ PERANALOG_AXIS3 ] = PERSF_AXIS;
 	mScanMasks[ PERANALOG_AXIS4 ] = PERSF_AXIS;
 
+	// Same physical device selector as the other controller dialogs: a Saturn
+	// port is driven by exactly one physical device.
+	installDeviceSelector();
+
 	loadPadSettings();
 	
 	foreach ( QToolButton* tb, findChildren<QToolButton*>() )

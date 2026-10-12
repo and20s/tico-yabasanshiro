@@ -223,13 +223,6 @@
          </property>
         </widget>
        </item>
-       <item row="25" column="0">
-        <widget class="QPushButton" name="btnLow">
-         <property name="text">
-          <string>Low</string>
-         </property>
-        </widget>
-       </item>
        <item row="28" column="1" colspan="2">
         <widget class="QComboBox" name="cbResolution"/>
        </item>
@@ -249,25 +242,8 @@
          </property>
         </spacer>
        </item>
-       <item row="25" column="1" colspan="2">
-        <widget class="QPushButton" name="btnHigh">
-         <property name="text">
-          <string>High</string>
-         </property>
-        </widget>
-       </item>
-       <item row="26" column="1" colspan="2">
-        <widget class="QComboBox" name="cbFilterMode"/>
-       </item>
        <item row="27" column="1" colspan="2">
         <widget class="QComboBox" name="cbPolygonGeneration"/>
-       </item>
-       <item row="26" column="0">
-        <widget class="QLabel" name="label_5">
-         <property name="text">
-          <string>Filter</string>
-         </property>
-        </widget>
        </item>
        <item row="30" column="0">
         <widget class="QLabel" name="label_8">
@@ -346,36 +322,11 @@
          </property>
         </widget>
        </item>
-       <item row="32" column="0" colspan="3">
-        <widget class="QCheckBox" name="cbVdp2NewComposite">
-         <property name="toolTip">
-          <string>Per-pixel VDP2 color calculation compositor (Vulkan only, experimental)</string>
-         </property>
-         <property name="text">
-          <string>Use new VDP2 composite (per-pixel color calc, Vulkan)</string>
-         </property>
-        </widget>
-       </item>
        <item row="30" column="1" colspan="2">
         <widget class="QComboBox" name="cbRBGREsolution"/>
        </item>
        <item row="3" column="0" colspan="3">
         <widget class="QComboBox" name="cbAspectRatio"/>
-       </item>
-       <item row="8" column="0">
-        <widget class="QLabel" name="lVideoFormat">
-         <property name="font">
-          <font>
-           <bold>true</bold>
-          </font>
-         </property>
-         <property name="text">
-          <string>Video Format</string>
-         </property>
-         <property name="textFormat">
-          <enum>Qt::TextFormat::PlainText</enum>
-         </property>
-        </widget>
        </item>
        <item row="10" column="0">
         <widget class="QLabel" name="label_2">
@@ -407,9 +358,6 @@
        <item row="7" column="0" colspan="3">
         <widget class="QComboBox" name="cbFullscreenResolution"/>
        </item>
-       <item row="9" column="0" colspan="3">
-        <widget class="QComboBox" name="cbVideoFormat"/>
-       </item>
       </layout>
      </widget>
      <widget class="QWidget" name="wSound">
@@ -438,7 +386,7 @@
        <item>
         <widget class="QLabel" name="label_3">
          <property name="text">
-          <string>SCSP Sync count per a frame ( 1 - 255 )</string>
+          <string>SCSP Sync count per frame ( 1 - 255 )</string>
          </property>
         </widget>
        </item>

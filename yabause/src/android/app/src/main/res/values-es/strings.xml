@@ -157,6 +157,20 @@
     <string name="menu_set_as_gametitle">Establecer como Icono de Título</string>
     <string name="add_new_code">Agregar Nuevo Código</string>
     <string name="str_use_compute_shader">Usar Compute Shader</string>
+    <string name="apply_recommended_settings">Aplicar la configuración recomendada para este dispositivo</string>
+    <string name="apply_recommended_settings_summary">Elige ajustes de renderizado adecuados para este dispositivo</string>
+    <string name="recommended_settings_no_change">La configuración actual ya coincide con la recomendación.</string>
+    <string name="recommended_settings_scope_note">Esto cambia la configuración global predeterminada. Los juegos que ya tienen su propia configuración guardada la conservan sin cambios.</string>
+    <string name="recommended_settings_apply">Aplicar</string>
+    <string name="benchmark_confirm_title">¿Medir el rendimiento de este dispositivo?</string>
+    <string name="benchmark_confirm_message">La GPU de este dispositivo aún no está en la base de datos de recomendaciones. Ejecutar tres discos de prueba cortos (aprox. un minuto) permite que YabaSanshiro elija mejores ajustes gráficos automáticamente. Omitirlo mantiene la configuración segura actual.</string>
+    <string name="benchmark_confirm_run">Ejecutar medición</string>
+    <string name="benchmark_confirm_skip">Omitir</string>
+    <string name="benchmark_settings_entry_message">La GPU de este dispositivo aún no ha sido medida, por lo que no hay una recomendación específica disponible. ¿Ejecutar la medición ahora?</string>
+    <string name="benchmark_progress_step">Disco %1$d de %2$d</string>
+    <string name="benchmark_disc_name_1">Renderizado de sprites VDP1</string>
+    <string name="benchmark_disc_name_2">Renderizado de fondo VDP2</string>
+    <string name="benchmark_disc_name_3">Renderizado de rotación VDP2</string>
     <string name="enable">Habilitar</string>
     <string name="disable">Deshabilitar</string>
     <string name="edit">Editar</string>
@@ -229,14 +243,7 @@
     <string name="decline">Rechazar</string>
     <string name="sign_out">Cerrar sesión</string>
     <string name="sign_in">Iniciar sesión</string>
-    <string name="siginin_message">
-        Iniciar sesión permite hacer respaldo de datos guardados y datos de estado en la nube y compartirlos entre dispositivos.\n
-        Sin embargo, estas funciones son experimentales, por lo que no funcionan como se espera, las especificaciones pueden cambiar o terminarse sin previo aviso.
-        Incluso si no inicias sesión, bibliotecas como Firebase recopilan la información para mejorar tu aplicación. Una política de privacidad detallada se puede encontrar en https://www.yabasanshiro.com/privacy.
-    </string>
     <string name="agree">Acepto</string>
-    <string name="do_you_want_to_sign_in">¿Quieres iniciar sesión?</string>
-    <string name="never_ask_me_again">No preguntar de nuevo</string>
     <string name="deleting_file">Eliminando archivo</string>
     <string name="sure_delete">¿Estás seguro de que quieres eliminar este archivo?</string>
     <string name="copy_to_cloud">Copiar a la nube</string>
@@ -275,7 +282,6 @@
     <string name="scsp_sync">Conteo de sincronización Scsp por frame (1 - 255)</string>
     <string name="need_to_accept">Necesitas aceptar la solicitud de permisos para usar esta aplicación. Por favor reinicia de nuevo.</string>
     <string name="cpu_sync_per_line">Prioridad de Emulación</string>
-    <string name="sel_cpu_sync_per_line" />
     <string name="speed">Velocidad</string>
     <string name="accuracy">Precisión</string>
     <string name="time_synchronization_mode">Modo de sincronización de tiempo de sonido</string>
@@ -390,9 +396,7 @@
     <string name="leaderboard_no_data">Este juego aún no tiene tabla de líderes</string>
     <string name="leaderboard_not_supported">Este juego aún no soporta tabla de líderes</string>
     <string name="menu_leaderboard">Tabla de Líderes</string>
-    <string name="restore_defaults">
-        Restaurar valores predeterminados
-    </string>
+    <string name="restore_defaults">Restablecer a los ajustes globales</string>
     <string name="menu_detail">Detalle</string>
     <string name="last_play_game">Último juego jugado:</string>
     <string name="device">Dispositivo:</string>
@@ -737,8 +741,8 @@
     <string name="backup_file_cartridge_16mbit">Cartucho 16Mbit Backup Ram</string>
     <string name="backup_file_cartridge_32mbit">Cartucho 32Mbit Backup Ram</string>
     <string name="report_include_reproduction_data">Incluir datos de reproducción</string>
-    <string name="restore_defaults_confirm">¿Restablecer todos los ajustes específicos del juego a los valores predeterminados?</string>
-    <string name="restore_defaults_success">Ajustes restaurados a los valores predeterminados</string>
+    <string name="restore_defaults_confirm">¿Descartar los ajustes propios de este juego y usar los ajustes globales?</string>
+    <string name="restore_defaults_success">Restablecido a los ajustes globales</string>
     <string name="create_home_shortcut">Crear acceso directo</string>
     <string name="shortcut_created">Acceso directo creado en la pantalla de inicio</string>
     <string name="shortcut_not_supported">Tu dispositivo no admite accesos directos</string>
@@ -878,7 +882,6 @@
     <string name="pro_gate_subscribe">Suscribirse</string>
     <string name="pro_gate_subscribe_with_price">Suscribirse (%s/año)</string>
     <string name="pro_gate_buy_pro">Comprar versión Pro</string>
-    <string name="game_list_limit_banner">Para ver todos los juegos, suscríbase o compre la versión Pro.</string>
     <string name="pro_feature_only">Esta función requiere suscripción Pro.</string>
     <string name="pro_gate_dialog_title">Desbloquear YabaSanshiro Pro</string>
     <string name="pro_gate_dialog_subtitle">Disfruta la experiencia completa con estas funciones premium</string>
@@ -920,4 +923,55 @@
     <string name="experimental_notice_title">Función experimental activada</string>
     <string name="experimental_notice_message">\"%1$s\" es experimental. Algunos juegos pueden mostrar fallos gráficos.\n\nSi encuentras un problema, repórtalo: tus reportes nos ayudan a mejorar. Mientras juegas, abre el menú y elige \"Reportar\"; se adjuntan automáticamente una captura de pantalla y el estado actual. No es necesario iniciar sesión.</string>
     <string name="experimental_notice_ok">Entendido</string>
+
+    <!-- Shared backup: reporting and hiding (issue #159) -->
+    <string name="report_backup">Denunciar</string>
+    <string name="report_dialog_title">Denunciar esta partida</string>
+    <string name="report_reason_inappropriate">Contenido inapropiado</string>
+    <string name="report_reason_spam">Spam o contenido engañoso</string>
+    <string name="report_reason_other">Otro motivo</string>
+    <string name="report_send">Enviar denuncia</string>
+    <string name="report_sent">Denuncia enviada. Gracias.</string>
+    <string name="report_failed">No se pudo enviar la denuncia.</string>
+    <string name="hide_owner">Ocultar a este usuario</string>
+    <string name="hide_owner_confirm_title">¿Ocultar a este usuario?</string>
+    <string name="hide_owner_confirm_message">Las partidas compartidas por %1$s dejarán de aparecer en esta lista en este dispositivo. Puedes deshacerlo cuando quieras.</string>
+    <string name="hidden_owners_count">Usuarios ocultos (%1$d)</string>
+    <string name="show_all_hidden">Mostrar todo</string>
+    <string name="shared_backup_load_more_failed">No se pudieron cargar más partidas compartidas.</string>
+
+    <!-- Free game limit: locked cards and the subscribe offer -->
+    <string name="game_limit_banner_message">La versión gratuita permite jugar a %1$d juegos. Suscríbete para desbloquear toda tu biblioteca.</string>
+    <string name="game_limit_banner_action">Desbloquear todos los juegos</string>
+    <string name="game_locked_badge">Bloqueado</string>
+    <string name="game_locked_content_description">%1$s, bloqueado en la versión gratuita</string>
+    <string name="game_locked_pro_gate_message">Este juego supera el límite de la versión gratuita.</string>
+    <string name="vdp2_composite_type">Composición VDP2</string>
+    <string name="choose_vdp2_composite_type">Elige el método de composición VDP2</string>
+    <string name="pref_vdp2_composite_summary">Selecciona cómo se combinan las capas de fondo VDP2</string>
+    <string name="vdp2_composite_new">Preciso (por píxel)</string>
+    <string name="vdp2_composite_legacy">Rápido (clásico)</string>
+    <string name="benchmark_result_title">Medición completada</string>
+    <string name="benchmark_result_message">Se eligieron estos ajustes para este dispositivo y ya se aplicaron.</string>
+    <string name="benchmark_confirm_upload">Enviar el resultado al desarrollador</string>
+    <string name="benchmark_confirm_upload_note">Solo se envían el modelo del dispositivo, la GPU y las tasas de fotogramas medidas. Nunca se envían nombres de juegos, datos de guardado ni información de la cuenta. Los resultados sirven para elegir mejores ajustes predeterminados para esta GPU.</string>
+    <string name="notification_channel_release">Avisos de lanzamiento</string>
+    <string name="notification_channel_release_desc">Notificaciones sobre nuevas versiones de YabaSanshiro</string>
+    <string name="share_backup_link_subject">Guardado de Saturn compartido</string>
+    <string name="share_backup_link_text">Datos de guardado de %1$s compartidos\n%2$s\n%3$s</string>
+    <string name="share_backup_link_chooser">Compartir enlace del guardado</string>
+    <string name="sharing_backup_progress">Compartiendo copia de seguridad…</string>
+    <string name="share_public_consent_title">¿Hacer público este guardado?</string>
+    <string name="share_public_consent_message">Al compartir, este guardado se sube para que cualquiera pueda encontrarlo y descargarlo desde la lista de la comunidad, no solo quienes tengan el enlace. ¿Continuar?</string>
+    <string name="import_shared_backup_title">Importar guardado compartido</string>
+    <string name="import_shared_backup_not_found">Este guardado compartido no se encontró. Es posible que se haya eliminado.</string>
+    <string name="import_shared_backup_sign_in">Inicia sesión para importar este guardado</string>
+    <string name="import_shared_rom_missing_title">El juego no está en tu biblioteca</string>
+    <string name="import_shared_rom_missing_message">Este guardado es para \"%1$s\", que no está en tu biblioteca. Puedes importarlo igualmente y usarlo cuando agregues el juego. ¿Continuar?</string>
+    <string name="news_close">Cerrar</string>
+    <string name="news_read_more">Leer más</string>
+    <string name="news_update">Actualizar</string>
+    <string name="setting_on">Activado</string>
+    <string name="setting_off">Desactivado</string>
+    <string name="recommended_settings_offer_message">Se recomiendan estos ajustes para este dispositivo. ¿Quieres aplicarlos?</string>
 </resources>

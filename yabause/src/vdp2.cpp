@@ -43,6 +43,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 */
 
 #include <stdlib.h>
+#include <atomic>
 #include "vdp2.h"
 #include "debug.h"
 #include "peripheral.h"
@@ -78,6 +79,27 @@ u8 B1_Updated = 0;
 struct CellScrollData cell_scroll_data[270];
 Vdp2 Vdp2Lines[270];
 
+
+// Runtime selection of the threaded (async) VDP rendering model. The
+// compile-time define only provides the default so ports without an
+// explicit VdpSetAsyncRendering() call keep their historical behavior
+// (Android/iOS/retro_arena/vulkan stay async, plain desktop builds stay
+// sync). The Qt port picks per session: sync for the OpenGL core (its GL
+// context never leaves the emulation thread), async for Vulkan. The flag
+// must not change after Vdp2Init() started the VDP thread.
+#if defined(YAB_ASYNC_RENDERING)
+static int vdp_async_rendering = 1;
+#else
+static int vdp_async_rendering = 0;
+#endif
+
+void VdpSetAsyncRendering(int enable) {
+  vdp_async_rendering = (enable != 0);
+}
+
+int VdpIsAsyncRendering(void) {
+  return vdp_async_rendering;
+}
 
 u32 skipped_frame = 0;
 u32 pre_swap_frame_buffer = 0;
@@ -116,6 +138,7 @@ YabEventQueue * command_ = NULL;
 extern "C" void * VdpProc(void *arg);      // rendering thread.
 static void vdp2VBlankIN(void); // VBLANK-IN handler
 static void vdp2VBlankOUT(void);// VBLANK-OUT handler
+static int vdp2Vdp1FrameOps(void); // VDP1 erase/frame change/plot for one field
 void VDP2genVRamCyclePattern();
 int Vdp2GenerateCCode();
 
@@ -128,6 +151,190 @@ void VdpLockVram() {
 
 void VdpUnLockVram() {
   YabThreadUnLock(vrammutex);
+}
+
+// Capacity passed to YabThreadCreateQueue for vdp1_rcv_evqueue.
+#define VDP1_RCV_QUEUE_CAPACITY 8
+
+// Render-event completion tracking for the modelled draw-end.
+//
+// Dispatched is incremented on the emulation thread for every
+// VDPEV_VBLANK_OUT / VDPEV_DIRECT_DRAW posted; retired is incremented by
+// the render thread when it has finished processing such an event (in
+// VdpProc, after the handler returned - always, whether or not the event
+// plotted anything).
+//
+// Deliberately NOT tracked through vdp1_rcv_evqueue: that queue drops
+// posts when full (ADR-0007) and is destroyed and recreated by
+// Vdp2Reset(), so an event completing across a soft reset leaves an
+// orphan token behind. A queue-based join then stays off-by-one forever
+// and every later join returns one render too early - the draw-end fires
+// while the render thread is still walking the command list, and
+// Vdp1External.status races between IDLE and RUNNING from field to field
+// (Street Fighter Zero 3 flickered exactly this way after a reset, but
+// not after a state load). The legacy code self-healed by draining the
+// whole queue at every wait; the counter pair is exact instead.
+static std::atomic<int> vdp1_ev_dispatched{0};
+static std::atomic<int> vdp1_ev_retired{0};
+
+void Vdp1MarkRenderDispatched(void) {
+  vdp1_ev_dispatched.fetch_add(1, std::memory_order_relaxed);
+}
+
+void Vdp1MarkRenderRetired(void) {
+  vdp1_ev_retired.fetch_add(1, std::memory_order_release);
+}
+
+// Wait until the render thread has retired every dispatched render event.
+// This is a data-ordering barrier only: it guarantees the render thread is
+// no longer walking the VDP1 command list, so the game may be told
+// (draw-end IRQ) that the list is free to rewrite, and a new render event
+// can be dispatched without piling up behind an unfinished one. It is NOT
+// the source of draw-end timing - that comes from the emulation-side
+// estimate, see Vdp1FrameChangeLatch().
+void Vdp1JoinPendingRenders(void) {
+  while (vdp1_ev_retired.load(std::memory_order_acquire) <
+         vdp1_ev_dispatched.load(std::memory_order_relaxed)) {
+    YabThreadYield();
+  }
+}
+
+// Lines left until the modelled VDP1 draw-end interrupt fires. Decremented
+// once per scanline in Vdp2HBlankOUT; the interrupt is raised when it
+// reaches zero. A countdown instead of a target line so that estimates
+// longer than one frame (Die Hard Trilogy's boot-time framebuffer wipe
+// lists take several hundred scanlines on real hardware) survive the
+// per-frame wrap of yabsys.LineCount. Owned by the emulation thread.
+int vdp1_drawend_lines = 0;
+
+// ---------------------------------------------------------------------------
+// YABA_VDP2_WTRACE=1: per-frame VDP2 VRAM write monitoring (stdout).
+// Counts every CPU/DMA write into VDP2 VRAM between two VBlank-INs, tracks
+// the touched address range and per-bank write counts, and prints one line
+// per frame together with a strided hash of the whole VRAM. This separates
+// "the game stopped producing new movie frames" (write count drops to zero,
+// hash freezes) from "the renderer stopped consuming them" (writes and hash
+// keep changing while the screen is stuck). Queue depths of the async
+// rendering event queues are included to spot a render-thread backlog.
+static int vdp2_wtrace_v = -1;
+static u32 v2w_cnt = 0;
+static u32 v2w_min = 0xFFFFFFFF;
+static u32 v2w_max = 0;
+static u32 v2w_bank[4] = { 0, 0, 0, 0 };
+
+static int vdp2_wtrace_on(void) {
+  if (vdp2_wtrace_v < 0)
+    vdp2_wtrace_v = (getenv("YABA_VDP2_WTRACE") != NULL);
+  return vdp2_wtrace_v;
+}
+
+static int gun_trace_v = -1;
+static int gun_trace_on(void) {
+  if (gun_trace_v < 0)
+    gun_trace_v = (getenv("YABA_GUN_TRACE") != NULL);
+  return gun_trace_v;
+}
+
+static void v2w_note(u32 addr, u32 size) {
+  if (!vdp2_wtrace_on() && !gun_trace_on())
+    return;
+  v2w_cnt++;
+  if (addr < v2w_min) v2w_min = addr;
+  if (addr + size - 1 > v2w_max) v2w_max = addr + size - 1;
+  v2w_bank[(addr >> 17) & 3]++;
+}
+
+static void gun_trace_frame(u32 vdp2_writes);
+
+static void v2w_frame(void) {
+  u64 h;
+  const u64 *p;
+  u32 i;
+  if (gun_trace_on()) {
+    gun_trace_frame(v2w_cnt);
+    if (!vdp2_wtrace_on()) {
+      v2w_cnt = 0;
+      v2w_min = 0xFFFFFFFF;
+      v2w_max = 0;
+      v2w_bank[0] = v2w_bank[1] = v2w_bank[2] = v2w_bank[3] = 0;
+      return;
+    }
+  }
+  if (!vdp2_wtrace_on())
+    return;
+  h = 1469598103934665603ULL;
+  p = (const u64 *)Vdp2Ram;
+  // Sample every 64 bytes of the 512KB VRAM: cheap per frame and still
+  // guaranteed to catch a movie-frame update (a 256KB bitmap rewrite).
+  for (i = 0; i < 0x80000 / 8; i += 8) {
+    h ^= p[i];
+    h *= 1099511628211ULL;
+  }
+  printf("[V2W f%u] n=%u range=%05X-%05X banks=%u/%u/%u/%u flags=%d%d%d%d "
+         "q=%d/%d/%d/%d hash=%08X%08X\n",
+         (unsigned)yabsys.frame_count, v2w_cnt,
+         (v2w_cnt ? v2w_min : 0), (v2w_cnt ? v2w_max : 0),
+         v2w_bank[0], v2w_bank[1], v2w_bank[2], v2w_bank[3],
+         A0_Updated, A1_Updated, B0_Updated, B1_Updated,
+         (evqueue ? YaGetQueueSize(evqueue) : -1),
+         (rcv_evqueue ? YaGetQueueSize(rcv_evqueue) : -1),
+         (vdp1_rcv_evqueue ? YaGetQueueSize(vdp1_rcv_evqueue) : -1),
+         (vout_rcv_evqueue ? YaGetQueueSize(vout_rcv_evqueue) : -1),
+         (u32)(h >> 32), (u32)h);
+  v2w_cnt = 0;
+  v2w_min = 0xFFFFFFFF;
+  v2w_max = 0;
+  v2w_bank[0] = v2w_bank[1] = v2w_bank[2] = v2w_bank[3] = 0;
+}
+
+// YABA_GUN_TRACE=<file>: per-VBlank trace of Gungriffon's movie pacing
+// counters plus this frame's VDP2 VRAM write count. Mirrors the trace added
+// to mednafen's Emulate() so the two emulators' movie cadence can be
+// compared exactly (see docs/B20/gungriffon_fmv_framedrop_investigation.md).
+// HLE-boot addresses: 0x0603649C = decoded video frame counter, 0x06032250 =
+// audio-driven master clock.
+static void gun_trace_frame(u32 vdp2_writes) {
+  static FILE *gt_fp = (FILE *)(intptr_t)-1;
+  if (gt_fp == (FILE *)(intptr_t)-1) {
+    const char *p = getenv("YABA_GUN_TRACE");
+    gt_fp = p ? fopen(p, "w") : NULL;
+  }
+  if (!gt_fp)
+    return;
+  // Columns 10/11 (YABA_SH2_PROF only): master instructions retired and
+  // cycles charged during this VBlank interval. Together with the per-PC
+  // histogram dumped below they show whether the decode gap vs mednafen is
+  // extra work (more instructions) or a more expensive cost model.
+  {
+    static u64 prev_i = 0, prev_c = 0;
+    u64 icnt = 0, ccnt = 0;
+    if (Sh2ProfEnabled()) {
+      icnt = Sh2ProfICount(0);
+      ccnt = Sh2ProfCycles(0);
+    }
+    fprintf(gt_fp, "%u %d %d %u %08X %d %d %d %d %llu %llu\n",
+            (unsigned)yabsys.frame_count,
+            (int)T2ReadLong(HighWram, 0x3649C),
+            (int)T2ReadLong(HighWram, 0x32250), vdp2_writes,
+            MSH2 ? (unsigned)MSH2->regs.PC : 0,
+            (int)T2ReadLong(HighWram, 0x364A0),
+            (int)T2ReadLong(HighWram, 0x36494),
+            (int)T2ReadLong(HighWram, 0x36450),
+            (int)T2ReadLong(HighWram, 0x36454),
+            (unsigned long long)(icnt - prev_i),
+            (unsigned long long)(ccnt - prev_c));
+    prev_i = icnt;
+    prev_c = ccnt;
+  }
+  if (Sh2ProfEnabled() && !(yabsys.frame_count % 120)) {
+    char tagbuf[64];
+    snprintf(tagbuf, sizeof(tagbuf), "frame=%u vf=%d",
+             (unsigned)yabsys.frame_count,
+             (int)T2ReadLong(HighWram, 0x3649C));
+    Sh2ProfDump(getenv("YABA_SH2_PROF"), tagbuf);
+  }
+  if (!(yabsys.frame_count & 0x3F))
+    fflush(gt_fp);
 }
 
 
@@ -181,6 +388,7 @@ void FASTCALL Vdp2RamWriteByte(u32 addr, u8 val) {
      B1_Updated = 1;
    }
 
+   v2w_note(addr, 1);
    T1WriteByte(Vdp2Ram, addr, val);
 }
 
@@ -210,6 +418,7 @@ void FASTCALL Vdp2RamWriteWord(u32 addr, u16 val) {
      B1_Updated = 1;
    }
 
+   v2w_note(addr, 2);
    T1WriteWord(Vdp2Ram, addr, val);
 }
 
@@ -239,6 +448,7 @@ void FASTCALL Vdp2RamWriteLong(u32 addr, u32 val) {
      B1_Updated = 1;
    }
 
+   v2w_note(addr, 4);
    T1WriteLong(Vdp2Ram, addr, val);
 }
 
@@ -346,12 +556,21 @@ int Vdp2Init(void) {
 
    Vdp2Reset();
 
-#if defined(YAB_ASYNC_RENDERING)
-   if (rcv_evqueue==NULL) rcv_evqueue = YabThreadCreateQueue(8);
-   if (vdp1_rcv_evqueue==NULL) vdp1_rcv_evqueue = YabThreadCreateQueue(8);
-   if (vout_rcv_evqueue==NULL) vout_rcv_evqueue = YabThreadCreateQueue(2);
+   // Both rendering models poll this: the synchronous path compares it against
+   // LineCount to decide when a draw is due. Leaving it at 0 (a cold boot) or at
+   // the previous session's value makes that comparison fire on the first line
+   // and send a draw-end before anything has been plotted.
    yabsys.wait_line_count = -1;
-#endif
+
+   if (VdpIsAsyncRendering()) {
+     if (rcv_evqueue==NULL) rcv_evqueue = YabThreadCreateQueue(8);
+     if (vdp1_rcv_evqueue==NULL) vdp1_rcv_evqueue = YabThreadCreateQueue(VDP1_RCV_QUEUE_CAPACITY);
+     if (vout_rcv_evqueue==NULL) vout_rcv_evqueue = YabThreadCreateQueue(2);
+     Vdp1JoinPendingRenders();
+     vdp1_ev_dispatched.store(0, std::memory_order_relaxed);
+     vdp1_ev_retired.store(0, std::memory_order_relaxed);
+     vdp1_drawend_lines = 0;
+   }
 
    vrammutex = YabThreadCreateMutex();
 
@@ -363,12 +582,12 @@ int Vdp2Init(void) {
      VIDCore->OnUpdateColorRamWord(i);
    }
 
-#if defined(YAB_ASYNC_RENDERING)
-   YuiRevokeOGLOnThisThread();
-   evqueue = YabThreadCreateQueue(32);
-   vdp_proc_running = 1;
-   YabThreadStart(YAB_THREAD_VDP, "vdp", VdpProc, NULL);
-#endif
+   if (VdpIsAsyncRendering()) {
+     YuiRevokeOGLOnThisThread();
+     evqueue = YabThreadCreateQueue(32);
+     vdp_proc_running = 1;
+     YabThreadStart(YAB_THREAD_VDP, "vdp", VdpProc, NULL);
+   }
    return 0;
 
 }
@@ -376,13 +595,11 @@ int Vdp2Init(void) {
 //////////////////////////////////////////////////////////////////////////////
 
 void Vdp2DeInit(void) {
-#if defined(YAB_ASYNC_RENDERING)
    if (vdp_proc_running == 1) {
    	YabAddEventQueue(evqueue,VDPEV_FINSH);
    	//vdp_proc_running = 0;
    	YabThreadWait(YAB_THREAD_VDP);
    }
-#endif
    if (Vdp2Regs)
       free(Vdp2Regs);
    Vdp2Regs = NULL;
@@ -490,17 +707,24 @@ void Vdp2Reset(void) {
    Vdp2External.cpu_cycle_a = 0;
    Vdp2External.cpu_cycle_b = 0;
 
-#if defined(YAB_ASYNC_RENDERING)
-   if (rcv_evqueue != NULL){
-     YabThreadDestoryQueue(rcv_evqueue);
-     rcv_evqueue = YabThreadCreateQueue(8);
-   }
-   if (vdp1_rcv_evqueue != NULL){
-     YabThreadDestoryQueue(vdp1_rcv_evqueue);
-     vdp1_rcv_evqueue = YabThreadCreateQueue(8);
-   }
+   // Not inside the async branch below: the synchronous draw-end poller reads
+   // this too, and a stale value makes it fire on the first line after a reset.
    yabsys.wait_line_count = -1;
-#endif
+
+   if (VdpIsAsyncRendering()) {
+     if (rcv_evqueue != NULL){
+       YabThreadDestoryQueue(rcv_evqueue);
+       rcv_evqueue = YabThreadCreateQueue(8);
+     }
+     if (vdp1_rcv_evqueue != NULL){
+       YabThreadDestoryQueue(vdp1_rcv_evqueue);
+       vdp1_rcv_evqueue = YabThreadCreateQueue(VDP1_RCV_QUEUE_CAPACITY);
+     }
+     Vdp1JoinPendingRenders();
+     vdp1_ev_dispatched.store(0, std::memory_order_relaxed);
+     vdp1_ev_retired.store(0, std::memory_order_relaxed);
+     vdp1_drawend_lines = 0;
+   }
 
 }
 
@@ -531,7 +755,7 @@ extern "C" void * VdpProc( void *arg ){
       FrameProfileAdd("VOUT start");
       vdp2VBlankOUT();
       FrameProfileAdd("VOUT end");
-      //YabAddEventQueue(vout_rcv_evqueue, 0);
+      Vdp1MarkRenderRetired();
       break;
     case VDPEV_DIRECT_DRAW:
       FrameProfileAdd("DirectDraw start");
@@ -540,7 +764,7 @@ extern "C" void * VdpProc( void *arg ){
       VIDCore->Vdp1DrawEnd();
       Vdp1External.frame_change_plot = 0;
       FrameProfileAdd("DirectDraw end");
-      YabAddEventQueue(vdp1_rcv_evqueue, 0);
+      Vdp1MarkRenderRetired();
       break;
     case VDPEV_MAKECURRENT:
       YuiUseOGLOnThisThread();
@@ -556,6 +780,68 @@ extern "C" void * VdpProc( void *arg ){
     }
   }
   return NULL;
+}
+
+// Decode the per-bank VRAM access pattern out of one register snapshot.
+//
+// VDP2genVRamCyclePattern() below keeps refreshing Vdp2External.AC_VRAM from
+// the live registers at line 1, because the CPU-cycle penalty model it also
+// computes has to track the current state. A renderer must not use that: it
+// resolves a whole frame from the line-0 snapshot (Vdp2Lines[0]), and mixing
+// in a pattern sampled one line later can disagree with the map registers of
+// that same frame. Gungriffon's movie player flips the cycle pattern and
+// NBG0's map registers together at every buffer swap, so the one-line skew
+// left single frames whose character fetches all pointed at a bank the
+// pattern said was not granted -- drawCell() emits a transparent cell for a
+// denied bank, which blanked the entire screen for that frame.
+void Vdp2GetAccessPattern(const Vdp2 * regs, u8 ac[4][8]) {
+  int i;
+
+  ac[0][0] = (regs->CYCA0L >> 12) & 0x0F;
+  ac[0][1] = (regs->CYCA0L >> 8) & 0x0F;
+  ac[0][2] = (regs->CYCA0L >> 4) & 0x0F;
+  ac[0][3] = (regs->CYCA0L >> 0) & 0x0F;
+  ac[0][4] = (regs->CYCA0U >> 12) & 0x0F;
+  ac[0][5] = (regs->CYCA0U >> 8) & 0x0F;
+  ac[0][6] = (regs->CYCA0U >> 4) & 0x0F;
+  ac[0][7] = (regs->CYCA0U >> 0) & 0x0F;
+
+  if (regs->RAMCTL & 0x100) {
+    ac[1][0] = (regs->CYCA1L >> 12) & 0x0F;
+    ac[1][1] = (regs->CYCA1L >> 8) & 0x0F;
+    ac[1][2] = (regs->CYCA1L >> 4) & 0x0F;
+    ac[1][3] = (regs->CYCA1L >> 0) & 0x0F;
+    ac[1][4] = (regs->CYCA1U >> 12) & 0x0F;
+    ac[1][5] = (regs->CYCA1U >> 8) & 0x0F;
+    ac[1][6] = (regs->CYCA1U >> 4) & 0x0F;
+    ac[1][7] = (regs->CYCA1U >> 0) & 0x0F;
+  }
+  else {
+    for (i = 0; i < 8; i++) ac[1][i] = ac[0][i];
+  }
+
+  ac[2][0] = (regs->CYCB0L >> 12) & 0x0F;
+  ac[2][1] = (regs->CYCB0L >> 8) & 0x0F;
+  ac[2][2] = (regs->CYCB0L >> 4) & 0x0F;
+  ac[2][3] = (regs->CYCB0L >> 0) & 0x0F;
+  ac[2][4] = (regs->CYCB0U >> 12) & 0x0F;
+  ac[2][5] = (regs->CYCB0U >> 8) & 0x0F;
+  ac[2][6] = (regs->CYCB0U >> 4) & 0x0F;
+  ac[2][7] = (regs->CYCB0U >> 0) & 0x0F;
+
+  if (regs->RAMCTL & 0x200) {
+    ac[3][0] = (regs->CYCB1L >> 12) & 0x0F;
+    ac[3][1] = (regs->CYCB1L >> 8) & 0x0F;
+    ac[3][2] = (regs->CYCB1L >> 4) & 0x0F;
+    ac[3][3] = (regs->CYCB1L >> 0) & 0x0F;
+    ac[3][4] = (regs->CYCB1U >> 12) & 0x0F;
+    ac[3][5] = (regs->CYCB1U >> 8) & 0x0F;
+    ac[3][6] = (regs->CYCB1U >> 4) & 0x0F;
+    ac[3][7] = (regs->CYCB1U >> 0) & 0x0F;
+  }
+  else {
+    for (i = 0; i < 8; i++) ac[3][i] = ac[2][i];
+  }
 }
 
 void VDP2genVRamCyclePattern() {
@@ -750,12 +1036,21 @@ void frameSkipAndLimit() {
         onesecondticks = 0;
       }
       framecount = 1;
-      lastticks = (curticks - (yabsys.OneFrameTime>>frameLimitShift) );
+      // Start the new second from now, not from one frame time ago. Backdating
+      // it made the first frame of every second reach its deadline without
+      // waiting at all, because diffticks then came out as a whole OneFrameTime
+      // against a target of OneFrameTime-1000.
+      lastticks = curticks;
     }
 
-    u64 targetTime = ( (yabsys.OneFrameTime>>frameLimitShift)  * (u64)framecount);
+    // Signed: onesecondticks is s64 and legitimately goes negative right after
+    // the one second boundary (tickfreq is taken off a value that already had
+    // 1000 subtracted). Comparing it against a u64 target turned that -1000
+    // into a huge unsigned value, so the frame right after every boundary
+    // looked like it was already past its deadline and skipped the wait.
+    s64 targetTime = ( (s64)(yabsys.OneFrameTime>>frameLimitShift) * (s64)framecount);
     if (framecount == fps) {
-      targetTime = yabsys.tickfreq; // 1sec
+      targetTime = (s64)yabsys.tickfreq; // 1sec
     }
 
     diffticks = curticks - lastticks;
@@ -772,7 +1067,6 @@ void frameSkipAndLimit() {
     }
 
     // just wait for next vsync
-    int waited = 0;
     targetTime -= 1000;
     if ( (onesecondticks + diffticks) < targetTime )
     {
@@ -781,6 +1075,17 @@ void frameSkipAndLimit() {
       s64 xcurticks = YabauseGetTicks();
       if (sleeptime-1000 > 0) {
         YabNanosleep(sleeptime-1000);
+        // YABA_VDP2_WTRACE: report a sleep that overshot its request by more
+        // than 4x + 5ms - the render thread sitting here starves the emu
+        // thread waiting on rcv_evqueue and freezes the whole app.
+        if (vdp2_wtrace_on()) {
+          s64 slept = YabauseGetTicks() - xcurticks;
+          if (slept > (sleeptime - 1000) * 4 + 50000)
+            printf("[V2W SLEEP] req=%lld got=%lld fc=%u ost=%lld last=%lld\n",
+                   (long long)(sleeptime - 1000), (long long)slept,
+                   framecount, (long long)onesecondticks,
+                   (long long)lastticks);
+        }
       }
 
       for (;;)
@@ -792,21 +1097,17 @@ void frameSkipAndLimit() {
       }
       //u64 realstime = YabauseGetTicks() - xcurticks;
       //yprintf("req time %d,real time %d diff = %d", (u32)sleeptime, (u32)realstime, realstime-sleeptime);
-      waited = 1;
     }
 
+    // Accumulate the time that really elapsed. Overshoot past targetTime (the
+    // sleep is only accurate to the OS timer granularity) is carried forward,
+    // so the next frame waits correspondingly less and the second as a whole
+    // still lands on tickfreq - that is what holds the rate at 60Hz. Snapping
+    // onesecondticks to targetTime here instead threw the overshoot away, and
+    // it then piled up in real time at roughly 125us per frame (~0.75% slow);
+    // the once-per-second unthrottled frame above happened to cancel it out.
     onesecondticks += diffticks;
     lastticks = curticks;
-
-    // Anti-drift: pin onesecondticks to the busy-wait exit target so that
-    // per-frame poll-granularity overshoot does not accumulate. targetTime
-    // here is already (origTargetTime - 1000), matching the wait loop's
-    // exit condition. Pinning to the pre--1000 value would over-inflate
-    // onesecondticks by ~1000 ticks/frame and shrink the real second to
-    // ~940ms on Android (tickfreq=1MHz), producing ~64fps.
-    if (waited) {
-      onesecondticks = (s64)targetTime;
-    }
   }
 
 }
@@ -822,9 +1123,22 @@ void vdp2VBlankIN(void) {
    now we're lying a little here as we're not swapping the framebuffers. */
    //if (Vdp1External.manualchange) Vdp1Regs->EDSR >>= 1;
 
-   VIDCore->Vdp2DrawEnd();
-   frameSkipAndLimit();
-   VIDCore->Sync();
+   // YABA_VDP2_WTRACE: time each phase; a phase blocking for 250ms+ on the
+   // render thread stalls the emu thread's rcv_evqueue wait (whole-app
+   // freeze), so report which phase it was.
+   {
+     s64 t0 = YabauseGetTicks();
+     VIDCore->Vdp2DrawEnd();
+     s64 t1 = YabauseGetTicks();
+     frameSkipAndLimit();
+     s64 t2 = YabauseGetTicks();
+     VIDCore->Sync();
+     s64 t3 = YabauseGetTicks();
+     if (vdp2_wtrace_on() && (t3 - t0) > 2500000)
+       printf("[V2W VIN-SLOW] drawend=%lld limit=%lld sync=%lld ticks\n",
+              (long long)(t1 - t0), (long long)(t2 - t1),
+              (long long)(t3 - t2));
+   }
    Vdp2Regs->TVSTAT |= 0x0008;
 
    ScuSendVBlankIN();
@@ -839,52 +1153,128 @@ void vdp2VBlankIN(void) {
 }
 
 //////////////////////////////////////////////////////////////////////////////
+
+// Whether the latch decided this field swaps the frame buffer. Written by
+// the emulation thread in the latch, read by the render thread's frame
+// skip heuristics (a plain flag read; a one-field skew is harmless there).
+static volatile u32 vdp1_latched_swap = 0;
+
+// Async only. Set when the VDP1 frame change of the upcoming field was
+// already latched at the VBlank-OUT boundary (instant-list case below);
+// the regular hand-off latch then skips its own latch for that field.
+static int vdp1_latched_this_frame = 0;
+
+// Latch the VDP1 frame change: consume manual change / one cycle mode,
+// derive the plot trigger, shift EDSR on a swap and schedule the modelled
+// draw-end as a scanline countdown (vdp1_drawend_lines, fired from
+// Vdp2HBlankOUT decoupled from the render thread rendez-vous).
+//
+// Phase matters, and three variants are known wrong:
+// - Firing the draw-end from the render rendez-vous a whole VBlank after
+//   the hand-off pushed every draw-end a frame late; a game that arms its
+//   next frame from the draw-end IRQ then missed every other swap (Sonic
+//   Jam (Europe) ran at half its swap rate).
+// - Latching at VBlank-IN cleared CEF a whole VBlank early. Astal samples
+//   EDSR during VBlank and relies on CEF surviving into the next field.
+// - Latching at the VBlank-OUT boundary before the VBlank-OUT interrupt
+//   cleared CEF before the game's VBlank-OUT handler could see it. Astal
+//   reads EDSR right after VBlank-OUT and only pumps its next manual
+//   frame change when it sees CEF still set, so it froze fading to the
+//   title screen.
+//
+// Therefore the regular latch runs at the render hand-off (the line-1
+// block in Vdp2HBlankOUT), which is after the game's VBlank-OUT handler
+// ran - matching where the culprit-free legacy code latched. The single
+// exception is a list the VDP1 finishes instantly (estimate 0): its
+// draw-end must be pending together with the VBlank-OUT interrupt itself,
+// before mainline code resumes, so Vdp2VBlankOUT pre-latches exactly that
+// case at the boundary (see the est == 0 branch below and the caller).
+//
+// Runs on the emulation thread with the render thread joined (idle), so
+// the Vdp1External flags are safe to touch.
+static void Vdp1FrameChangeLatch(void) {
+  // Manual change armed by an FBCR write before this point.
+  if (Vdp1External.manualchange == 1) {
+    Vdp1External.swap_frame_buffer = 1;
+    Vdp1External.manualchange = 0;
+  }
+
+  // One cycle mode changes the frame buffer every field.
+  if ((Vdp1Regs->FBCR & 0x03) == 0x00 ||
+    (Vdp1Regs->FBCR & 0x03) == 0x01) {  // 0x01 is treated as one cyscle mode in Sonic R.
+    Vdp1External.swap_frame_buffer = 1;
+  }
+
+  // Plot trigger mode = Draw when frame is changed
+  if (Vdp1Regs->PTMR == 2) {
+    Vdp1External.frame_change_plot = 1;
+    FRAMELOG("frame_change_plot 1");
+  }
+  else {
+    Vdp1External.frame_change_plot = 0;
+    FRAMELOG("frame_change_plot 0");
+  }
+
+
+  if (Vdp1External.swap_frame_buffer == 1) {
+    Vdp1Regs->EDSR >>= 1;
+    if (Vdp1External.frame_change_plot == 1) {
+      int est = Vdp1EstimateDrawLines(Vdp1Ram, Vdp1Regs);
+      if (est == 0) {
+        // A list the VDP1 finishes instantly (first command is END, or a
+        // trivial draw): real hardware completes it within the frame
+        // switch itself, so the draw-end must be pending together with
+        // the VBlank-OUT interrupt and handled before mainline code
+        // resumes. Any delay (the culprit build fired it a line later,
+        // an earlier attempt floored it to 45 lines) drops the IRQ into
+        // the master/slave restart handshake Die Hard Trilogy runs right
+        // after VBlank-OUT and deadlocks the boot (GitLab #136).
+        Vdp1Regs->EDSR |= 2;
+        ScuSendDrawEnd();
+        FRAMELOG("Vdp1Draw end immediate (empty list) EDSR=%02X", Vdp1Regs->EDSR);
+      }
+      else {
+        vdp1_drawend_lines = est;
+        FRAMELOG("SET Vdp1 end in %d lines", vdp1_drawend_lines);
+      }
+    }
+  }
+
+  vdp1_latched_swap = Vdp1External.swap_frame_buffer;
+}
+
+//////////////////////////////////////////////////////////////////////////////
 void Vdp2VBlankIN(void) {
   FRAMELOG("***** VIN *****");
+  v2w_frame();
 
-#if defined(YAB_ASYNC_RENDERING)
+  if (VdpIsAsyncRendering()) {
+    FrameProfileAdd("VIN event");
+    YabAddEventQueue(evqueue,VDPEV_VBLANK_IN);
 
-/*
-  if( vdp_proc_running == 0 ){
-    vdp_proc_running = 1;
-    YuiRevokeOGLOnThisThread();
-    evqueue = YabThreadCreateQueue(32);
-    YabThreadStart(YAB_THREAD_VDP, "vdp", VdpProc, NULL);
-  }
-*/
-
-  FrameProfileAdd("VIN event");
-  YabAddEventQueue(evqueue,VDPEV_VBLANK_IN);
-
-   // sync
-  //do {
+    // sync with the render thread's VBlank-IN handling
     YabWaitEventQueue(rcv_evqueue);
-  //} while (YaGetQueueSize(rcv_evqueue) != 0);
-   FrameProfileAdd("VIN sync");
+    FrameProfileAdd("VIN sync");
+  }
+  else {
+    FrameProfileAdd("VIN start");
+    /* this should be done after a frame change or a plot trigger */
+    //Vdp1Regs->COPR = 0;
 
-#else
-	FrameProfileAdd("VIN start");
-   /* this should be done after a frame change or a plot trigger */
-   //Vdp1Regs->COPR = 0;
-   //printf("COPR = 0 at %d\n", __LINE__);
+    /* I'm not 100% sure about this, but it seems that when using manual change
+    we should swap framebuffers in the "next field" and thus, clear the CEF...
+    now we're lying a little here as we're not swapping the framebuffers. */
+    //if (Vdp1External.manualchange) Vdp1Regs->EDSR >>= 1;
 
-   /* I'm not 100% sure about this, but it seems that when using manual change
-   we should swap framebuffers in the "next field" and thus, clear the CEF...
-   now we're lying a little here as we're not swapping the framebuffers. */
-   //if (Vdp1External.manualchange) Vdp1Regs->EDSR >>= 1;
+    VIDCore->Vdp2DrawEnd();
+    frameSkipAndLimit();
+    VIDCore->Sync();
+    Vdp2Regs->TVSTAT |= 0x0008;
 
-   VIDCore->Vdp2DrawEnd();
-   frameSkipAndLimit();
-   VIDCore->Sync();
-   Vdp2Regs->TVSTAT |= 0x0008;
+    ScuSendVBlankIN();
 
-   ScuSendVBlankIN();
-
-   //if (yabsys.IsSSH2Running)
-   //   SH2SendInterrupt(SSH2, 0x40, 0x0F);
-
-   FrameProfileAdd("VIN end");
-#endif
+    FrameProfileAdd("VIN end");
+  }
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -1013,96 +1403,90 @@ void Vdp2HBlankOUT(void) {
   if (Vdp2External.frame_render_flg == 0 && vdp1_clock>0 ){ // Delay if vdp1 ram was written
     FrameProfileAdd("VOUT event");
     Vdp2External.frame_render_flg = 1;
-    // Manual Change
-    if (Vdp1External.manualchange == 1) {
-      Vdp1External.swap_frame_buffer = 1;
-      Vdp1External.manualchange = 0;
-    }
-
-    // One Cyclemode
-    if ((Vdp1Regs->FBCR & 0x03) == 0x00 ||
-      (Vdp1Regs->FBCR & 0x03) == 0x01) {  // 0x01 is treated as one cyscle mode in Sonic R.
-      Vdp1External.swap_frame_buffer = 1;
-    }
-
-    // Plot trigger mode = Draw when frame is changed
-    if (Vdp1Regs->PTMR == 2) {
-      Vdp1External.frame_change_plot = 1;
-      FRAMELOG("frame_change_plot 1");
+    if (VdpIsAsyncRendering()) {
+      // Join the previous render event first so at most one VDP1-consuming
+      // event is ever in flight - that keeps the done-event bookkeeping of
+      // Vdp1JoinPendingRenders() exact, stops the render thread from
+      // falling more than one frame behind the command list, and makes the
+      // latch below safe against the render thread.
+      Vdp1JoinPendingRenders();
+      // Latch the frame change here, after the game's VBlank-OUT handler
+      // has run (see Vdp1FrameChangeLatch for why the phase matters) -
+      // unless the instant-list case was already latched at the VBlank-OUT
+      // boundary by Vdp2VBlankOUT.
+      if (!vdp1_latched_this_frame) {
+        Vdp1FrameChangeLatch();
+      }
+      vdp1_latched_this_frame = 0;
+      FRAMELOG("YabAddEventQueue(evqueue, VDPEV_VBLANK_OUT)");
+      YabAddEventQueue(evqueue, VDPEV_VBLANK_OUT);
+      Vdp1MarkRenderDispatched();
+      YabThreadYield();
     }
     else {
-      Vdp1External.frame_change_plot = 0;
-      FRAMELOG("frame_change_plot 0");
+      // The sync path latches the frame change here and renders inline
+      // below. The async path latches at the hardware phase instead, see
+      // Vdp1FrameChangeLatch().
+      // Manual Change
+      if (Vdp1External.manualchange == 1) {
+        Vdp1External.swap_frame_buffer = 1;
+        Vdp1External.manualchange = 0;
+      }
+
+      // One Cyclemode
+      if ((Vdp1Regs->FBCR & 0x03) == 0x00 ||
+        (Vdp1Regs->FBCR & 0x03) == 0x01) {  // 0x01 is treated as one cyscle mode in Sonic R.
+        Vdp1External.swap_frame_buffer = 1;
+      }
+
+      // Plot trigger mode = Draw when frame is changed
+      if (Vdp1Regs->PTMR == 2) {
+        Vdp1External.frame_change_plot = 1;
+        FRAMELOG("frame_change_plot 1");
+      }
+      else {
+        Vdp1External.frame_change_plot = 0;
+        FRAMELOG("frame_change_plot 0");
+      }
+      vdp2VBlankOUT();
     }
-#if defined(YAB_ASYNC_RENDERING)
-/*
-    if (vdp_proc_running == 0) {
-      YuiRevokeOGLOnThisThread();
-      evqueue = YabThreadCreateQueue(32);
-      vdp_proc_running = 1;
-      YabThreadStart(YAB_THREAD_VDP, "vdp", VdpProc, NULL);
+  }
+
+  if (VdpIsAsyncRendering()) {
+    if (vdp1_drawend_lines > 0 && --vdp1_drawend_lines == 0) {
+      // Modelled draw-end: the scheduled draw time has elapsed. The join is
+      // only a data-ordering barrier - it makes sure the render thread is
+      // not still walking the command list before the game is told it may
+      // rewrite it. The old code blocked here on the render rendez-vous
+      // unconditionally (which deadlocks when no render was dispatched) and
+      // skipped the IRQ whenever Vdp1External.status was still RUNNING,
+      // silently losing the draw-end and starving draw-end-chained game
+      // loops.
+      FRAMELOG("**WAIT START %d**", YaGetQueueSize(vdp1_rcv_evqueue));
+      Vdp1JoinPendingRenders();
+      FRAMELOG("**WAIT END**");
+      FrameProfileAdd("DirectDraw sync");
+      FRAMELOG("Vdp1Draw end at %d line EDSR=%02X", yabsys.LineCount, Vdp1Regs->EDSR);
+      Vdp1Regs->EDSR |= 2;
+      ScuSendDrawEnd();
     }
-*/
-    if (Vdp1External.swap_frame_buffer == 1)
-    {
-      Vdp1Regs->EDSR >>= 1;
-      if (Vdp1External.frame_change_plot == 1 ) {
-        yabsys.wait_line_count += 45;
+  }
+  else {
+    if (yabsys.wait_line_count != -1 && yabsys.LineCount == yabsys.wait_line_count) {
+      //Vdp1Regs->COPR = Vdp1Regs->addr >> 3;
+      if ( Vdp1External.status == VDP1_STATUS_IDLE) {
+        ScuSendDrawEnd();
+        FRAMELOG("Vdp1Draw end at %d line EDSR=%02X", yabsys.LineCount, Vdp1Regs->EDSR);
+        yabsys.wait_line_count = -1;
+        Vdp1Regs->EDSR |= 2;
+      }
+      else {
+        yabsys.wait_line_count += 10;
         yabsys.wait_line_count %= yabsys.VBlankLineCount;
-        FRAMELOG("SET Vdp1 end wait at %d", yabsys.wait_line_count);
       }
-    }else{
-      // Continue from previus frame
-      if ( Vdp1External.status == VDP1_STATUS_RUNNING) {
-        //yabsys.wait_line_count += 45;
-        //yabsys.wait_line_count %= yabsys.VBlankLineCount;
-      }
-    }
-    //YabClearEventQueue(vdp1_rcv_evqueue);
-    if (YaGetQueueSize(vdp1_rcv_evqueue) != 0) {
-      FRAMELOG("YaGetQueueSizeYaGetQueueSize !=0  %d", YaGetQueueSize(vdp1_rcv_evqueue));
-    }
-
-    FRAMELOG("YabAddEventQueue(evqueue, VDPEV_VBLANK_OUT)");
-    YabAddEventQueue(evqueue, VDPEV_VBLANK_OUT);
-    YabThreadYield();
-    //YabThreadUSleep(10000);
-
-  }
-  if (yabsys.wait_line_count != -1 && yabsys.LineCount == yabsys.wait_line_count) {
-    FRAMELOG("**WAIT START %d %d**", yabsys.wait_line_count, YaGetQueueSize(vdp1_rcv_evqueue));
-    YabWaitEventQueue(vdp1_rcv_evqueue); // sync VOUT
-    YabClearEventQueue(vdp1_rcv_evqueue);
-    FRAMELOG("**WAIT END**");
-    yabsys.wait_line_count = -1;
-    FrameProfileAdd("DirectDraw sync");
-    if (Vdp1External.status == VDP1_STATUS_IDLE) {
-      FRAMELOG("Vdp1Draw end at %d line EDSR=%02X", yabsys.LineCount, Vdp1Regs->EDSR);
-      Vdp1Regs->EDSR |= 2;
-      ScuSendDrawEnd();
+      //VIDCore->Vdp1DrawEnd();
     }
   }
-#else
-    vdp2VBlankOUT();
-  }
-
-  if (yabsys.wait_line_count != -1 && yabsys.LineCount == yabsys.wait_line_count) {
-    //Vdp1Regs->COPR = Vdp1Regs->addr >> 3;
-    //printf("COPR = %d at %d\n", Vdp1Regs->COPR, __LINE__);
-    if ( Vdp1External.status == VDP1_STATUS_IDLE) {
-      ScuSendDrawEnd();
-      FRAMELOG("Vdp1Draw end at %d line EDSR=%02X", yabsys.LineCount, Vdp1Regs->EDSR);
-      yabsys.wait_line_count = -1;
-      Vdp1Regs->EDSR |= 2;
-    }
-    else {
-      yabsys.wait_line_count += 10;
-      yabsys.wait_line_count %= yabsys.VBlankLineCount;
-    }
-    //VIDCore->Vdp1DrawEnd();
-  }
-
-#endif
   Vdp1_onHblank();
 }
 
@@ -1231,6 +1615,65 @@ void vdp2ReqRestore() {
 
 
 //////////////////////////////////////////////////////////////////////////////
+
+// VDP1 frame operations for one field: VBlank erase, frame change and the
+// plot kick. Runs on the render thread, called from vdp2VBlankOUT. In the
+// async build the flags it consumes were latched on the emulation thread
+// (Vdp1FrameChangeLatch) before the VDPEV_VBLANK_OUT dispatch. Returns
+// nonzero when a draw was started.
+static int vdp2Vdp1FrameOps(void) {
+  int isrender = 0;
+
+  // VBlank Erase
+  if (Vdp1External.vbalnk_erase ||  // VBlank Erace (VBE1)
+    ((Vdp1Regs->FBCR & 2) == 0)) {  // One cycle mode
+    VIDCore->Vdp1EraseWrite();
+  }
+
+  // Frame Change
+  if (Vdp1External.swap_frame_buffer == 1)
+  {
+    vdp1_frame++;
+    if (Vdp1External.manualerase) {  // Manual Erace (FCM1 FCT0) Just before frame changing
+      VIDCore->Vdp1EraseWrite();
+      Vdp1External.manualerase = 0;
+    }
+
+    FRAMELOG("Vdp1FrameChange swap=%d,plot=%d*****", Vdp1External.swap_frame_buffer, Vdp1External.frame_change_plot);
+    VIDCore->Vdp1FrameChange();
+    Vdp1External.current_frame = !Vdp1External.current_frame;
+    Vdp1External.swap_frame_buffer = 0;
+    if (!VdpIsAsyncRendering()) {
+      // Async shifts EDSR in Vdp1FrameChangeLatch() on the emulation
+      // thread instead.
+      Vdp1Regs->EDSR >>= 1;
+    }
+
+    FRAMELOG("[VDP1] Displayed framebuffer changed. EDSR=%02X", Vdp1Regs->EDSR);
+
+    // if Plot Trigger mode == 0x02 draw start
+    if (Vdp1External.frame_change_plot == 1 || Vdp1External.status == VDP1_STATUS_RUNNING ){
+      FRAMELOG("[VDP1] frame_change_plot == 1 start drawing immidiatly", Vdp1Regs->EDSR);
+      LOG("[VDP1] Start Drawing %d", yabsys.LineCount);
+      Vdp1Regs->addr = 0;
+      Vdp1Regs->COPR = 0;
+      Vdp1Draw();
+      LOG("[VDP1] End Drawing %d", yabsys.LineCount);
+      isrender = 1;
+    }
+  }
+  else {
+    // Continue from previus frame
+    if ( Vdp1External.status == VDP1_STATUS_RUNNING) {
+      LOG("[VDP1] Start Drawing continue");
+      Vdp1Draw();
+      isrender = 1;
+    }
+  }
+  return isrender;
+}
+
+//////////////////////////////////////////////////////////////////////////////
 void vdp2VBlankOUT(void) {
   static VideoInterface_struct * saved = NULL;
   int isrender = 0;
@@ -1253,7 +1696,11 @@ void vdp2VBlankOUT(void) {
   }
 #endif
 
-  if (pre_swap_frame_buffer == 0 && skipnextframe && Vdp1External.swap_frame_buffer ){
+  // Async: the swap flag itself is consumed by vdp2Vdp1FrameOps() below,
+  // so the skip heuristics read the per-field value the latch recorded.
+  const u32 cur_swap = VdpIsAsyncRendering() ? vdp1_latched_swap
+                                             : Vdp1External.swap_frame_buffer;
+  if (pre_swap_frame_buffer == 0 && skipnextframe && cur_swap ){
     skipnextframe = 0;
     previous_skipped = 0;
     framestoskip = 1;
@@ -1265,7 +1712,7 @@ void vdp2VBlankOUT(void) {
     framestoskip = 1;
   }
 
-  pre_swap_frame_buffer = Vdp1External.swap_frame_buffer;
+  pre_swap_frame_buffer = cur_swap;
 
 
   if (skipnextframe && (!saved))
@@ -1311,65 +1758,10 @@ void vdp2VBlankOUT(void) {
 
   VIDCore->Vdp2DrawStart();
 
-  // VBlank Erase
-  if (Vdp1External.vbalnk_erase ||  // VBlank Erace (VBE1)
-    ((Vdp1Regs->FBCR & 2) == 0)) {  // One cycle mode
-    VIDCore->Vdp1EraseWrite();
-  }
+  isrender = vdp2Vdp1FrameOps();
 
-
-  // Frame Change
-  if (Vdp1External.swap_frame_buffer == 1)
-  {
-    vdp1_frame++;
-    if (Vdp1External.manualerase) {  // Manual Erace (FCM1 FCT0) Just before frame changing
-      VIDCore->Vdp1EraseWrite();
-      Vdp1External.manualerase = 0;
-    }
-
-    FRAMELOG("Vdp1FrameChange swap=%d,plot=%d*****", Vdp1External.swap_frame_buffer, Vdp1External.frame_change_plot);
-    VIDCore->Vdp1FrameChange();
-    Vdp1External.current_frame = !Vdp1External.current_frame;
-    Vdp1External.swap_frame_buffer = 0;
-#if !defined(YAB_ASYNC_RENDERING)
-    Vdp1Regs->EDSR >>= 1;
-#endif
-
-    FRAMELOG("[VDP1] Displayed framebuffer changed. EDSR=%02X", Vdp1Regs->EDSR);
-
-    // if Plot Trigger mode == 0x02 draw start
-    if (Vdp1External.frame_change_plot == 1 || Vdp1External.status == VDP1_STATUS_RUNNING ){
-      FRAMELOG("[VDP1] frame_change_plot == 1 start drawing immidiatly", Vdp1Regs->EDSR);
-      LOG("[VDP1] Start Drawing %d", yabsys.LineCount);
-      Vdp1Regs->addr = 0;
-      Vdp1Regs->COPR = 0;
-      Vdp1Draw();
-      LOG("[VDP1] End Drawing %d", yabsys.LineCount);
-      isrender = 1;
-    }
-  }
-  else {
-
-    // Continue from previus frame
-    if ( Vdp1External.status == VDP1_STATUS_RUNNING) {
-      LOG("[VDP1] Start Drawing continue");
-      Vdp1Draw();
-      isrender = 1;
-#if defined(YAB_ASYNC_RENDERING)
-      yabsys.wait_line_count += 45;
-      yabsys.wait_line_count %= yabsys.VBlankLineCount;
-#endif
-
-    }
-  }
-
-#if defined(YAB_ASYNC_RENDERING)
-  if (isrender) {
-    YabAddEventQueue(vdp1_rcv_evqueue, 0);
-  }
-#else
-  //yabsys.wait_line_count = 45;
-#endif
+  // Async: completion is reported through Vdp1MarkRenderRetired() in
+  // VdpProc after this handler returns; see the counter pair above.
 
   if (Vdp2Regs->TVMD & 0x8000) {
      FRAMELOG("Vdp2DrawScreens Start %d", yabsys.LineCount);
@@ -1380,13 +1772,13 @@ void vdp2VBlankOUT(void) {
   if (isrender){
      FRAMELOG("Vdp1DrawEnd %d", yabsys.LineCount);
     VIDCore->Vdp1DrawEnd();
-#if !defined(YAB_ASYNC_RENDERING)
-    // Delay the draw-end interrupt by an estimate of the real VDP1 draw
-    // time instead of a flat 45 lines. On real hardware a frame-change
-    // plot starts at the frame swap (VBlank-IN), which is a whole VBlank
-    // period before this VBlank-OUT anchored code runs, so a draw that
-    // fits into VBlank has already finished by the time we get here.
-    {
+    // Sync only. Delay the draw-end interrupt by an estimate of the real
+    // VDP1 draw time instead of a flat 45 lines. On real hardware a
+    // frame-change plot starts at the frame swap (VBlank-IN), which is a
+    // whole VBlank period before this VBlank-OUT anchored code runs, so a
+    // draw that fits into VBlank has already finished by the time we get
+    // here. (Async models the draw-end with vdp1_drawend_lines instead.)
+    if (!VdpIsAsyncRendering()) {
       const int est = Vdp1EstimateDrawLines(Vdp1Ram, Vdp1Regs);
       int lines = est - (yabsys.MaxLineCount - yabsys.VBlankLineCount);
       if (lines <= 0 && Vdp1External.status == VDP1_STATUS_IDLE) {
@@ -1403,11 +1795,21 @@ void vdp2VBlankOUT(void) {
       }
       else {
         if (lines <= 0) lines = 1;
+        // A draw that spills past VBlank must not raise its draw-end
+        // earlier than the legacy 45-line delay. The estimator costs
+        // textured texels at 1 cycle each, but the real VDP1 pays at
+        // least a texture read plus a framebuffer write per texel, so
+        // large textured scenes (X-Men vs. Street Fighter's FMV sprite,
+        // est=42 -> lines=4) finished 40+ lines earlier than both the
+        // legacy timing and the real hardware, and the movie player
+        // deadlocked waiting for its expected frame pacing. Tiny lists
+        // that fit into VBlank are unaffected (branch above), which is
+        // all Die Hard Trilogy and Parodius need.
+        if (lines < 45) lines = 45;
         yabsys.wait_line_count += lines;
         yabsys.wait_line_count %= yabsys.VBlankLineCount;
       }
     }
-#endif
   }
 
 
@@ -1521,6 +1923,27 @@ void Vdp2VBlankOUT(void) {
    }
 
    Vdp2Regs->TVSTAT = ((Vdp2Regs->TVSTAT & ~0x0008) & ~0x0002) | (vdp2_is_odd_frame << 1);
+
+   // Async only. Instant-list pre-latch: when the upcoming frame change
+   // would start a plot that the VDP1 finishes instantly, the draw-end
+   // interrupt must be pending together with the VBlank-OUT interrupt
+   // sent below, before mainline code resumes (Die Hard Trilogy, GitLab
+   // #136). All other fields latch at the render hand-off in
+   // Vdp2HBlankOUT instead, after the game's VBlank-OUT handler ran
+   // (Astal requires CEF to survive into that handler). The peek must
+   // not consume any state - the real latch does that.
+   if (VdpIsAsyncRendering()) {
+     int would_swap = (Vdp1External.manualchange == 1) ||
+                      ((Vdp1Regs->FBCR & 0x03) == 0x00) ||
+                      ((Vdp1Regs->FBCR & 0x03) == 0x01);
+     if (would_swap && Vdp1Regs->PTMR == 2) {
+       Vdp1JoinPendingRenders();
+       if (Vdp1EstimateDrawLines(Vdp1Ram, Vdp1Regs) == 0) {
+         Vdp1FrameChangeLatch();
+         vdp1_latched_this_frame = 1;
+       }
+     }
+   }
 
    ScuSendVBlankOUT();
 
@@ -2648,17 +3071,17 @@ void DisableAutoFrameSkip(void)
 
 
 void VdpResume( void ){
-#if defined(YAB_ASYNC_RENDERING)
-	YabAddEventQueue(evqueue,VDPEV_MAKECURRENT);
-  YabWaitEventQueue(command_);
-#endif
+  if (VdpIsAsyncRendering() && vdp_proc_running) {
+    YabAddEventQueue(evqueue,VDPEV_MAKECURRENT);
+    YabWaitEventQueue(command_);
+  }
 }
 
 void VdpRevoke( void ){
-#if defined(YAB_ASYNC_RENDERING)
-	YabAddEventQueue(evqueue,VDPEV_REVOKE);
-  YabWaitEventQueue(command_);
-#endif
+  if (VdpIsAsyncRendering() && vdp_proc_running) {
+    YabAddEventQueue(evqueue,VDPEV_REVOKE);
+    YabWaitEventQueue(command_);
+  }
 }
 
 

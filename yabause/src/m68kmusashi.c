@@ -110,8 +110,14 @@ static void M68KMusashiSetFetch(u32 low_adr, u32 high_adr, pointer fetch_adr) {
 }
 
 static void FASTCALL M68KMusashiSetIRQ(s32 level) {
-   if (level > 0)
-      m68k_set_irq(level);
+   // Level 0 must reach the core as well: it deasserts the interrupt request.
+   // The SCSP drives IPL as a level, so when its interrupt sources are cleared
+   // (SCIRE/SCIEB writes, SCSP reset) a request that was never serviced - the
+   // sound driver may run with SR mask 7 for a long time - has to disappear.
+   // Dropping the 0 here left such a request pending across a sound CPU reset,
+   // where it fired into the freshly restarted driver before it had installed
+   // its own vectors (X-Men vs. Street Fighter after a clock change).
+   m68k_set_irq(level);
 }
 
 static void FASTCALL M68KMusashiWriteNotify(u32 address, u32 size) {

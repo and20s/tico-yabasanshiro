@@ -61,6 +61,10 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 
 static Vdp2 baseVdp2Regs;
 Vdp2 * fixVdp2Regs = NULL;
+// This frame's VRAM access pattern, decoded from fixVdp2Regs so that a
+// layer's per-bank character-fetch permission always matches the map
+// registers of the same frame.
+static u8 oglAcVram[4][8] = { { 0 } };
 //#define PERFRAME_LOG
 #ifdef PERFRAME_LOG
 int fount = 0;
@@ -963,6 +967,25 @@ static void FASTCALL Vdp1ReadPriority(vdp1cmd_struct *cmd, int * priority, int *
   if ((SPCLMD & 0x20) && (cmd->CMDCOLR & 0x8000))
   {
     // RGB data, use register 0
+    *priority = 0;
+    *colorcl = 0;
+    return;
+  }
+
+  // Texture part drawn in RGB color mode (CMDPMOD color mode 5): CMDCOLR is
+  // *ignored* by the hardware (VDP1 manual 6.4 "RGB mode -> this word is
+  // ignored"), the raw 16-bit texel reaches the frame buffer unchanged. VDP2
+  // then sees MSB=1 and treats the priority / color calculation / shadow bits
+  // as 0 (VDP2 manual 9.1), i.e. register slot 0 -- same as mednafen
+  // T_DrawSpriteData. Without this, whatever stale value the game left in the
+  // ignored CMDCOLR field selects the sprite priority slot, so RGB sprites
+  // float above VDP2 layers they should sit behind. Command types 0..3 are the
+  // textured parts; for polygon/polyline/line CMDCOLR *is* the color and the
+  // CMDPMOD color mode field carries no meaning, so they must not take this
+  // path.
+  if ((SPCLMD & 0x20) && ((cmd->CMDCTRL & 0xF) <= 3) &&
+      (((cmd->CMDPMOD >> 3) & 0x7) == 5))
+  {
     *priority = 0;
     *colorcl = 0;
     return;
@@ -3627,6 +3650,12 @@ static void FASTCALL Vdp2DrawRotation(RBGDrawInfo * rbg)
     rbg->hres = rbg->hres * rbg->rotate_mval_h;
     rbg->vres = rbg->vres * rbg->rotate_mval_v;
     break;
+  case RBG_RES_4x:
+    rbg->rotate_mval_h = 4.0f;
+    rbg->rotate_mval_v = 4.0f;
+    rbg->hres = rbg->hres * rbg->rotate_mval_h;
+    rbg->vres = rbg->vres * rbg->rotate_mval_v;
+    break;
   case RBG_RES_720P:
     rbg->rotate_mval_h = 1280.0f / rbg->hres;
     rbg->rotate_mval_v = 720.0f / rbg->vres;
@@ -3959,6 +3988,7 @@ static void Vdp2DrawRotation_in(RBGDrawInfo * rbg) {
   paraA.over_pattern_name = fixVdp2Regs->OVPNRA;
   paraB.over_pattern_name = fixVdp2Regs->OVPNRB;
 
+
   if (_Ygl->rbg_use_compute_shader) {
 	  RBGGenerator_update(rbg);
 	  
@@ -4002,7 +4032,7 @@ static void Vdp2DrawRotation_in(RBGDrawInfo * rbg) {
 
     if (rgb_type == 0) {
 #if 0 // PERLINE
-      paraA.charaddr = (regs->MPOFR & 0x7) * 0x20000;
+      paraA.charaddr = ((regs->MPOFR & 0x7) * 0x20000) & 0x7FFFF;
       ReadPlaneSizeR(&paraA, regs->PLSZ >> 8);
       for (i = 0; i < 16; i++) {
         paraA.PlaneAddr(info, i, regs);
@@ -4033,7 +4063,7 @@ static void Vdp2DrawRotation_in(RBGDrawInfo * rbg) {
       ReadPlaneSize(info, regs->PLSZ >> 12);
       ReadPatternData(info, regs->PNCN0, regs->CHCTLA & 0x1);
 
-      paraB.charaddr = (regs->MPOFR & 0x70) * 0x2000;
+      paraB.charaddr = ((regs->MPOFR & 0x70) * 0x2000) & 0x7FFFF;
       ReadPlaneSizeR(&paraB, regs->PLSZ >> 12);
       for (i = 0; i < 16; i++) {
         paraB.PlaneAddr(info, i, regs);
@@ -4346,7 +4376,16 @@ static void Vdp2DrawRotation_in(RBGDrawInfo * rbg) {
 		color =  Vdp2RotationFetchPixel(info, x, y, 8);
       }
 
-      if (info->LineColorBase != 0 && VDP2_CC_NONE != (info->blendmode&0x03)) {
+      // The line-colour encoding below only works for palette colour modes: it
+      // keeps a CRAM index in the low bits, sets bit 15 as the "blend the line
+      // colour" marker and stuffs the line colour index into bits 16-23. In an
+      // RGB direct mode (colornumber 3 = 32K, 4 = 16.7M) `color` is already a
+      // real colour, so bit 15 lights up green and the shift overwrites the
+      // other components - which turned the whole plane green. Same rule as the
+      // compute-shader generator in ygl_texture.cpp; LNCL blending for a direct
+      // colour rotation plane needs an output format that can carry both.
+      if (info->LineColorBase != 0 && VDP2_CC_NONE != (info->blendmode&0x03)
+          && info->colornumber < 3) {
         if ((color & 0xFF000000) != 0 ) {
           color |= 0x8000;
           if (parameter->linecoefenab && parameter->lineaddr != 0xFFFFFFFF && parameter->lineaddr != 0x000000 ) {
@@ -6110,6 +6149,12 @@ void VIDOGLVdp2DrawStart(void)
 {
   fixVdp2Regs = Vdp2RestoreRegs(0, Vdp2Lines);
   if (fixVdp2Regs == NULL) fixVdp2Regs = Vdp2Regs;
+  // Decode this frame's VRAM access pattern from the same snapshot the rest
+  // of the frame is resolved from; the live Vdp2External.AC_VRAM is refreshed
+  // one line later and can disagree with this frame's map registers, which
+  // makes every character fetch look denied for a frame. See
+  // Vdp2GetAccessPattern in vdp2.cpp.
+  Vdp2GetAccessPattern(fixVdp2Regs, oglAcVram);
   VIDOGLVdp2SetResolution(fixVdp2Regs->TVMD);
 
   if (_Ygl->rwidth > YglTM->width) {
@@ -6518,11 +6563,11 @@ static void Vdp2DrawNBG0(void)
     info.char_bank[i] = 0;
     info.pname_bank[i] = 0;
     for (int j=0; j < 8; j++) {
-      if (Vdp2External.AC_VRAM[i][j] == 0x04) {
+      if (oglAcVram[i][j] == 0x04) {
         info.char_bank[i] = 1;
         char_access |= 1<<j;
       }
-      if (Vdp2External.AC_VRAM[i][j] == 0x00) {
+      if (oglAcVram[i][j] == 0x00) {
         info.pname_bank[i] = 1;
         ptn_access |= 1<<j;
       }
@@ -6544,7 +6589,7 @@ static void Vdp2DrawNBG0(void)
 
       ReadBitmapSize(&info, fixVdp2Regs->CHCTLA >> 2, 0x3);
 
-      info.charaddr = (fixVdp2Regs->MPOFR & 0x70) * 0x2000;
+      info.charaddr = ((fixVdp2Regs->MPOFR & 0x70) * 0x2000) & 0x7FFFF;
       info.paladdr = (fixVdp2Regs->BMPNA & 0x7) << 4;
       info.flipfunction = 0;
       info.specialfunction = 0;
@@ -6568,7 +6613,7 @@ static void Vdp2DrawNBG0(void)
     info.rotatenum = 1;
     //paraB.PlaneAddr = (void FASTCALL(*)(void *, int, Vdp2*))&Vdp2ParameterBPlaneAddr;
     paraB.coefenab = fixVdp2Regs->KTCTL & 0x100;
-    paraB.charaddr = (fixVdp2Regs->MPOFR & 0x70) * 0x2000;
+    paraB.charaddr = ((fixVdp2Regs->MPOFR & 0x70) * 0x2000) & 0x7FFFF;
     ReadPlaneSizeR(&paraB, fixVdp2Regs->PLSZ >> 12);
     for (int i = 0; i < 16; i++)
     {
@@ -6935,11 +6980,11 @@ static void Vdp2DrawNBG1(void)
     info.char_bank[i] = 0;
     info.pname_bank[i] = 0;
     for (int j = 0; j < 8; j++) {
-      if (Vdp2External.AC_VRAM[i][j] == 0x05) {
+      if (oglAcVram[i][j] == 0x05) {
         info.char_bank[i] = 1;
         char_access |= (1<<j);
       }
-      if (Vdp2External.AC_VRAM[i][j] == 0x01) {
+      if (oglAcVram[i][j] == 0x01) {
         info.pname_bank[i] = 1;
         ptn_access |= (1<<j);
       }
@@ -7330,11 +7375,11 @@ static void Vdp2DrawNBG2(void)
       info.char_bank[i] = 0;
       info.pname_bank[i] = 0;
       for (int j = 0; j < 8; j++) {
-        if (Vdp2External.AC_VRAM[i][j] == 0x06) {
+        if (oglAcVram[i][j] == 0x06) {
           info.char_bank[i] = 1;
           char_access |= (1 << j);
         }
-        if (Vdp2External.AC_VRAM[i][j] == 0x02) {
+        if (oglAcVram[i][j] == 0x02) {
           info.pname_bank[i] = 1;
           ptn_access |= (1 << j);
         }
@@ -7493,11 +7538,11 @@ static void Vdp2DrawNBG3(void)
       info.char_bank[i] = 0;
       info.pname_bank[i] = 0;
       for (int j = 0; j < 8; j++) {
-        if (Vdp2External.AC_VRAM[i][j] == 0x07) {
+        if (oglAcVram[i][j] == 0x07) {
           info.char_bank[i] = 1;
           char_access |= (1 << j);
         }
-        if (Vdp2External.AC_VRAM[i][j] == 0x03) {
+        if (oglAcVram[i][j] == 0x03) {
           info.pname_bank[i] = 1;
           ptn_access |= (1 << j);
         }
@@ -7601,8 +7646,8 @@ static void Vdp2DrawRBG0(void)
 
   //paraA.PlaneAddr = (void FASTCALL(*)(void *, int, Vdp2*))&Vdp2ParameterAPlaneAddr;
   //paraB.PlaneAddr = (void FASTCALL(*)(void *, int, Vdp2*))&Vdp2ParameterBPlaneAddr;
-  paraA.charaddr = (fixVdp2Regs->MPOFR & 0x7) * 0x20000;
-  paraB.charaddr = (fixVdp2Regs->MPOFR & 0x70) * 0x2000;
+  paraA.charaddr = ((fixVdp2Regs->MPOFR & 0x7) * 0x20000) & 0x7FFFF;
+  paraB.charaddr = ((fixVdp2Regs->MPOFR & 0x70) * 0x2000) & 0x7FFFF;
   ReadPlaneSizeR(&paraA, fixVdp2Regs->PLSZ >> 8);
   ReadPlaneSizeR(&paraB, fixVdp2Regs->PLSZ >> 12);
 
@@ -7767,12 +7812,17 @@ static void Vdp2DrawRBG0(void)
     // Bitmap Mode
     ReadBitmapSize(info, fixVdp2Regs->CHCTLB >> 10, 0x1);
 
+    // The map offset field is 3 bits, so it can name a bitmap base of up to
+    // 0xE0000 while VDP2 VRAM is only 0x80000 bytes.  Hardware wraps the fetch
+    // address inside VRAM, and SGL's slBitMapRbg0 relies on that: it hands out
+    // offset 4 (0x80000) for a bitmap that actually sits at 0.  Without the
+    // wrap every fetch lands outside VRAM and the layer disappears.
     if (info->rotatenum == 0)
       // Parameter A
-      info->charaddr = (fixVdp2Regs->MPOFR & 0x7) * 0x20000;
+      info->charaddr = ((fixVdp2Regs->MPOFR & 0x7) * 0x20000) & 0x7FFFF;
     else
       // Parameter B
-      info->charaddr = (fixVdp2Regs->MPOFR & 0x70) * 0x2000;
+      info->charaddr = ((fixVdp2Regs->MPOFR & 0x70) * 0x2000) & 0x7FFFF;
 
     info->paladdr = (fixVdp2Regs->BMPNB & 0x7) << 4;
     info->flipfunction = 0;
@@ -8164,7 +8214,9 @@ vdp2rotationparameter_struct * FASTCALL vdp2RGetParamMode03NoK(vdp2draw_struct *
     return (&paraA);
   }
 
-  v <= info->hres_shift;
+  // Was `v <= info->hres_shift;` - a comparison whose result was discarded, so
+  // the 448-line modes indexed the window table with the un-doubled line.
+  v <<= info->hres_shift;
   if (info->WindwAreaMode == WA_INSIDE)  // Inside is B, Outside is A
   {
     // Outside is A
@@ -8322,71 +8374,46 @@ vdp2rotationparameter_struct * FASTCALL vdp2RGetParamMode03WithKB(vdp2draw_struc
 
 vdp2rotationparameter_struct * FASTCALL vdp2RGetParamMode03WithK(vdp2draw_struct * info, int h, int v)
 {
-  vdp2rotationparameter_struct * p;
+  // Rotation parameter mode 3 chooses between A and B with the rotation
+  // parameter window and nothing else. In this mode the MSB of BOTH
+  // coefficient tables is a plain transparency bit (Sega VDP2 manual table
+  // 6.4), so a dot whose selected parameter reports a transparent coefficient
+  // is transparent - returning NULL here is what the caller turns into a
+  // transparent dot. It must not be re-fetched with the other parameter: the
+  // fallback that used to be here filled the half of the screen the window
+  // handed to B with A's plane, which made mode 3 render exactly like mode 0.
+  // vidsoft has always done it this way. The sibling WithKA / WithKB
+  // functions never had the fallback either, because only one parameter has a
+  // coefficient table there.
+  int useA;
 
-  // Disbaled Window always return A
+  // Disabled window always returns A (Virtua Fighter 2). Same choice the
+  // compute-shader path makes: with no rotation window enabled it compiles the
+  // mode 0 program, which is parameter A with A's transparency bit honoured.
   if ((fixVdp2Regs->WCTLD & 0xA) == 0) {
-    h = ceilf(paraA.KtablV + (paraA.deltaKAx * h));
-    p = info->GetKValueA(&paraA, h);
-    if (p) return p;
-    h = ceilf(paraB.KtablV + (paraB.deltaKAx * h));
-    return info->GetKValueB(&paraB, h);
-  }
-
-  v <<= info->hres_shift;
-
-  // Final Fight Revenge
-  if (info->WindwAreaMode == WA_INSIDE) {
-    if (info->pWinInfo[v].WinShowLine == 0) {
-      h = ceilf(paraA.KtablV + (paraA.deltaKAx * h));
-      p = info->GetKValueA(&paraA, h);
-      if (p) return p;
-      h = ceilf(paraB.KtablV + (paraB.deltaKAx * h));
-      return info->GetKValueB(&paraB, h);
-    }
-    else {
-      if (h < info->pWinInfo[v].WinHStart || h >= info->pWinInfo[v].WinHEnd) {
-        h = (paraA.KtablV + (paraA.deltaKAx * h));
-        p = info->GetKValueA(&paraA, h);
-        if (p) return p;
-        h = ceilf(paraB.KtablV + (paraB.deltaKAx * h));
-        return info->GetKValueB(&paraB, h);
-      }
-      else {
-        h = (paraB.KtablV + (paraB.deltaKAx * h));
-        p = info->GetKValueB(&paraB, h);
-        if (p) return p;
-        h = ceilf(paraA.KtablV + (paraA.deltaKAx * h));
-        return info->GetKValueA(&paraA, h);
-      }
-    }
+    useA = 1;
   }
   else {
-    if (info->pWinInfo[v].WinShowLine == 0) {
-      h = ceilf(paraB.KtablV + (paraB.deltaKAx * h));
-      p = info->GetKValueB(&paraB, h);
-      if (p) return p;
-      h = ceilf(paraA.KtablV + (paraA.deltaKAx * h));
-      return info->GetKValueA(&paraA, h);
+    v <<= info->hres_shift;
+
+    // Final Fight Revenge
+    if (info->pWinInfo[v].WinShowLine == 0 ||
+      h < info->pWinInfo[v].WinHStart || h >= info->pWinInfo[v].WinHEnd) {
+      // Outside the window.
+      useA = (info->WindwAreaMode == WA_INSIDE);
     }
     else {
-      if (h < info->pWinInfo[v].WinHStart || h >= info->pWinInfo[v].WinHEnd) {
-        h = ceilf(paraB.KtablV + (paraB.deltaKAx * h));
-        p = info->GetKValueB(&paraB, h);
-        if (p) return p;
-        h = ceilf(paraA.KtablV + (paraA.deltaKAx * h));
-        return info->GetKValueA(&paraA, h);
-      }
-      else {
-        h = ceilf(paraA.KtablV + (paraA.deltaKAx * h));
-        p = info->GetKValueA(&paraA, h);
-        if (p) return p;
-        h = ceilf(paraB.KtablV + (paraB.deltaKAx * h));
-        return info->GetKValueB(&paraB, h);
-      }
+      // Inside the window.
+      useA = (info->WindwAreaMode != WA_INSIDE);
     }
   }
-  return NULL;
+
+  if (useA) {
+    h = ceilf(paraA.KtablV + (paraA.deltaKAx * h));
+    return info->GetKValueA(&paraA, h);
+  }
+  h = ceilf(paraB.KtablV + (paraB.deltaKAx * h));
+  return info->GetKValueB(&paraB, h);
 }
 
 void VIDOGLSetFilterMode(int type) {
@@ -8421,6 +8448,18 @@ void VIDOGLSetSettingValueMode(int type, int value) {
 	  }
 	  break;
   case VDP_SETTING_POLYGON_MODE:
+    // The OpenGL core only implements PERSPECTIVE_CORRECTION,
+    // CPU_TESSERATION and GPU_TESSERATION. COMPUTE_RASTERIZER is a
+    // Vulkan-core feature; an unknown mode would fall through the
+    // dispatch in YglQuadGrowShading without allocating the texture
+    // atlas slot, leaving YglTexture.textdata uninitialized and
+    // crashing in Vdp1ReadTexture on the first distorted sprite. The
+    // Vulkan core degrades unsupported modes the same way (see its
+    // GPU_TESSERATION fallback).
+    if (value != PERSPECTIVE_CORRECTION && value != CPU_TESSERATION &&
+        value != GPU_TESSERATION) {
+      value = PERSPECTIVE_CORRECTION;
+    }
     _Ygl->polygonmode = value;
     break;
   case VDP_SETTING_ROTATE_SCREEN:

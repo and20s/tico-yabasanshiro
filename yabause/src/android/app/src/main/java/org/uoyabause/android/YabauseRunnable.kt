@@ -126,6 +126,14 @@ class YabauseRunnable(
         @JvmStatic
         external fun drawScreen(): Int
 
+        /**
+         * Tells the renderer the surface is about to be destroyed and returns once
+         * no frame is still presenting to it. Must be called without holding
+         * lockGL(): it waits on the render thread.
+         */
+        @JvmStatic
+        external fun surfaceLost()
+
         @JvmStatic
         external fun lockGL(): Int
 
@@ -179,6 +187,16 @@ class YabauseRunnable(
 
         @JvmStatic
         external fun getGameinfo(): String?
+
+        /** {vendorID, deviceID, 1 if GPU tessellation is usable}, or null without Vulkan. */
+        @JvmStatic
+        external fun getVulkanDeviceInfo(): IntArray?
+
+        @JvmStatic
+        external fun peekMemory(
+            address: Int,
+            length: Int,
+        ): ByteArray?
 
         @JvmStatic
         external fun savestate(path: String?): String?

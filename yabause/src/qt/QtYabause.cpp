@@ -34,6 +34,7 @@
 #include <QTreeWidget>
 #include <QPointer>
 #include <QDir>
+#include <QFile>
 
 // cores
 
@@ -67,21 +68,22 @@ SH2Interface_struct *SH2CoreList[] = {
 NULL
 };
 
+// One peripheral core, not a choice. The keyboard never went through this
+// list: UIYabause::keyPressEvent() feeds PerKeyDown() directly whatever core
+// is selected, so PERQT was only ever "the SDL core minus the gamepad polling"
+// and picking it silently disabled every gamepad. PERSDLJoy does the same
+// YabauseExec() call plus the joystick scan, which makes it a strict superset.
+// PERQT stays behind for builds without SDL.
 PerInterface_struct *PERCoreList[] = {
 &PERDummy,
-&PERQT,
 #ifdef HAVE_LIBSDL
 &PERSDLJoy,
+#else
+&PERQT,
 #endif
 #ifdef __APPLE__
 &PERMacJoy,
 #endif
-#ifdef HAVE_DIRECTINPUT
-&PERDIRECTX,
-#endif
-//#ifdef ARCH_IS_LINUX
-//&PERLinuxJoy,
-//#endif
 NULL
 };
 
@@ -101,9 +103,6 @@ SoundInterface_struct *SNDCoreList[] = {
 #endif
 #ifdef HAVE_LIBAL
 &SNDAL,
-#endif
-#ifdef HAVE_DIRECTSOUND
-&SNDDIRECTX,
 #endif
 #ifdef ARCH_IS_MACOSX
 &SNDMac,
@@ -166,7 +165,7 @@ const char * YuiGetShaderCachePath() {
 	cacheDir += "/";
 	QDir dir(cacheDir);
 	if (!dir.exists()) {
-		dir.mkpath(cacheDir);  // ƒfƒBƒŒƒNƒgƒŠ‚ðì¬
+		dir.mkpath(cacheDir);  // ï¿½fï¿½Bï¿½ï¿½ï¿½Nï¿½gï¿½ï¿½ï¿½ï¿½ï¿½ì¬
 	}
 	return qstrdup(cacheDir.toLocal8Bit().constData());
 }
@@ -191,12 +190,6 @@ extern "C"
 #endif
 	}
 
-#if defined(HAVE_DIRECTINPUT) || defined(HAVE_DIRECTSOUND)
-   HWND DXGetWindow()
-   {
-      return (HWND)mUIYabause->winId();
-   }
-#endif
 }
 
 UIYabause* QtYabause::mainWindow( bool create )
@@ -410,6 +403,16 @@ void QtYabause::retranslateApplication()
 const char* QtYabause::getCurrentCdSerial()
 { return cdip ? cdip->itemnum : 0; }
 
+QString QtYabause::cloudSettingsIniPath()
+{
+	const QString exeDirIni =
+		QDir(QCoreApplication::applicationDirPath()).filePath("settings.ini");
+	if (QFile::exists(exeDirIni))
+		return exeDirIni;
+	// Legacy behavior: resolve against the current working directory.
+	return QStringLiteral("settings.ini");
+}
+
 M68K_struct* QtYabause::getM68KCore( int id )
 {
 	for ( int i = 0; M68KCoreList[i] != NULL; i++ )
@@ -497,16 +500,11 @@ SH2Interface_struct * QtYabause::defaultCpuCore() {
 
 PerInterface_struct QtYabause::defaultPERCore()
 {
-  return PERQT;
-/*
 #ifdef HAVE_LIBSDL
 	return PERSDLJoy;
-#elif defined (HAVE_DIRECTINPUT)
-	return PERDIRECTX;
 #else
 	return PERQT;
 #endif
-*/
 }
 
 M68K_struct QtYabause::default68kCore()

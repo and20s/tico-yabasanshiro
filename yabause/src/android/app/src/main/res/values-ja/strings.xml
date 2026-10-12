@@ -126,7 +126,11 @@
     <string name="poly_cpu_tess">CPUテッセレーション</string>
     <string name="poly_gpu_tess">GPUテッセレーション</string>
     <string name="poly_compute_rasterizer">Compute Rasterizer (実験的)</string>
-    <string name="pro_gate_compute_rasterizer_message">Compute Rasterizer は Pro 限定機能です。サブスクリプション登録または Pro 版購入で利用できます。</string>
+    <string name="vdp2_composite_type">VDP2 合成方法</string>
+    <string name="choose_vdp2_composite_type">VDP2 の合成方法を選択</string>
+    <string name="pref_vdp2_composite_summary">VDP2 背景レイヤの合成方法を選択します</string>
+    <string name="vdp2_composite_new">高精度 (ピクセル単位)</string>
+    <string name="vdp2_composite_legacy">高速 (従来方式)</string>
     <string name="res_native">ネイティブ(このデバイスの解像度で描画)</string>
     <string name="res_original">オリジナル(サターンの解像度)</string>
     <string name="ar_original">オリジナル(サターンのアスペクト比)</string>
@@ -184,14 +188,7 @@
     <string name="game_report_message_3">普通</string>
     <string name="game_report_message_4">良い</string>
     <string name="game_report_message_5">優秀</string>
-    <string name="siginin_message">
-        ログインすることで、セーブデータをクラウドに保存,他者,デバイス間で共有できるようになります。\n
-        しかし,これらの機能は実験的なので期待通り動作しなかったり、事前の予告なしに仕様変更されたり、終了したりすることがあります。
-        ログインしなくてもFirebaseなどのライブラリから、アプリの改善に必要とされる情報が収集されます。詳しいプライバシーポリシーは https://www.yabasanshiro.com/privacy で参照できます。
-    </string>
     <string name="agree">同意します</string>
-    <string name="do_you_want_to_sign_in">ログインしますか？</string>
-    <string name="never_ask_me_again">二度と聞かないでください</string>
     <string name="sign_in">ログイン</string>
     <string name="sign_in_cancelled">ログインがキャンセルされました</string>
     <string name="sign_out">ログアウト</string>
@@ -224,7 +221,6 @@
     <string name="scsp_sync">1フレーム毎にSCSPと同期する回数</string>
     <string name="need_to_accept">メディアファイルへのアクセスをを許可しないとこのアプリは使用できません。再起動して許可してください。どうやってISOイメージを読むつもりでした? wwwwwwww</string>
     <string name="cpu_sync_per_line">エミュレーションの優先事項</string>
-    <string name="sel_cpu_sync_per_line" />
     <string name="speed">スピード</string>
     <string name="accuracy">正確さ</string>
     <string name="time_synchronization_mode">サウンド同期モード</string>
@@ -236,6 +232,23 @@
     <string name="video_aspect_ratio">画面縦横比</string>
     <string name="rbg_resolution">回転スクロール面の解像度</string>
     <string name="str_use_compute_shader">回転スクロール面の描画にComputeShaderを使用する</string>
+    <string name="apply_recommended_settings">この端末に推奨の設定を適用</string>
+    <string name="apply_recommended_settings_summary">この端末に合った描画設定を選びます</string>
+    <string name="recommended_settings_no_change">現在の設定はすでに推奨値です。</string>
+    <string name="recommended_settings_scope_note">これはグローバルなデフォルト設定を変更します。すでに個別の設定を保存しているゲームには影響しません。</string>
+    <string name="recommended_settings_apply">適用</string>
+    <string name="recommended_settings_offer_message">この端末には次の設定が推奨されています。適用しますか？</string>
+    <string name="benchmark_confirm_title">この端末の性能を計測しますか？</string>
+    <string name="benchmark_confirm_message">この端末のGPUはまだ推奨設定データベースに登録されていません。3枚の計測用ディスク（約1分）を実行すると、この端末に合った描画設定を自動で選べます。スキップした場合は現在の安全側の設定のまま進みます。</string>
+    <string name="benchmark_confirm_run">計測を実行</string>
+    <string name="benchmark_confirm_skip">スキップ</string>
+    <string name="benchmark_settings_entry_message">この端末のGPUはまだ計測されていないため、具体的な推奨設定がありません。今すぐ計測しますか？</string>
+    <string name="benchmark_result_title">計測が完了しました</string>
+    <string name="benchmark_result_message">この端末には次の設定が選ばれ、適用されました。</string>
+    <string name="benchmark_progress_step">%1$d / %2$d 枚目</string>
+    <string name="benchmark_disc_name_1">VDP1スプライト描画</string>
+    <string name="benchmark_disc_name_2">VDP2背景描画</string>
+    <string name="benchmark_disc_name_3">VDP2回転背景描画</string>
     <string name="res_full_screen">フルスクリーン</string>
     <string name="about_app">このアプリについて</string>
     <string name="privacy_policy">プライバシーポリシー</string>
@@ -327,9 +340,7 @@
     <string name="use_sh2_cache">
         SH2 cacheを使用する
     </string>
-    <string name="restore_defaults">
-        初期設定に戻す
-    </string>
+    <string name="restore_defaults">グローバル設定に戻す</string>
     <string name="menu_detail">詳細</string>
     <string name="create_home_shortcut">ホーム画面にショートカットを作成</string>
     <string name="shortcut_created">ホーム画面にショートカットを作成しました</string>
@@ -712,6 +723,8 @@
     <string name="start_emulator">エミュレータを起動</string>
     <string name="notification_channel_admin_reports">管理者レポート通知</string>
     <string name="notification_channel_admin_reports_desc">新しいユーザーレポートの通知（管理者のみ）</string>
+    <string name="notification_channel_release">リリースのお知らせ</string>
+    <string name="notification_channel_release_desc">YabaSanshiro の新バージョン公開のお知らせ</string>
     <string name="firebase_login_required_title">ログインが必要です</string>
     <string name="firebase_login_required_for_ra_message">RetroAchievementsにログインする前に、YabaSanshiroアカウントにログインしてください。</string>
     <string name="builtin_bios">内蔵BIOS</string>
@@ -751,8 +764,8 @@
     <string name="personal_settings">個人設定</string>
     <string name="report_include_reproduction_data">再現データを含める</string>
     <string name="title_activity_iso_download">IsoDownload</string>
-    <string name="restore_defaults_confirm">ゲーム固有の設定をすべて初期値に戻しますか?</string>
-    <string name="restore_defaults_success">設定を初期値に戻しました</string>
+    <string name="restore_defaults_confirm">このゲーム個別の設定を破棄して、グローバル設定に戻しますか?</string>
+    <string name="restore_defaults_success">グローバル設定に戻しました</string>
     <string name="no_games_found">ゲームが見つかりません</string>
     <string name="add_games_message">コピー先:\n%1$s\nまたは＋ボタンでファイルやフォルダを選択しましょう</string>
     <string name="error_loading_games">ゲームの読み込みに失敗しました</string>
@@ -876,7 +889,6 @@
     <string name="pro_gate_subscribe">サブスクリプション</string>
     <string name="pro_gate_subscribe_with_price">サブスクリプション (%s/年)</string>
     <string name="pro_gate_buy_pro">Proバージョンを購入</string>
-    <string name="game_list_limit_banner">すべてのゲームを表示するには、サブスクリプションまたはProバージョンを購入してください。</string>
 
     <!-- Migration dialog -->
     <string name="migration_dialog_title">メジャーアップデート</string>
@@ -941,4 +953,30 @@
     <string name="news_close">閉じる</string>
     <string name="news_read_more">詳細を見る</string>
     <string name="news_update">アップデート</string>
+    <!-- Shared backup: reporting and hiding (issue #159) -->
+    <string name="report_backup">通報</string>
+    <string name="report_dialog_title">このセーブを通報</string>
+    <string name="report_reason_inappropriate">不適切な内容</string>
+    <string name="report_reason_spam">スパム・誤解を招く内容</string>
+    <string name="report_reason_other">その他</string>
+    <string name="report_send">通報する</string>
+    <string name="report_sent">通報を送信しました。ご協力ありがとうございます。</string>
+    <string name="report_failed">通報を送信できませんでした。</string>
+    <string name="hide_owner">この投稿者を非表示にする</string>
+    <string name="hide_owner_confirm_title">この投稿者を非表示にしますか？</string>
+    <string name="hide_owner_confirm_message">%1$s が共有したセーブは、この端末の一覧に表示されなくなります。いつでも解除できます。</string>
+    <string name="hidden_owners_count">非表示の投稿者 (%1$d)</string>
+    <string name="show_all_hidden">すべて表示</string>
+    <string name="shared_backup_load_more_failed">これ以上読み込めませんでした。</string>
+
+    <!-- Free game limit: locked cards and the subscribe offer -->
+    <string name="game_limit_banner_message">無料版で遊べるのは %1$d 本までです。サブスクリプションに登録すると、すべてのゲームを遊べます。</string>
+    <string name="game_limit_banner_action">すべて解放する</string>
+    <string name="game_locked_badge">ロック中</string>
+    <string name="game_locked_content_description">%1$s、無料版ではロックされています</string>
+    <string name="game_locked_pro_gate_message">このゲームは無料版で遊べる本数を超えています。</string>
+    <string name="setting_on">オン</string>
+    <string name="setting_off">オフ</string>
+    <string name="benchmark_confirm_upload">結果を開発者に送る</string>
+    <string name="benchmark_confirm_upload_note">送るのは端末の機種名・GPU・計測したフレームレートだけです。ゲーム名・セーブデータ・アカウント情報は送りません。この GPU 向けの初期設定を良くするために使います。</string>
 </resources>

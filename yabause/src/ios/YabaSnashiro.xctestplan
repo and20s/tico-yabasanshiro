@@ -9,6 +9,9 @@
     }
   ],
   "defaultOptions" : {
+    "storeKitConfigurationFileReference" : {
+      "identifier" : "uoyabause\/YabaSanshiro.storekit"
+    },
     "targetForVariableExpansion" : {
       "containerPath" : "container:YabaSnashiro.xcodeproj",
       "identifier" : "644232A11C6580000050611E",
@@ -17,7 +20,6 @@
   },
   "testTargets" : [
     {
-      "enabled" : false,
       "target" : {
         "containerPath" : "container:YabaSnashiro.xcodeproj",
         "identifier" : "644232BE1C6580010050611E",

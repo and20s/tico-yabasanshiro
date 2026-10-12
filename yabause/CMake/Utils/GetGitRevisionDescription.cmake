@@ -59,13 +59,33 @@ function(get_git_head_revision _refspecvar _hashvar)
 		endif()
 		set(GIT_DIR "${GIT_PARENT_DIR}/.git")
 	endwhile()
-	# check if this is a submodule
+	# check if this is a submodule or a linked worktree
 	if(NOT IS_DIRECTORY ${GIT_DIR})
 		file(READ ${GIT_DIR} submodule)
 		string(REGEX REPLACE "gitdir: (.*)\n$" "\\1" GIT_DIR_RELATIVE ${submodule})
+		string(STRIP "${GIT_DIR_RELATIVE}" GIT_DIR_RELATIVE)
 		get_filename_component(SUBMODULE_DIR ${GIT_DIR} PATH)
-		get_filename_component(GIT_DIR ${SUBMODULE_DIR}/${GIT_DIR_RELATIVE} ABSOLUTE)
+		# Submodules store a relative path, linked worktrees store an absolute one.
+		if(IS_ABSOLUTE "${GIT_DIR_RELATIVE}")
+			set(GIT_DIR "${GIT_DIR_RELATIVE}")
+		else()
+			get_filename_component(GIT_DIR ${SUBMODULE_DIR}/${GIT_DIR_RELATIVE} ABSOLUTE)
+		endif()
 	endif()
+
+	# A linked worktree keeps HEAD in its own gitdir but refs/ and packed-refs
+	# live in the common dir, whose path is recorded in the "commondir" file.
+	set(GIT_COMMON_DIR "${GIT_DIR}")
+	if(EXISTS "${GIT_DIR}/commondir")
+		file(READ "${GIT_DIR}/commondir" GIT_COMMON_DIR_RAW)
+		string(STRIP "${GIT_COMMON_DIR_RAW}" GIT_COMMON_DIR_RAW)
+		if(IS_ABSOLUTE "${GIT_COMMON_DIR_RAW}")
+			set(GIT_COMMON_DIR "${GIT_COMMON_DIR_RAW}")
+		else()
+			get_filename_component(GIT_COMMON_DIR "${GIT_DIR}/${GIT_COMMON_DIR_RAW}" ABSOLUTE)
+		endif()
+	endif()
+
 	set(GIT_DATA "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/git-data")
 	if(NOT EXISTS "${GIT_DATA}")
 		file(MAKE_DIRECTORY "${GIT_DATA}")

@@ -542,7 +542,11 @@ typedef enum
   RBG_RES_2x,
   RBG_RES_720P,
   RBG_RES_1080P,
-  RBG_RES_FIT_TO_EMULATION
+  RBG_RES_FIT_TO_EMULATION,
+  /* Appended, never inserted: these values are stored verbatim in the user's
+     ini file, so renumbering the existing entries would silently change what
+     an existing installation is configured to do. */
+  RBG_RES_4x
 } RBG_RESOLUTION_MODE;
 
 typedef enum

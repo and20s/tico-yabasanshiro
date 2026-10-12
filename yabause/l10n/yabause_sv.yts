@@ -363,3 +363,63 @@ Yabause is not initialized, can't manage backup ram.|Yabause är inte initierat,
 http://www.emu-compatibility.com/yabause/index.php?lang=uk|http://www.emu-compatibility.com/yabause/index.php?lang=uk
 http://www.monkeystudio.org|http://www.monkeystudio.org
 toolBar|Verktygsfält
+Yaba Sanshiro Setup|Yaba Sanshiro-installation
+Next|Nästa
+Back|Tillbaka
+Finish|Slutför
+Graphics|Grafik
+Choose the preset that matches your PC. You can change any of this later in Settings.|Välj den förinställning som passar din dator. Du kan ändra detta senare i Inställningar.
+Setting|Inställning
+Controls|Kontroller
+Press each button on your keyboard or gamepad when it is highlighted.|Tryck på varje knapp på tangentbordet eller handkontrollen när den markeras.
+Press the input for|Tryck på inmatningen för
+All buttons are set.|Alla knappar är inställda.
+Games|Spel
+Tell Yaba Sanshiro where your games are.|Berätta för Yaba Sanshiro var dina spel finns.
+Do not use an optical drive|Använd ingen optisk enhet
+Choose the folder that contains your games|Välj mappen som innehåller dina spel
+Ready|Klar
+Review your choices before applying them.|Granska dina val innan du tillämpar dem.
+High - modern high-end GPU and CPU|Hög - modern kraftfull GPU och CPU
+Medium - mid-range GPU and CPU|Mellan - GPU och CPU i mellanklassen
+Low - older GPU and CPU|Låg - äldre GPU och CPU
+Vulkan is not available in this build, so only the Low preset can be used.|Vulkan är inte tillgängligt i denna build, så endast förinställningen Låg kan användas.
+Which device do you want to play with?|Vilken enhet vill du spela med?
+Press the input you want to use.|Tryck på den inmatning du vill använda.
+Previous button|Föregående knapp
+Skip this button|Hoppa över denna knapp
+Skip input setup|Hoppa över inmatningskonfiguration
+Folder that contains your CHD or ISO files|Mapp som innehåller dina CHD- eller ISO-filer
+Browse...|Bläddra...
+Optical drive to play discs from|Optisk enhet att spela skivor från
+Both are optional. You can set them later in Settings.|Båda är valfria. Du kan ställa in dem senare i Inställningar.
+These settings will be applied when you press Finish.|Dessa inställningar tillämpas när du trycker på Slutför.
+Vulkan Video|Vulkan Video
+OpenGL|OpenGL
+Other video core|Annan videokärna
+Polygon Generation|Polygongenerering
+Compute Rasterizer|Compute Rasterizer
+GPU Tessellation|GPU Tessellation
+Internal Resolution|Intern Upplösning
+RBG Resolution|RBG-upplösning
+OpenAL Sound Interface|OpenAL ljudgränssnitt
+Other sound core|Annan ljudkärna
+SCSP sync count per frame|Antal SCSP-synkroniseringar per bildruta
+Time Synchronization Mode|Tidssynkroniseringsläge
+Synchronize to CPU|Synkronisera med CPU
+Run Setup &Wizard...|Kör &Inställningsguiden...
+Some of these settings only take effect when Yaba Sanshiro starts. Please restart it.|Vissa av dessa inställningar träder i kraft först när Yaba Sanshiro startas om. Starta om det.
+Buttons assigned|Tilldelade knappar
+Not set|Inte angivet
+Keyboard|Tangentbord
+Keyboard / Mouse|Tangentbord / Mus
+not a known gamepad|okänd handkontroll
+Unknown device|Okänd enhet
+not connected|inte ansluten
+This gamepad is recognised. It works without any setup.|Den här handkontrollen har identifierats. Den fungerar utan någon inställning.
+This device cannot be set up automatically. Assign each button on the next page.|Den här enheten kan inte konfigureras automatiskt. Tilldela varje knapp på nästa sida.
+Use the default assignment|Använd standardtilldelningen
+Input device|Inmatningsenhet
+Native (native resolution of Window)|Ursprunglig (fönstrets egen upplösning)
+Fit to Emulation Resolution|Anpassa till emuleringsupplösning
+Use compute shader for RBG generation|Använd compute shader för RBG-generering

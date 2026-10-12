@@ -346,7 +346,7 @@ VDP1|VDP1
 VDP1 Command Info|VDP1 Command Info
 VDP1 Command List|VDP1 Command List
 VDP2|VDP2
-Value|Value
+Value|Valore
 Value :|Valore:
 Value:|Value:
 Vdp1|Vdp1
@@ -372,3 +372,63 @@ Yabause is not initialized, can't manage backup ram.|Yabause is not initialized,
 http://www.emu-compatibility.com/yabause/index.php?lang=uk|http://www.emu-compatibility.com/yabause/index.php?lang=it
 http://www.monkeystudio.org|http://www.monkeystudio.org
 toolBar|Barra degli Strumenti
+Yaba Sanshiro Setup|Configurazione di Yaba Sanshiro
+Next|Avanti
+Back|Indietro
+Finish|Fine
+Graphics|Grafica
+Choose the preset that matches your PC. You can change any of this later in Settings.|Scegli il preset più adatto al tuo PC. Potrai modificarlo in seguito nelle Impostazioni.
+Setting|Impostazione
+Controls|Controlli
+Press each button on your keyboard or gamepad when it is highlighted.|Premi ogni pulsante sulla tastiera o sul gamepad quando viene evidenziato.
+Press the input for|Premi l'input per
+All buttons are set.|Tutti i pulsanti sono stati impostati.
+Games|Giochi
+Tell Yaba Sanshiro where your games are.|Indica a Yaba Sanshiro dove si trovano i tuoi giochi.
+Do not use an optical drive|Non usare un'unità ottica
+Choose the folder that contains your games|Scegli la cartella che contiene i tuoi giochi
+Ready|Pronto
+Review your choices before applying them.|Rivedi le tue scelte prima di applicarle.
+High - modern high-end GPU and CPU|Alto - GPU e CPU moderne di fascia alta
+Medium - mid-range GPU and CPU|Medio - GPU e CPU di fascia media
+Low - older GPU and CPU|Basso - GPU e CPU più datate
+Vulkan is not available in this build, so only the Low preset can be used.|Vulkan non è disponibile in questa build, quindi è possibile usare solo il preset Basso.
+Which device do you want to play with?|Con quale dispositivo vuoi giocare?
+Press the input you want to use.|Premi l'input che vuoi usare.
+Previous button|Pulsante precedente
+Skip this button|Salta questo pulsante
+Skip input setup|Salta la configurazione dell'input
+Folder that contains your CHD or ISO files|Cartella che contiene i tuoi file CHD o ISO
+Browse...|Sfoglia...
+Optical drive to play discs from|Unità ottica da cui riprodurre i dischi
+Both are optional. You can set them later in Settings.|Entrambi sono facoltativi. Potrai impostarli in seguito nelle Impostazioni.
+These settings will be applied when you press Finish.|Queste impostazioni verranno applicate quando premi Fine.
+Vulkan Video|Vulkan Video
+OpenGL|OpenGL
+Other video core|Altro sistema video
+Polygon Generation|Generazione dei Poligoni
+Compute Rasterizer|Compute Rasterizer
+GPU Tessellation|GPU Tessellation
+Internal Resolution|Risoluzione Interna
+RBG Resolution|Risoluzione RBG
+OpenAL Sound Interface|OpenAL Sound Interface
+Other sound core|Altro sistema audio
+SCSP sync count per frame|Numero di sincronizzazioni SCSP per fotogramma
+Time Synchronization Mode|Modalità di Sincronizzazione del Tempo
+Synchronize to CPU|Sincronizza con la CPU
+Run Setup &Wizard...|Esegui &Assistente Configurazione...
+Some of these settings only take effect when Yaba Sanshiro starts. Please restart it.|Alcune di queste impostazioni hanno effetto solo all'avvio di Yaba Sanshiro. Riavvialo.
+Buttons assigned|Pulsanti assegnati
+Not set|Non impostato
+Keyboard|Tastiera
+Keyboard / Mouse|Tastiera / Mouse
+not a known gamepad|gamepad non riconosciuto
+Unknown device|Dispositivo sconosciuto
+not connected|non connesso
+This gamepad is recognised. It works without any setup.|Questo gamepad è stato riconosciuto. Funziona senza alcuna configurazione.
+This device cannot be set up automatically. Assign each button on the next page.|Questo dispositivo non può essere configurato automaticamente. Assegna ogni pulsante nella pagina successiva.
+Use the default assignment|Usa l'assegnazione predefinita
+Input device|Dispositivo di input
+Native (native resolution of Window)|Nativa (risoluzione nativa della finestra)
+Fit to Emulation Resolution|Adatta alla risoluzione di emulazione
+Use compute shader for RBG generation|Usa compute shader per la generazione RBG

@@ -77,6 +77,10 @@ UIPadSetting::UIPadSetting( PerInterface_struct* core, uint port, uint pad, uint
    mScanMasks[ PERPAD_Y ] = PERSF_KEY | PERSF_BUTTON | PERSF_HAT;
    mScanMasks[ PERPAD_Z ] = PERSF_KEY | PERSF_BUTTON | PERSF_HAT;
 
+	// Insert the device selector before the bindings are shown, so the shift it
+	// applies to the dialog is already in place.
+	installDeviceSelector();
+
 	loadPadSettings();
 	
 	foreach ( QToolButton* tb, findChildren<QToolButton*>() )

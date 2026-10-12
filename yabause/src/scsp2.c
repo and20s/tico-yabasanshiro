@@ -3367,6 +3367,15 @@ void M68KStop(void)
 
 //-------------------------------------------------------------------------
 
+// M68KIsRunning:  Report whether M68K execution is currently enabled.
+
+int M68KIsRunning(void)
+{
+   return m68k_running;
+}
+
+//-------------------------------------------------------------------------
+
 // M68KStep:  Execute a single M68K instruction.
 
 void M68KStep(void)

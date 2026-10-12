@@ -38,13 +38,7 @@ extern "C"
 	#include "../scspdsp.h"
 	#include "../scu.h"
 	#include "../sndal.h"
-#ifdef HAVE_DIRECTSOUND
-	#include "../snddx.h"
-#endif
 	#include "../sndsdl.h"
-#if HAVE_DIRECTINPUT
-	#include "../perdx.h"
-#endif
 	#include "../persdljoy.h"
 	#include "../permacjoy.h"
 	#include "../perlinuxjoy.h"
@@ -106,6 +100,12 @@ namespace QtYabause
 
 	// get cd serial
 	const char* getCurrentCdSerial();
+
+	// Path of the distribution-provided settings.ini (CloudService keys).
+	// Prefers the executable's directory so the result does not depend on
+	// the process working directory; falls back to the legacy CWD-relative
+	// lookup for dev builds that run outside an install tree.
+	QString cloudSettingsIniPath();
 
 	// get core by id
 	M68K_struct* getM68KCore( int id );

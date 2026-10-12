@@ -34,3 +34,16 @@ node_modules/*
 # vulkan port debug ui output
 **/debug/vdp1/
 
+
+# Python bytecode cache
+__pycache__/
+*.py[cod]
+
+# Release progress state files (local working memos, see skills/release/SKILL.md)
+release_notes/state/
+.superpowers/
+
+# Aggregation working file: the fetched benchmark report documents, each
+# tagged with its Firestore document id, which contain per-install
+# identifiers. Never commit it.
+aggregation_raw.json

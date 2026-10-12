@@ -40,13 +40,12 @@
 package org.uoyabause.android
 
 import android.animation.ValueAnimator
-import android.app.Activity
-import android.app.ActivityManager
 import android.app.Dialog
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.ActivityInfo
+import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.hardware.input.InputManager
 import android.net.Uri
@@ -57,6 +56,7 @@ import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.os.Process.killProcess
 import android.os.Process.myPid
+import android.os.SystemClock
 import android.util.Log
 import android.view.KeyEvent
 import android.view.MenuItem
@@ -103,14 +103,15 @@ import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancelChildren
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.devmiyax.yabasanshiro.BuildConfig
 import org.devmiyax.yabasanshiro.R
 import org.uoyabause.android.BiosManager
-import org.uoyabause.android.PadManager.ShowMenuListener
-import org.uoyabause.android.phone.DiscSwapGameListBottomSheet
 import org.uoyabause.android.GameInfo
+import org.uoyabause.android.PadManager.ShowMenuListener
 import org.uoyabause.android.PadTestFragment.PadTestListener
 import org.uoyabause.android.StateListFragment.Companion.checkMaxFileCount
 import org.uoyabause.android.achievements.AchievementListFragment
@@ -123,6 +124,7 @@ import org.uoyabause.android.game.GameUiEvent
 import org.uoyabause.android.game.SegaRally
 import org.uoyabause.android.game.SonicR
 import org.uoyabause.android.leaderboard.LeaderBoardFragment
+import org.uoyabause.android.phone.DiscSwapGameListBottomSheet
 import java.io.BufferedInputStream
 import java.io.BufferedReader
 import java.io.File
@@ -183,6 +185,17 @@ class Yabause :
     private var testCase: String? = null
     private var tmpBackupFilePath: String? = null
     private var loadStateFilePath: String? = null
+
+    // Non-zero when launched via BenchmarkRequest: see startBenchmarkPolling/finishBenchmark.
+    private var benchmarkDisc = 0
+    private var benchmarkSession: BenchmarkSession? = null
+
+    // Guards setBenchmarkResult() so only the first of several possible exit paths
+    // (completion, stall, readiness timeout, pause, exit menu) wins. Volatile because
+    // the polling coroutine runs on Dispatchers.Default while lifecycle callbacks run
+    // on the main thread.
+    @Volatile
+    private var benchmarkResultSet = false
 
     private lateinit var padManager: PadManager
     private var yabauseThread: YabauseRunnable? = null
@@ -671,6 +684,7 @@ class Yabause :
         }
 
         gameCode = intent.getStringExtra("org.uoyabause.android.gamecode")
+        benchmarkDisc = intent.getIntExtra(BenchmarkRequest.EXTRA_BENCHMARK_DISC, 0)
         if (gameCode == null) {
             val dao = YabauseStorage.dao
 
@@ -1227,10 +1241,18 @@ class Yabause :
                                 }
                                 subFileDescripters.clear()
 
-                                val playTime = (System.currentTimeMillis() / 1000L) - startTime
-                                val resultIntent = Intent()
-                                resultIntent.putExtra("playTime", playTime)
-                                setResult(RESULT_OK, resultIntent)
+                                if (benchmarkDisc != 0) {
+                                    // A run the user exited out of is not a completed
+                                    // cycle: it must never be reported as RESULT_OK, or
+                                    // Task 14 would store an interrupted run as a real
+                                    // measurement.
+                                    setBenchmarkResult(RESULT_CANCELED)
+                                } else {
+                                    val playTime = (System.currentTimeMillis() / 1000L) - startTime
+                                    val resultIntent = Intent()
+                                    resultIntent.putExtra("playTime", playTime)
+                                    setResult(RESULT_OK, resultIntent)
+                                }
                                 finish()
                                 killProcess(myPid())
                             }, // public void run() {
@@ -1273,8 +1295,8 @@ class Yabause :
                     Log.d(TAG, "enable FPS $fps")
 
                     val rawPg = gamePreference.getStringSafe("pref_polygon_generation", "0").toInt()
-                    // Vulkan 経路では GPU_TESSERATION (2) と COMPUTE_RASTERIZER (3) のみ
-                    // 有効。それ以外の値が来たら 2 にフォールバックする。
+                    // On the Vulkan path only GPU_TESSERATION (2) and
+                    // COMPUTE_RASTERIZER (3) are valid; anything else falls back to 2.
                     val iPg =
                         if (videoInterface == 4 && rawPg != 3) {
                             2
@@ -1285,9 +1307,15 @@ class Yabause :
 
                     Log.d(TAG, "setPolygonGenerationMode $iPg (videoInterface=$videoInterface)")
 
-                    // issue #22: the new per-pixel VDP2 compositor is always enabled (Vulkan only).
-                    YabauseRunnable.setVdp2NewComposite(1)
-                    Log.d(TAG, "setVdp2NewComposite always on")
+                    // issue #22: the VDP2 compositor is user-selectable. Only the
+                    // Vulkan core honours the setting (see Vdp2Composite).
+                    val compositeMode =
+                        Vdp2Composite.resolveMode(
+                            videoInterface,
+                            gamePreference.getStringSafe(Vdp2Composite.KEY, Vdp2Composite.DEFAULT_VALUE),
+                        )
+                    YabauseRunnable.setVdp2NewComposite(compositeMode)
+                    Log.d(TAG, "setVdp2NewComposite $compositeMode (videoInterface=$videoInterface)")
 
                     val frameskip = gamePreference.getBoolean("pref_frameskip", true)
                     YabauseRunnable.enableFrameskip(if (frameskip) 1 else 0)
@@ -1315,6 +1343,10 @@ class Yabause :
 
                     val frameLimitMode = gamePreference.getStringSafe("pref_frameLimit", "0").toInt()
                     YabauseRunnable.setFrameLimitMode(frameLimitMode)
+
+                    // Re-applying the user's preferences would silently replace the
+                    // configuration a benchmark run is measuring, so put it back.
+                    applyBenchmarkOverrides()
 
                     YabauseRunnable.unlockGL()
 
@@ -1412,7 +1444,6 @@ class Yabause :
                 initializeGameForRetroAchievements()
             }
         }, 200)
-
     }
 
     override fun onDiscSwapCancelled() {
@@ -1432,6 +1463,16 @@ class Yabause :
         audio?.mute(YabauseAudio.SYSTEM)
         inputManager!!.unregisterInputDeviceListener(this)
         scope.coroutineContext.cancelChildren()
+
+        // A paused emulator advances no guest frames while wall time keeps running, so
+        // resuming polling later would measure a fabricated slowness. Instead of trying
+        // to resume, end the run now: any pause before completion - screen lock, an
+        // incoming call, a system dialog - must report RESULT_CANCELED, never leave the
+        // activity sitting in the foreground with nothing polling and no result.
+        val session = benchmarkSession
+        if (benchmarkDisc != 0 && session != null && !session.isComplete && !session.hasSlowLevel) {
+            cancelBenchmark(BenchmarkRequest.REASON_PAUSED)
+        }
     }
 
     public override fun onResume() {
@@ -1450,16 +1491,132 @@ class Yabause :
             YabauseRunnable.resume()
         }
         inputManager!!.registerInputDeviceListener(this, null)
+
+        if (benchmarkDisc != 0 && benchmarkSession == null) {
+            startBenchmarkPolling()
+        }
+    }
+
+    /**
+     * Polls the benchmark ROM's status block until one full level cycle is measured,
+     * the guest stalls, or the guest never becomes ready within
+     * [BENCHMARK_READY_TIMEOUT_NANOS], then reports the result and finishes the
+     * activity. Runs on [scope], which onPause cancels, so a backgrounded benchmark
+     * run stops polling rather than continuing invisibly.
+     *
+     * A run has exactly two outcomes: a full cycle (RESULT_OK with measurements) or
+     * nothing (RESULT_CANCELED). A stall or a never-ready guest is not a measurement,
+     * so both route to cancelBenchmark() rather than finishBenchmark().
+     */
+    private fun startBenchmarkPolling() {
+        val session = BenchmarkSession(intent.getDoubleArrayExtra(BenchmarkRequest.EXTRA_LEVEL_FPS_FLOOR))
+        benchmarkSession = session
+        scope.launch {
+            val start = SystemClock.elapsedRealtimeNanos()
+            var everReady = false
+            while (isActive && !session.isComplete && !session.hasSlowLevel) {
+                val now = SystemClock.elapsedRealtimeNanos() - start
+                val status =
+                    BenchmarkStatus.parse(
+                        YabauseRunnable.peekMemory(BenchmarkStatus.ADDRESS, BenchmarkStatus.SIZE),
+                    )
+                if (status != null) {
+                    everReady = true
+                    session.onSample(status, now)
+                    if (session.hasSlowLevel) {
+                        // A rung passes only if every level holds its floor, so
+                        // the first level that does not has already decided this run.
+                        finishBenchmark(session, BenchmarkRequest.REASON_SLOW)
+                        return@launch
+                    }
+                    if (session.isStalled(now)) {
+                        cancelBenchmark(BenchmarkRequest.REASON_STALL)
+                        return@launch
+                    }
+                } else if (!everReady && now > BENCHMARK_READY_TIMEOUT_NANOS) {
+                    // The ROM never reached its main loop: BenchmarkSession has no
+                    // clock of its own and cannot detect this, so the timeout lives
+                    // here instead.
+                    cancelBenchmark(BenchmarkRequest.REASON_NOT_READY)
+                    return@launch
+                }
+                delay(BENCHMARK_POLL_INTERVAL_MS)
+            }
+            finishBenchmark(session, BenchmarkRequest.REASON_CYCLE)
+        }
+    }
+
+    private fun finishBenchmark(
+        session: BenchmarkSession,
+        reason: String,
+    ) {
+        val levelFps = session.levelFps
+        val maxLevel = levelFps.keys.maxOrNull() ?: 0
+        val fpsArray = DoubleArray(maxLevel + 1)
+        levelFps.forEach { (level, fps) -> fpsArray[level] = fps }
+
+        val passed = BenchmarkVerdict.passed(levelFps)
+        // The per-level numbers are what the thresholds in BenchmarkVerdict are
+        // calibrated from, and the result Intent only carries the verdict, so log
+        // them here where a device measurement can still be read back. Info level,
+        // not debug: some retro-handheld ROMs drop debug logs device-wide, and a
+        // measurement that cannot be read back off the device is worthless.
+        Log.i(
+            TAG,
+            "benchmark disc $benchmarkDisc result: passed=$passed reason=$reason " +
+                levelFps.toSortedMap().entries.joinToString(" ") {
+                    "LV%02d=%.1f".format(it.key, it.value)
+                },
+        )
+
+        val result =
+            Intent().apply {
+                putExtra(BenchmarkRequest.EXTRA_PASSED, passed)
+                putExtra(BenchmarkRequest.EXTRA_END_REASON, reason)
+                putExtra(BenchmarkRequest.EXTRA_LEVEL_FPS, fpsArray)
+            }
+        setBenchmarkResult(RESULT_OK, result)
+        finish()
+    }
+
+    /** Ends an incomplete benchmark run: no measurements are reported. */
+    private fun cancelBenchmark(reason: String) {
+        setBenchmarkResult(
+            RESULT_CANCELED,
+            Intent().putExtra(BenchmarkRequest.EXTRA_END_REASON, reason),
+        )
+        finish()
+    }
+
+    /**
+     * Sets the benchmark's result exactly once. A benchmark launch can reach its exit
+     * through several independent paths (completion, stall, readiness timeout, pause,
+     * the exit menu), and finishing one of them can re-enter another (finish() invokes
+     * onPause()). Without this guard a completed run's RESULT_OK could be overwritten
+     * by the RESULT_CANCELED that onPause sets for an incomplete run - so only the
+     * first call takes effect.
+     */
+    private fun setBenchmarkResult(
+        resultCode: Int,
+        data: Intent? = null,
+    ) {
+        if (benchmarkResultSet) return
+        benchmarkResultSet = true
+        setResult(resultCode, data)
     }
 
     public override fun onDestroy() {
         // Stop axis debug updates
         axisDebugHandler.removeCallbacks(axisDebugRunnable)
 
-        val playTime = (System.currentTimeMillis() / 1000L) - startTime
-        val resultIntent = Intent()
-        resultIntent.putExtra("playTime", playTime)
-        setResult(RESULT_OK, resultIntent)
+        if (benchmarkDisc == 0) {
+            // Benchmark mode already set its own result in finishBenchmark(); setResult()
+            // replaces rather than merges, so this must not run for a benchmark launch.
+            val playTime = (System.currentTimeMillis() / 1000L) - startTime
+            val resultIntent = Intent()
+            resultIntent.putExtra("playTime", playTime)
+            setResult(RESULT_OK, resultIntent)
+        }
 
         // Clean up RetroAchievements resources
         if (::retroAchievementsNotification.isInitialized) {
@@ -1999,6 +2156,69 @@ class Yabause :
         }
     }
 
+    /**
+     * Applies the graphics configuration the benchmark is measuring.
+     *
+     * A benchmark run does not ask what the user has configured: it is told which
+     * rung of [BenchmarkLadder] to run, and a rung is a complete configuration -
+     * video core included. That is the point of the sweep. Measuring a disc under
+     * the settings that happen to be stored would answer a different question for
+     * every device.
+     *
+     * The frame limiter goes off too: with it on, every level would sit at 60fps
+     * and nothing would be measured.
+     */
+    private fun applyBenchmarkOverrides() {
+        if (benchmarkDisc == 0) return
+
+        // 1 is "unlimited" in entryValuesFrameLimit.
+        YabauseRunnable.setFrameLimitMode(1)
+
+        // The native core asks this activity for the video interface after this
+        // runs (GetVideoInterface in yui.cpp), so overwriting the field is what
+        // actually switches the renderer for this launch.
+        val core = intent.getStringExtra(BenchmarkRequest.EXTRA_VIDEO_CORE)
+        videoInterface = core?.toIntOrNull() ?: videoInterface
+
+        val polygon =
+            intent.getStringExtra(BenchmarkRequest.EXTRA_POLYGON_GENERATION)
+                ?: RecommendedSettings.POLYGON_TRIANGLE
+        // Triangle is inert under Vulkan, which accepts only 2 and 3.
+        val polygonMode =
+            polygon.toIntOrNull()?.let {
+                if (videoInterface == VIDEO_INTERFACE_VULKAN && it != 3) 2 else it
+            } ?: 0
+        YabauseRunnable.setPolygonGenerationMode(polygonMode)
+
+        val computeShader = intent.getBooleanExtra(BenchmarkRequest.EXTRA_COMPUTE_SHADER, false)
+        YabauseRunnable.enableComputeShader(if (computeShader) 1 else 0)
+
+        val compositeMode =
+            Vdp2Composite.resolveMode(
+                videoInterface,
+                intent.getStringExtra(BenchmarkRequest.EXTRA_VDP2_COMPOSITE),
+            )
+        YabauseRunnable.setVdp2NewComposite(compositeMode)
+
+        val rbgResolution =
+            intent.getStringExtra(BenchmarkRequest.EXTRA_RBG_RESOLUTION)?.toIntOrNull() ?: 0
+        YabauseRunnable.setRbgResolutionMode(rbgResolution)
+
+        // Overrides the per-game pref_resolution read in readPreferences(): the
+        // rung under test decides the internal resolution, not whatever the
+        // benchmark disc's own settings happen to hold.
+        val resolution =
+            intent.getStringExtra(BenchmarkRequest.EXTRA_RESOLUTION)?.toIntOrNull() ?: 0
+        YabauseRunnable.setResolutionMode(resolution)
+
+        Log.i(
+            TAG,
+            "benchmark disc $benchmarkDisc config: core=$videoInterface polygon=$polygonMode " +
+                "compute=$computeShader composite=$compositeMode rbgResolution=$rbgResolution " +
+                "resolution=$resolution",
+        )
+    }
+
     private fun readPreferences(gamecode: String?) {
         if (gamecode.isNullOrEmpty()) return
 
@@ -2039,6 +2259,9 @@ class Yabause :
 
         val frameLimitMode = gamePreference.getStringSafe("pref_frameLimit", "0").toInt()
         YabauseRunnable.setFrameLimitMode(frameLimitMode)
+
+        // Benchmark mode also overrides the video settings, but those are applied
+        // further down once videoInterface is known - see applyBenchmarkOverrides().
 
         // -------------------------------------------------------------------------------------
         // Load common setting
@@ -2103,39 +2326,37 @@ class Yabause :
             cartridgeType = Cartridge.CART_DRAM32MBIT
         }
         Log.d(TAG, "cart $cart")
-        val activityManager = getSystemService(ACTIVITY_SERVICE) as ActivityManager
-        val configurationInfo = activityManager.deviceConfigurationInfo
-        val supportsEs3 = configurationInfo.reqGlEsVersion >= 0x30000
 
-        // Load video setting from game-specific preferences
-        val video: String?
-        video =
+        // Load video setting from game-specific preferences. The software
+        // renderer is no longer supported, so a stored value is resolved to a
+        // supported core (VideoCore).
+        val vulkanSupported =
+            packageManager.hasSystemFeature(PackageManager.FEATURE_VULKAN_HARDWARE_LEVEL)
+        val storedVideo =
             gamePreference.getStringSafe(
-                "pref_video",
-                if (supportsEs3) {
-                    sharedPref.getStringSafe("pref_video", "1")
-                } else {
-                    sharedPref.getStringSafe("pref_video", "2")
-                },
+                VideoCore.KEY,
+                sharedPref.getStringSafe(VideoCore.KEY, VideoCore.OPENGL),
             )
-        if (video.length > 0) {
-            videoInterface = video.toInt()
-        } else {
-            videoInterface = -1
-        }
+        val video = VideoCore.resolve(storedVideo, vulkanSupported)
+        videoInterface = video.toIntOrNull() ?: -1
 
-        // Vulkan: ユーザー設定の polygon_generation を尊重 (GPU_TESSERATION=2 と
-        // COMPUTE_RASTERIZER=3 のみ有効、他値は 2 にフォールバック)。
-        // VDP2 compute shader は Vulkan で常時 ON。
+        // Vulkan: honour the user polygon_generation setting (only
+        // GPU_TESSERATION=2 and COMPUTE_RASTERIZER=3 are valid, anything else
+        // falls back to 2). The VDP2 compute shader stays on for Vulkan.
         if (videoInterface == 4) {
             val rawPg = gamePreference.getStringSafe("pref_polygon_generation", "2").toInt()
             val iPg = if (rawPg == 3) 3 else 2
             YabauseRunnable.setPolygonGenerationMode(iPg)
             Log.d(TAG, "setPolygonGenerationMode $iPg (Vulkan)")
             YabauseRunnable.enableComputeShader(1)
-            // issue #22: the new per-pixel VDP2 compositor is always enabled (Vulkan only).
-            YabauseRunnable.setVdp2NewComposite(1)
-            Log.d(TAG, "setVdp2NewComposite always on (Vulkan)")
+            // issue #22: the VDP2 compositor is user-selectable (Vulkan only).
+            val compositeMode =
+                Vdp2Composite.resolveMode(
+                    videoInterface,
+                    gamePreference.getStringSafe(Vdp2Composite.KEY, Vdp2Composite.DEFAULT_VALUE),
+                )
+            YabauseRunnable.setVdp2NewComposite(compositeMode)
+            Log.d(TAG, "setVdp2NewComposite $compositeMode (Vulkan)")
         } else {
             val iPg = gamePreference.getStringSafe("pref_polygon_generation", "0").toInt()
             YabauseRunnable.setPolygonGenerationMode(iPg)
@@ -2152,6 +2373,8 @@ class Yabause :
                 },
             )
         }
+
+        applyBenchmarkOverrides()
 
         Log.d(TAG, "video $video")
         Log.d(TAG, "getGamePath $gamePath")
@@ -2324,11 +2547,21 @@ class Yabause :
 
     companion object {
         private const val TAG = "Yabause"
+        private const val VIDEO_INTERFACE_VULKAN = 4
         const val REPORT_STATE_INIT = 0
         const val REPORT_STATE_SUCCESS = 1
         const val REPORT_STATE_FAIL_DUPE = -1
         const val REPORT_STATE_FAIL_CONNECTION = -2
         const val REPORT_STATE_FAIL_AUTH = -3
+
+        // Poll faster than one guest frame so that a level boundary is never missed
+        // by more than a few frames.
+        private const val BENCHMARK_POLL_INTERVAL_MS = 8L
+
+        // Provisional value: a slow device booting the HLE BIOS needs real headroom
+        // before the ROM's main loop starts writing its status block, so this errs
+        // generous. Calibrate after measuring several devices.
+        private const val BENCHMARK_READY_TIMEOUT_NANOS = 30_000_000_000L
 
         init {
             System.loadLibrary("yabause_native")
@@ -2669,7 +2902,10 @@ class Yabause :
         currentGame = when (newGameCode) {
             "GS-9170", "MK-81800" -> SonicR(newGameCode).also { it.uievent = this }
             "GS-9047", "MK-81207", "GS-9116", "MK-81215" -> SegaRally(newGameCode).also { it.uievent = this }
-            else -> org.uoyabause.android.game.GenericGame(newGameCode).also { it.uievent = this }
+            else ->
+                org.uoyabause.android.game
+                    .GenericGame(newGameCode)
+                    .also { it.uievent = this }
         }
 
         if (::retroAchievementsNotification.isInitialized) {

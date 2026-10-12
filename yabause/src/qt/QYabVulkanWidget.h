@@ -29,6 +29,9 @@ public:
 
     void resizeEvent(QResizeEvent* event) override;
 
+    // Null engine: Qt must not paint over the Vulkan surface.
+    QPaintEngine* paintEngine() const override;
+
 protected:
     void ready();
     static QYabVulkanWidget * _instance;    

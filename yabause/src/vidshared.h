@@ -551,7 +551,15 @@ static INLINE void ReadMosaicData(vdp2draw_struct *info, u16 mask, Vdp2* regs)
    if (regs->MZCTL & mask)
    {  
       info->mosaicxmask = ((regs->MZCTL >> 8) & 0xF) + 1;
-      info->mosaicymask = (regs->MZCTL >> 12) + 1;
+      info->mosaicymask = ((regs->MZCTL >> 12) & 0xF) + 1;
+      /* A rotation background is mosaiced horizontally only: MZSZV has no
+         effect on it. Stated twice in hard/vdp2/hon/p04_b0.md - once in the
+         mosaic overview and once in the register description - and mednafen
+         renders RBG0 mosaic the same way. mask 0x10 is R0MZE; mask 0x01 is
+         shared by NBG0 and RBG1 and only one of those two exists at a time, so
+         an RBG1 configuration will need the same treatment when it is added. */
+      if (mask == 0x10)
+         info->mosaicymask = 1;
    }
    else
    {

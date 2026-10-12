@@ -52,13 +52,17 @@ public:
     NONE
   };
 
-  uint8_t winflag = 0;
+  // Holds the packed window key; winmode is packed at bit 8 (see the two
+  // pack sites in FramebufferRenderer.cpp), so this must be wider than 8 bits
+  // or the window logic bit is silently truncated to 0 and every OR-logic
+  // VDP1-framebuffer window is stencil-tested as AND logic.
+  uint32_t winflag = 0;
 
   FramebufferRenderer(VIDVulkan * vulkan);
   ~FramebufferRenderer();
   void setup();
   void setupShaders();
-  VkPipeline compileShader(const char * code, const char * name, enum ColorClacMode c, uint8_t winflag);
+  VkPipeline compileShader(const char * code, const char * name, enum ColorClacMode c, uint32_t winflag);
 
   VkPipeline findShader(const char * name, const char * code, enum ColorClacMode c) {
     VkPipeline pgid;

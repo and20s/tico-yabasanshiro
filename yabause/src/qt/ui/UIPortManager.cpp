@@ -27,6 +27,7 @@
 #include "UIMouseSetting.h"
 #include "../CommonDialogs.h"
 #include "../Settings.h"
+#include "../InputPortConfig.h"
 
 #include <QDebug>
 
@@ -36,8 +37,11 @@ peripheralid = (key >> 16);
 buttonid = key & 0xFFFF;
 */
 
-const QString UIPortManager::mSettingsKey = "Input/Port/%1/Id/%2/Controller/%3/Key/%4";
-const QString UIPortManager::mSettingsType = "Input/Port/%1/Id/%2/Type";
+// Same strings InputPortConfig builds its keys from - taken from there rather
+// than repeated, so the dialogs and the port policy cannot drift apart. They
+// are literals, so this does not depend on the order globals get constructed in.
+const QString UIPortManager::mSettingsKey = INPUTPORT_KEY_BINDING;
+const QString UIPortManager::mSettingsType = INPUTPORT_KEY_TYPE;
 
 UIPortManager::UIPortManager( QWidget* parent )
 	: QGroupBox( parent )
