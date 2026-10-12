@@ -32,5 +32,6 @@
   "settings_yabasanshiro_tab_input": "输入",
   "settings_yabasanshiro_section_controllers": "手柄",
   "settings_yabasanshiro_controller_1": "手柄 1",
-  "settings_yabasanshiro_controller_2": "手柄 2"
+  "settings_yabasanshiro_controller_2": "手柄 2",
+  "settings_yabasanshiro_renderer": "渲染器"
 }

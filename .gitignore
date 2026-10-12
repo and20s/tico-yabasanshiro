@@ -51,3 +51,4 @@ aggregation_raw.json
 # Switch build
 build_tico/
 .cache/
+yabause/src/nx/romfs/module/

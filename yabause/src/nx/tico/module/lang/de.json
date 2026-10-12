@@ -32,5 +32,6 @@
   "settings_yabasanshiro_tab_input": "Eingabe",
   "settings_yabasanshiro_section_controllers": "Controller",
   "settings_yabasanshiro_controller_1": "Controller 1",
-  "settings_yabasanshiro_controller_2": "Controller 2"
+  "settings_yabasanshiro_controller_2": "Controller 2",
+  "settings_yabasanshiro_renderer": "Renderer"
 }

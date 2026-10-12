@@ -32,5 +32,6 @@
   "settings_yabasanshiro_tab_input": "Controles",
   "settings_yabasanshiro_section_controllers": "Mandos",
   "settings_yabasanshiro_controller_1": "Mando 1",
-  "settings_yabasanshiro_controller_2": "Mando 2"
+  "settings_yabasanshiro_controller_2": "Mando 2",
+  "settings_yabasanshiro_renderer": "Renderizador"
 }

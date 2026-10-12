@@ -32,5 +32,6 @@
   "settings_yabasanshiro_tab_input": "入力",
   "settings_yabasanshiro_section_controllers": "コントローラー",
   "settings_yabasanshiro_controller_1": "コントローラー 1",
-  "settings_yabasanshiro_controller_2": "コントローラー 2"
+  "settings_yabasanshiro_controller_2": "コントローラー 2",
+  "settings_yabasanshiro_renderer": "レンダラー"
 }

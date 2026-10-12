@@ -32,5 +32,6 @@
   "settings_yabasanshiro_tab_input": "Contrôles",
   "settings_yabasanshiro_section_controllers": "Manettes",
   "settings_yabasanshiro_controller_1": "Manette 1",
-  "settings_yabasanshiro_controller_2": "Manette 2"
+  "settings_yabasanshiro_controller_2": "Manette 2",
+  "settings_yabasanshiro_renderer": "Moteur de rendu"
 }

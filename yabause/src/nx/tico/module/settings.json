@@ -14,6 +14,23 @@
           "title": "settings_yabasanshiro_section_display",
           "options": [
             {
+              "key": "renderer",
+              "label": "settings_yabasanshiro_renderer",
+              "type": "enum",
+              "default": "gl",
+              "choices": [
+                {
+                  "label": "OpenGL",
+                  "value": "gl"
+                },
+                {
+                  "label": "Vulkan (NVK)",
+                  "value": "vulkan"
+                }
+              ],
+              "restart": true
+            },
+            {
               "key": "video_format",
               "label": "settings_yabasanshiro_video_format",
               "type": "enum",
@@ -27,7 +44,8 @@
                   "label": "PAL",
                   "value": "PAL"
                 }
-              ]
+              ],
+              "restart": true
             },
             {
               "key": "resolution_mode",
@@ -59,7 +77,8 @@
                   "label": "1080P",
                   "value": "1080P"
                 }
-              ]
+              ],
+              "restart": true
             },
             {
               "key": "rbg_resolution_mode",
@@ -87,7 +106,8 @@
                   "label": "Fit to Emulation",
                   "value": "Fit to Emulation"
                 }
-              ]
+              ],
+              "restart": true
             },
             {
               "key": "video_filter",
@@ -111,7 +131,8 @@
                   "label": "Bilinear",
                   "value": "Bilinear"
                 }
-              ]
+              ],
+              "restart": true
             },
             {
               "key": "polygon_mode",
@@ -131,7 +152,8 @@
                   "label": "GPU Tessellation",
                   "value": "GPU Tessellation"
                 }
-              ]
+              ],
+              "restart": true
             }
           ]
         },
@@ -142,7 +164,8 @@
               "key": "rotate_screen",
               "label": "settings_yabasanshiro_rotate_screen",
               "type": "bool",
-              "default": "disabled"
+              "default": "disabled",
+              "restart": true
             }
           ]
         }
@@ -245,14 +268,16 @@
               "label": "settings_yabasanshiro_async_rendering",
               "type": "bool",
               "default": "enabled",
-              "description": "Use separate VDP thread for rendering (better performance)"
+              "description": "Use separate VDP thread for rendering (better performance)",
+              "restart": true
             },
             {
               "key": "rbg_use_compute_shader",
               "label": "settings_yabasanshiro_rbg_compute_shader",
               "type": "bool",
               "default": "enabled",
-              "description": "Use compute shader for RBG layer rendering (better performance)"
+              "description": "Use compute shader for RBG layer rendering (better performance)",
+              "restart": true
             }
           ]
         },
@@ -277,7 +302,8 @@
                   "label": "120Hz (2x Speed)",
                   "value": "120Hz"
                 }
-              ]
+              ],
+              "restart": true
             },
             {
               "key": "frame_skip",
@@ -310,7 +336,8 @@
               "key": "sh2_cache",
               "label": "settings_yabasanshiro_sh2_cache",
               "type": "bool",
-              "default": "enabled"
+              "default": "enabled",
+              "restart": true
             }
           ]
         },
@@ -321,7 +348,8 @@
               "key": "skip_load",
               "label": "settings_yabasanshiro_skip_bios_load",
               "type": "bool",
-              "default": "disabled"
+              "default": "disabled",
+              "restart": true
             }
           ]
         },
@@ -346,7 +374,8 @@
                   "label": "4MB RAM Cartridge",
                   "value": "4MB RAM"
                 }
-              ]
+              ],
+              "restart": true
             }
           ]
         }
@@ -376,7 +405,8 @@
                   "label": "Light Gun",
                   "value": "LightGun"
                 }
-              ]
+              ],
+              "restart": true
             },
             {
               "key": "controller_2_mode",
@@ -392,7 +422,8 @@
                   "label": "3D Pad",
                   "value": "3D"
                 }
-              ]
+              ],
+              "restart": true
             }
           ]
         }

@@ -80,15 +80,20 @@ set(PORT_LIBRARIES
 )
 
 set(yabause_nx_SOURCES
-    # Tico entry point
+    # tico frontend: entry point, quick menu, RetroAchievements, game list
     tico/TicoMain.cpp
-    # Tico Vulkan host (ImGui backend glue on top of VIDVulkan)
-    tico/TicoVulkan.cpp
-    # Tico Overlay
-    tico/TicoOverlay.cpp
-    tico/TicoTranslationManager.cpp
-    # YabaSanshiro Config
+    tico/YabaMenu.cpp
+    tico/YabaRA.cpp
     tico/YabaSanshiroConfig.cpp
+    tico/tico_entry.cpp
+    tico/tico_library.cpp
+    tico/UsbStorage.cpp
+    # the overlay shared by the tico cores (ImGui on OpenGL or Vulkan)
+    tico/overlay/imgui_overlay.cpp
+    tico/overlay/overlay_ui.cpp
+    tico/overlay/ra_alerts.cpp
+    tico/overlay/tico_config.cpp
+    tico/overlay/translation_manager.cpp
     # ImGui core
     tico/deps/imgui/imgui.cpp
     tico/deps/imgui/imgui_draw.cpp
@@ -150,7 +155,8 @@ link_directories(
 ) 
 
 add_executable(yabause-nx ${yabause_nx_SOURCES})
-target_link_libraries(yabause-nx yabause ${YABAUSE_LIBRARIES} ${PORT_LIBRARIES} ${LIBCHDR_LIBRARIES} curl)
+# USB drives (libusbhsfs with usbntfs), and libsodium to open the session tico seals
+target_link_libraries(yabause-nx yabause ${YABAUSE_LIBRARIES} ${PORT_LIBRARIES} ${LIBCHDR_LIBRARIES} curl usbhsfs usbntfs sodium)
 
 # glm is fetched as an ExternalProject by the parent vulkan block — make sure
 # it exists before nx sources (which include VIDVulkan.h → glm) compile.
@@ -165,6 +171,8 @@ set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -specs=${DEVKITPRO}/libnx/
 file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/tico/lang" DESTINATION "${CMAKE_CURRENT_SOURCE_DIR}/romfs")
 file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/tico/assets" DESTINATION "${CMAKE_CURRENT_SOURCE_DIR}/romfs")
 file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/tico/fonts" DESTINATION "${CMAKE_CURRENT_SOURCE_DIR}/romfs")
+# the overlay builds its settings screen from the module's definition
+file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/tico/module/settings.json" DESTINATION "${CMAKE_CURRENT_SOURCE_DIR}/romfs/module")
 
 # POST_BUILD generation is handled by the wrapper script `build_yabasanshiro3_nro.sh`
 install(TARGETS yabause-nx DESTINATION "bin")
