@@ -1050,6 +1050,34 @@ static void RunLibrary()
 }
 
 //==============================================================================
+// Shutdown
+//==============================================================================
+
+/// After YabauseDeInit, which stops the VDP thread (with async rendering it
+/// hands the GL context back as it goes): the main thread takes the context,
+/// frees the overlay's GPU objects while the renderer still exists, then the
+/// renderer, audio and services. Nothing may hold GPU memory, a thread or an
+/// audio session when main returns: the homebrew loader unmaps the NRO then.
+static void ShutdownFrontend()
+{
+    if (!g_vulkan && s_display != EGL_NO_DISPLAY && s_surface != EGL_NO_SURFACE &&
+        eglGetCurrentContext() != s_context)
+        eglMakeCurrent(s_display, s_surface, s_surface, s_context);
+    ImGuiOverlay::Shutdown();
+    if (g_vulkan)
+        DeinitVulkan();
+    else
+        DeinitEgl();
+
+    StopControllers();
+    Mix_CloseAudio();
+    SDL_Quit();
+    UsbStorage::Shutdown();
+    socketExit();
+    romfsExit();
+}
+
+//==============================================================================
 // Main
 //==============================================================================
 
@@ -1059,6 +1087,8 @@ int main(int argc, char **argv)
 
     if (R_FAILED(romfsInit()))
         LOG_WARN("HOME", "romfsInit failed");
+    // RetroAchievements talks HTTP through curl
+    socketInitializeDefault();
     UsbStorage::Init();
 
     // SDL audio for the core and the RetroAchievements sounds
@@ -1121,9 +1151,7 @@ int main(int argc, char **argv)
     if (library)
     {
         RunLibrary();
-        ImGuiOverlay::Shutdown();
-        DeinitEgl();
-        UsbStorage::Shutdown();
+        ShutdownFrontend();
         tico_queue_return();
         appletUnlockExit();
         return 0;
@@ -1133,11 +1161,9 @@ int main(int argc, char **argv)
     PrepareCartridge();
     if (InitEmulator() == -1)
     {
-        ImGuiOverlay::Shutdown();
-        if (g_vulkan)
-            DeinitVulkan();
-        else
-            DeinitEgl();
+        YabauseDeInit();
+        ShutdownFrontend();
+        tico_queue_return();
         appletUnlockExit();
         return EXIT_FAILURE;
     }
@@ -1258,16 +1284,11 @@ int main(int argc, char **argv)
     Resume();
 
     YabaMenu::Shutdown();
-    YabaRA::Shutdown();
-    StopControllers();
-    ImGuiOverlay::Shutdown();
+    YabaRA::Shutdown(); // its worker thread, and its sound before the mixer closes
+    // stops the VDP thread; the overlay's GPU objects go after it, with the context
     YabauseDeInit();
-    if (g_vulkan)
-        DeinitVulkan();
-    else
-        DeinitEgl();
+    ShutdownFrontend();
     g_config.Unload();
-    UsbStorage::Shutdown();
 
     if (!(restart && tico_queue_restart()))
         tico_queue_return();
