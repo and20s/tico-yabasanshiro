@@ -61,6 +61,29 @@
 
 static TicoOverlay* g_overlay = nullptr;
 static rc_client_t* g_rcClient = nullptr;
+
+// Save-state hooks used by the core (memory.c RACH chunk). Upstream implements
+// them in retroachievements/, which the Switch port replaces with g_rcClient.
+extern "C" size_t YabauseRA_GetProgressSize(void)
+{
+    return g_rcClient ? rc_client_progress_size(g_rcClient) : 0;
+}
+
+extern "C" int YabauseRA_SerializeProgress(uint8_t* buffer, size_t buffer_size)
+{
+    if (!g_rcClient)
+        return 0;
+    return rc_client_serialize_progress_sized(g_rcClient, buffer, buffer_size) == RC_OK ? 1 : 0;
+}
+
+extern "C" int YabauseRA_DeserializeProgress(const uint8_t* buffer, size_t buffer_size)
+{
+    if (!g_rcClient)
+        return 0;
+    // NULL/0 resets progress (state saved without achievement data)
+    return rc_client_deserialize_progress_sized(g_rcClient, buffer, buffer_size) == RC_OK ? 1 : 0;
+}
+
 static Mix_Chunk* g_trophySound = nullptr;
 static bool g_raHardcore = true;
 

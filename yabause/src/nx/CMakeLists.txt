@@ -47,16 +47,12 @@ set(PORT_INCLUDE_DIRS
     "${CMAKE_CURRENT_SOURCE_DIR}/../../../rcheevos/src"
 )
 
-set(MESA_DIR "/mesa-new")
-
+# Mesa (EGL + GLES + nouveau driver) from the devkitPro portlibs
 set(PORT_LIBRARIES 
-    ${MESA_DIR}/src/egl/libEGL.a
-    ${MESA_DIR}/src/mapi/es2api/libGLESv2.a
-    ${MESA_DIR}/src/mapi/shared-glapi/libglapi.a
-    ${MESA_DIR}/src/gallium/drivers/nouveau/libnouveau.a
-    ${MESA_DIR}/src/nouveau/codegen/libnouveau_codegen.a
-    ${MESA_DIR}/src/gallium/winsys/nouveau/switch/libnouveauwinsys.a
-    ${MESA_DIR}/libdrm_nouveau/lib/libdrm_nouveau.a
+    EGL
+    GLESv2
+    glapi
+    drm_nouveau
     nx 
     m 
     SDL2

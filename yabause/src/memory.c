@@ -41,6 +41,9 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
     \brief Memory access functions.
 */
 
+#if defined(NX) && !defined(_DEFAULT_SOURCE)
+#define _DEFAULT_SOURCE // newlib: expose ftruncate()/fileno()
+#endif
 #ifdef PSP // see FIXME in T1MemoryInit()
 #include <stdint.h>
 #endif
