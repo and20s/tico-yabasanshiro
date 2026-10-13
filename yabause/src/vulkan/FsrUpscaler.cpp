@@ -144,8 +144,8 @@ float rcpMed(float a) {
   return b * (-b * a + 2.0);
 }
 vec3 load(ivec2 p) { return texelFetch(Source, clamp(p, ivec2(0), pc.srcMax), 0).rgb; }
-float max3(float x, float y, float z) { return max(x, max(y, z)); }
-float min3(float x, float y, float z) { return min(x, min(y, z)); }
+float maxOf3(float x, float y, float z) { return max(x, max(y, z)); }
+float minOf3(float x, float y, float z) { return min(x, min(y, z)); }
 
 void main() {
   ivec2 sp = ivec2(gl_GlobalInvocationID.xy);
@@ -165,7 +165,7 @@ void main() {
   vec3 hitMin = min(mn4, e) * (1.0 / (4.0 * mx4));
   vec3 hitMax = (peakC.x - max(mx4, e)) * (1.0 / (4.0 * mn4 + peakC.y));
   vec3 lobeRGB = max(-hitMin, hitMax);
-  float lobe = max(-FSR_RCAS_LIMIT, min(max3(lobeRGB.r, lobeRGB.g, lobeRGB.b), 0.0)) * pc.sharpness;
+  float lobe = max(-FSR_RCAS_LIMIT, min(maxOf3(lobeRGB.r, lobeRGB.g, lobeRGB.b), 0.0)) * pc.sharpness;
   float rcpL = rcpMed(4.0 * lobe + 1.0);
   vec3 pix = (lobe * b + lobe * d + lobe * h + lobe * f + e) * rcpL;
   imageStore(Dest, sp, vec4(pix, 1.0));
