@@ -51,6 +51,7 @@ class WindowRenderer;
 class Vdp1ComputeRasterizer;
 class Vdp2GBuffer;    // issue #22 T-003: per-layer G-buffer
 class Vdp2Compositor; // issue #22 T-008: per-pixel composite pass
+class FsrUpscaler;    // FSR 1.0 for the final upscale
 class Vdp2SpriteDecoder; // issue #22 T-009: VDP1 sprite -> kSprite slice
 
 #define ATLAS_BIAS (0.025f)
@@ -149,6 +150,14 @@ public:
   void Vdp2DispOff(void);
   void genLineinfo(vdp2draw_struct *info);
   void getScreenshot(void ** outbuf, int & width, int & height);
+
+  // How the game's render target is scaled to the screen when the internal
+  // resolution is not native: 0 nearest, 1 AMD FSR 1.0 (only when it grows).
+  // Sharpness in stops, 0 the sharpest. Read at every frame.
+  void setUpscaling(int mode, float sharpnessStops) {
+    upscalingMode = mode;
+    fsrSharpness = sharpnessStops;
+  }
 
   // This frame's VRAM access pattern, decoded from the same register
   // snapshot (fixVdp2Regs) the rest of the frame is resolved from. Taking it
@@ -499,6 +508,9 @@ protected:
   // compositeVdp2New and freed in the destructor / freeStuff().
   Vdp2GBuffer *vdp2GBuffer = nullptr;
   Vdp2Compositor *vdp2Compositor = nullptr;
+  FsrUpscaler *fsr = nullptr;
+  int upscalingMode = 0;
+  float fsrSharpness = 0.2f;
   // issue #22 (T-009): populates the kSprite G-buffer slice from the VDP1
   // framebuffer. Lazily created alongside vdp2GBuffer / vdp2Compositor.
   Vdp2SpriteDecoder *vdp2SpriteDecoder = nullptr;

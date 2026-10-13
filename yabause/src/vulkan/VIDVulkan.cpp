@@ -39,6 +39,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 
 #include "Vdp2GBuffer.h"
 #include "Vdp2Compositor.h"
+#include "FsrUpscaler.h"
 #include "Vdp2SpriteDecoder.h"
 
 #include "Vdp2ColorCalcState.h"
@@ -366,6 +367,8 @@ void VIDVulkan::deInit(void) {
     delete vdp2Compositor;
     vdp2Compositor = nullptr;
   }
+  delete fsr;
+  fsr = nullptr;
   if (vdp2SpriteDecoder != nullptr) {
     delete vdp2SpriteDecoder;
     vdp2SpriteDecoder = nullptr;
@@ -8932,6 +8935,9 @@ void VIDVulkan::generateSubRenderTarget(int width, int height) {
 }
 
 void VIDVulkan::freeSubRenderTarget() {
+  // FSR samples the render target: it is about to go
+  if (fsr != nullptr)
+    fsr->sourceChanged();
 
   vkQueueWaitIdle(getVulkanQueue());
   VkDevice device = getDevice();
@@ -8978,6 +8984,19 @@ void VIDVulkan::freeSubRenderTarget() {
 void VIDVulkan::blitSubRenderTarget(VkCommandBuffer commandBuffer, const glm::vec4 &viewportData) {
   VkDevice device = getDevice();
   VkImage dstImage = _renderer->getWindow()->getCurrentImage();
+
+  // FSR when the picture grows on its way to the screen; the nearest blit
+  // below otherwise, or if FSR cannot run
+  if (upscalingMode == 1 && viewportData.z > subRenderTarget.width && viewportData.w > subRenderTarget.height) {
+    if (fsr == nullptr)
+      fsr = new FsrUpscaler(this);
+    fsr->setSharpness(fsrSharpness);
+    if (fsr->record(commandBuffer, subRenderTarget.color.image, subRenderTarget.color.view,
+                    VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, subRenderTarget.width, subRenderTarget.height, dstImage,
+                    (int32_t)viewportData.x, (int32_t)viewportData.y, (uint32_t)viewportData.z,
+                    (uint32_t)viewportData.w, VK_IMAGE_LAYOUT_GENERAL))
+      return;
+  }
 
   // Transition destination image to transfer destination layout
   vks::tools::insertImageMemoryBarrier(commandBuffer, dstImage, 0, VK_ACCESS_TRANSFER_WRITE_BIT,

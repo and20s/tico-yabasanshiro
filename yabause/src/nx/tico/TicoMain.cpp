@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -780,9 +781,21 @@ static void ApplyVdp2Composite()
     VIDCore->SetSettingValue(VDP_SETTING_VDP2_NEW_COMPOSITE, accurate ? 1 : 0);
 }
 
+// Vulkan's final upscale when the internal resolution is below the screen's:
+// nearest, or AMD FSR 1.0 with its sharpness (in stops, 0 the sharpest).
+static void ApplyUpscaling()
+{
+    if (!g_vulkan)
+        return;
+    const bool fsr = TicoConfig::GetConfigValue("upscaling", "nearest") == "fsr";
+    const float stops = std::strtof(TicoConfig::GetConfigValue("fsr_sharpness", "0.2").c_str(), nullptr);
+    VIDVulkan::getInstance()->setUpscaling(fsr ? 1 : 0, stops);
+}
+
 static void ApplyLiveSettings()
 {
     ApplyVdp2Composite();
+    ApplyUpscaling();
     // paused: the main thread holds the renderer
     ApplyDisplaySettings();
 
@@ -1334,6 +1347,7 @@ int main(int argc, char **argv)
             });
         ApplyDisplaySettings();
         ApplyVdp2Composite();
+        ApplyUpscaling();
     }
     else
     {

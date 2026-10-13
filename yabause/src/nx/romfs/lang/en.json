@@ -218,6 +218,8 @@
   "settings_yabasanshiro_tab_performance": "Performance",
   "settings_yabasanshiro_tab_video": "Video",
   "settings_yabasanshiro_vdp2_composite": "VDP2 composite",
+  "settings_yabasanshiro_upscaling": "Upscaling",
+  "settings_yabasanshiro_fsr_sharpness": "FSR sharpness",
   "settings_yabasanshiro_video_filter": "Video Filter",
   "settings_yabasanshiro_video_format": "Video Format"
 }

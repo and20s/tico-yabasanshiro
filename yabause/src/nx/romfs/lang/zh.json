@@ -218,6 +218,8 @@
   "settings_yabasanshiro_tab_performance": "性能",
   "settings_yabasanshiro_tab_video": "视频",
   "settings_yabasanshiro_vdp2_composite": "VDP2 合成",
+  "settings_yabasanshiro_upscaling": "放大",
+  "settings_yabasanshiro_fsr_sharpness": "FSR 锐度",
   "settings_yabasanshiro_video_filter": "视频滤镜",
   "settings_yabasanshiro_video_format": "视频格式"
 }

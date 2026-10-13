@@ -217,6 +217,8 @@
   "settings_yabasanshiro_tab_performance": "Производительность",
   "settings_yabasanshiro_tab_video": "Видео",
   "settings_yabasanshiro_vdp2_composite": "Композиция VDP2",
+  "settings_yabasanshiro_upscaling": "Масштабирование",
+  "settings_yabasanshiro_fsr_sharpness": "Резкость FSR",
   "settings_yabasanshiro_video_filter": "Видеофильтр",
   "settings_yabasanshiro_video_format": "Формат видео"
 }

@@ -139,6 +139,58 @@
               "restart": true
             },
             {
+              "key": "upscaling",
+              "label": "settings_yabasanshiro_upscaling",
+              "type": "enum",
+              "default": "nearest",
+              "choices": [
+                {
+                  "label": "Nearest",
+                  "value": "nearest"
+                },
+                {
+                  "label": "AMD FSR 1.0",
+                  "value": "fsr"
+                }
+              ],
+              "depends_on": {
+                "key": "renderer",
+                "value": "vulkan"
+              }
+            },
+            {
+              "key": "fsr_sharpness",
+              "label": "settings_yabasanshiro_fsr_sharpness",
+              "type": "enum",
+              "default": "0.2",
+              "choices": [
+                {
+                  "label": "Sharpest",
+                  "value": "0.0"
+                },
+                {
+                  "label": "Sharp",
+                  "value": "0.2"
+                },
+                {
+                  "label": "Medium",
+                  "value": "0.5"
+                },
+                {
+                  "label": "Soft",
+                  "value": "1.0"
+                },
+                {
+                  "label": "Softest",
+                  "value": "2.0"
+                }
+              ],
+              "depends_on": {
+                "key": "upscaling",
+                "value": "fsr"
+              }
+            },
+            {
               "key": "polygon_mode",
               "label": "settings_yabasanshiro_polygon_generation",
               "type": "enum",

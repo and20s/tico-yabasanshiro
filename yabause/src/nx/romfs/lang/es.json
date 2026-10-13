@@ -218,6 +218,8 @@
   "settings_yabasanshiro_tab_performance": "Rendimiento",
   "settings_yabasanshiro_tab_video": "Vídeo",
   "settings_yabasanshiro_vdp2_composite": "Composición VDP2",
+  "settings_yabasanshiro_upscaling": "Escalado",
+  "settings_yabasanshiro_fsr_sharpness": "Nitidez de FSR",
   "settings_yabasanshiro_video_filter": "Filtro de Vídeo",
   "settings_yabasanshiro_video_format": "Formato de Vídeo"
 }

@@ -814,6 +814,8 @@ set( VULKAN_SOURCES
  vulkan/Vdp2GBuffer.h
  vulkan/Vdp2Compositor.cpp
  vulkan/Vdp2Compositor.h
+ vulkan/FsrUpscaler.cpp
+ vulkan/FsrUpscaler.h
  vulkan/Vdp2SpriteDecoder.cpp
  vulkan/Vdp2SpriteDecoder.h
  vulkan/VIDVulkan.cpp
