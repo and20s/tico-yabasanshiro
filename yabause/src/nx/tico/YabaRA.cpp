@@ -5,8 +5,10 @@
 
 #include <switch.h>
 
+#include <algorithm>
 #include <condition_variable>
 #include <cstring>
+#include <strings.h>
 #include <deque>
 #include <fstream>
 #include <functional>
@@ -21,6 +23,10 @@
 #include <nlohmann/json.hpp>
 
 #include "rc_client.h"
+#include "rc_hash.h"
+
+#include <libchdr/cdrom.h>
+#include <libchdr/chd.h>
 
 #include "TicoLogger.h"
 #include "TicoSession.h"
@@ -332,6 +338,166 @@ void OnLogin(int result, const char* error, rc_client_t* client, void*) {
                                            OnGameLoaded, nullptr);
 }
 
+
+// Games in .chd: rcheevos reads .cue, .bin and .iso itself, CHD through
+// libchdr here, as tico-genesisplusgx does for its Sega CD discs (the
+// tracks laid out one after another, each padded to CD_TRACK_PADDING
+// frames, the pregap stored only when its type is 'V').
+rc_hash_cdreader_t s_defaultCdReader;
+
+struct ChdTrack
+{
+    chd_file *chd = nullptr;
+    uint32_t hunkBytes = 0;
+    uint64_t offset = 0;      // byte offset of the track's first sector
+    uint32_t headerBytes = 0; // 16 for MODE1_RAW, 24 for MODE2_RAW, 0 cooked
+    uint32_t dataBytes = 2048;
+    std::vector<uint8_t> hunk;
+    int64_t hunkNum = -1;
+};
+
+struct DiscHandle
+{
+    bool chd = false;
+    void *inner = nullptr; // ChdTrack, or the default reader's handle
+};
+
+ChdTrack *OpenChdTrack(const char *path, uint32_t track)
+{
+    chd_file *chd = nullptr;
+    if (chd_open(path, CHD_OPEN_READ, nullptr, &chd) != CHDERR_NONE)
+        return nullptr;
+    const chd_header *head = chd_get_header(chd);
+    if (!head || !head->hunkbytes || head->hunkbytes % CD_FRAME_SIZE)
+    {
+        chd_close(chd);
+        return nullptr;
+    }
+
+    uint64_t sectors = 0;
+    for (uint32_t index = 0; index < 99; ++index)
+    {
+        char metadata[256] = {};
+        int number = 0, frames = 0, pregap = 0, postgap = 0;
+        char type[16] = {}, subtype[16] = {}, pgtype[16] = {}, pgsub[16] = {};
+        if (chd_get_metadata(chd, CDROM_TRACK_METADATA2_TAG, index, metadata, sizeof(metadata), 0, 0, 0) == CHDERR_NONE)
+        {
+            if (sscanf(metadata, CDROM_TRACK_METADATA2_FORMAT, &number, type, subtype, &frames, &pregap,
+                       pgtype, pgsub, &postgap) != 8)
+                break;
+        }
+        else if (chd_get_metadata(chd, CDROM_TRACK_METADATA_TAG, index, metadata, sizeof(metadata), 0, 0, 0) == CHDERR_NONE)
+        {
+            if (sscanf(metadata, CDROM_TRACK_METADATA_FORMAT, &number, type, subtype, &frames) != 4)
+                break;
+        }
+        else
+            break;
+        if (pgtype[0] != 'V')
+            pregap = 0; // not stored in the file
+
+        const bool audio = !strcmp(type, "AUDIO");
+        const bool wanted = track == RC_HASH_CDTRACK_FIRST_DATA ? !audio : number == (int)track;
+        if (wanted)
+        {
+            ChdTrack *out = new ChdTrack();
+            out->chd = chd;
+            out->hunkBytes = head->hunkbytes;
+            out->offset = (sectors + (uint64_t)pregap) * CD_FRAME_SIZE;
+            out->headerBytes = !strcmp(type, "MODE1_RAW") ? 16 : !strcmp(type, "MODE2_RAW") ? 24 : 0;
+            out->dataBytes = audio ? 2352 : 2048;
+            out->hunk.resize(head->hunkbytes);
+            return out;
+        }
+        sectors += ((frames + CD_TRACK_PADDING - 1) / CD_TRACK_PADDING) * CD_TRACK_PADDING;
+    }
+    chd_close(chd);
+    return nullptr;
+}
+
+size_t ReadChdSector(ChdTrack *track, uint32_t sector, void *buffer, size_t requested)
+{
+    uint8_t *out = (uint8_t *)buffer;
+    size_t total = 0;
+    while (requested > 0)
+    {
+        const uint64_t at = track->offset + (uint64_t)sector * CD_FRAME_SIZE + track->headerBytes;
+        const int64_t hunkNum = (int64_t)(at / track->hunkBytes);
+        if (hunkNum != track->hunkNum)
+        {
+            if (chd_read(track->chd, (uint32_t)hunkNum, track->hunk.data()) != CHDERR_NONE)
+                return total;
+            track->hunkNum = hunkNum;
+        }
+        const size_t count = std::min<size_t>(requested, track->dataBytes);
+        memcpy(out + total, track->hunk.data() + at % track->hunkBytes, count);
+        total += count;
+        requested -= count;
+        ++sector;
+    }
+    return total;
+}
+
+void *RC_CCONV DiscOpenTrack(const char *path, uint32_t track, const rc_hash_iterator_t *iterator)
+{
+    DiscHandle *handle = new DiscHandle();
+    const size_t length = strlen(path);
+    handle->chd = length > 4 && !strcasecmp(path + length - 4, ".chd");
+    handle->inner = handle->chd ? (void *)OpenChdTrack(path, track)
+                                : s_defaultCdReader.open_track_iterator(path, track, iterator);
+    if (!handle->inner)
+    {
+        delete handle;
+        return nullptr;
+    }
+    return handle;
+}
+
+size_t RC_CCONV DiscReadSector(void *track, uint32_t sector, void *buffer, size_t requested)
+{
+    DiscHandle *handle = (DiscHandle *)track;
+    if (!handle)
+        return 0;
+    if (handle->chd)
+        return ReadChdSector((ChdTrack *)handle->inner, sector, buffer, requested);
+    return s_defaultCdReader.read_sector(handle->inner, sector, buffer, requested);
+}
+
+void RC_CCONV DiscCloseTrack(void *track)
+{
+    DiscHandle *handle = (DiscHandle *)track;
+    if (!handle)
+        return;
+    if (handle->chd)
+    {
+        ChdTrack *chdTrack = (ChdTrack *)handle->inner;
+        chd_close(chdTrack->chd);
+        delete chdTrack;
+    }
+    else
+        s_defaultCdReader.close_track(handle->inner);
+    delete handle;
+}
+
+uint32_t RC_CCONV DiscFirstTrackSector(void *track)
+{
+    DiscHandle *handle = (DiscHandle *)track;
+    if (!handle)
+        return 0;
+    // a CHD track's sectors count from its own start
+    return handle->chd ? 0 : s_defaultCdReader.first_track_sector(handle->inner);
+}
+
+void UseDiscReader(rc_client_t *client)
+{
+    rc_hash_get_default_cdreader(&s_defaultCdReader);
+    rc_hash_callbacks_t callbacks = {};
+    callbacks.cdreader.open_track_iterator = DiscOpenTrack;
+    callbacks.cdreader.read_sector = DiscReadSector;
+    callbacks.cdreader.close_track = DiscCloseTrack;
+    callbacks.cdreader.first_track_sector = DiscFirstTrackSector;
+    rc_client_set_hash_callbacks(client, &callbacks);
+}
 } // namespace
 
 // Save-state hooks the core calls (memory.c, RACH chunk). Upstream implements
@@ -385,6 +551,7 @@ void Init(const std::string& disc_path) {
     s_client = rc_client_create(ReadMemory, ServerCall);
     if (!s_client)
         return;
+    UseDiscReader(s_client);
     s_disc = disc_path;
     s_trophy = Mix_LoadWAV("romfs:/assets/trophy.mp3");
     rc_client_set_event_handler(s_client, OnEvent);

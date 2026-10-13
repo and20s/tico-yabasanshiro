@@ -45,6 +45,7 @@
 
 #include "TicoLogger.h"
 #include "TicoLsfg.h"
+#include "TicoSafeFile.h"
 #include "TicoSession.h"
 #include "UsbStorage.h"
 #include "YabaMenu.h"
@@ -1280,8 +1281,22 @@ static void PreparePaths()
              biospath[0] ? biospath : "(emulated)");
 }
 
+// Earlier versions of the game's saves, in backups/ beside them: one copy
+// per session, the last kSaveBackups kept, a copy only when it changed. The
+// core keeps the files open and writes them in place, so they are copied as
+// the game starts, before it opens them.
+static constexpr int kSaveBackups = 3;
+
+static void BackUpSaves()
+{
+    TicoSafeFile::BackupCopy(buppath, kSaveBackups);
+    if (g_cartType >= CART_BACKUPRAM4MBIT && g_cartType <= CART_BACKUPRAM32MBIT && cartpath[0])
+        TicoSafeFile::BackupCopy(cartpath, kSaveBackups);
+}
+
 static int InitEmulator()
 {
+    BackUpSaves();
     yabauseinit_struct yinit = {};
     yinit.m68kcoretype = M68KCORE_MUSASHI;
     yinit.percoretype = PERCORE_DUMMY;

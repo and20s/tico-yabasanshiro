@@ -52,6 +52,7 @@ set(PORT_INCLUDE_DIRS
     "${CMAKE_CURRENT_SOURCE_DIR}/tico/deps"
     "${CMAKE_CURRENT_SOURCE_DIR}/../../../rcheevos/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/../../../rcheevos/src"
+    ${LIBCHDR_INCLUDE_DIR}
 )
 
 # Both renderers in one NRO, picked at launch:

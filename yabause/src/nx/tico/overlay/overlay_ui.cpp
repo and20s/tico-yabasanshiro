@@ -134,6 +134,10 @@ std::vector<CheatMenuEntry> s_cheat_entries;
 std::vector<DiscMenuEntry> s_disc_entries;
 std::array<bool, kOverlaySlotCount> s_slot_occupied{};
 std::array<SlotPreview, kOverlaySlotCount> s_slot_preview{};
+// The slot pictures load on the next drawn frame: the renderer's side of the
+// overlay may not exist before it (the resume prompt opens before the overlay
+// ever drew), and a picture made then has no texture.
+bool s_slots_pending = false;
 std::vector<int> s_rewind_points;
 ShaderCallbacks s_shader_cb;
 LibraryCallbacks s_library_cb;
@@ -2674,7 +2678,7 @@ void SetPlayerCallbacks(PlayerCallbacks callbacks) {
 }
 
 void ShowResumePrompt() {
-    RefreshSlots();
+    s_slots_pending = true;
     OpenScreen(MenuScreen::Resume);
 }
 
@@ -2830,6 +2834,10 @@ void FeedTouch(const TouchInput& touch) {
 }
 
 Action Render(int display_w, int display_h) {
+    if (s_slots_pending && s_visible) {
+        s_slots_pending = false;
+        RefreshSlots();
+    }
     const float delta_time = ImGui::GetIO().DeltaTime;
     const ImVec2 display_size(static_cast<float>(display_w), static_cast<float>(display_h));
     ImDrawList* dl = ImGui::GetForegroundDrawList();
