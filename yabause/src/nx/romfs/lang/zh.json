@@ -180,6 +180,7 @@
   "launcher_error_game_not_found": "未找到游戏",
   "settings_yabasanshiro_async_rendering": "异步渲染",
   "settings_yabasanshiro_bios": "BIOS",
+  "settings_yabasanshiro_bios_region": "BIOS 区域",
   "settings_yabasanshiro_cartridge_type": "卡带类型",
   "settings_yabasanshiro_controller_1": "手柄 1",
   "settings_yabasanshiro_controller_2": "手柄 2",

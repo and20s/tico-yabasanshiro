@@ -7,6 +7,7 @@
   "config_file": "yabasanshiro.jsonc",
   "is_libretro": false,
   "achievements": true,
+  "system_dir": "yabasanshiro",
   "systems": [
     {
       "slug": "saturn",
@@ -30,7 +31,10 @@
           "any_of": [
             "saturn_bios.bin",
             "sega_101.bin",
-            "mpr-17933.bin"
+            "mpr-17933.bin",
+            "sega_100.bin",
+            "sega1003.bin",
+            "sega_100a.bin"
           ]
         }
       ],

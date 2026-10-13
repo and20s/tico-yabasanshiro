@@ -27,6 +27,11 @@
 #include "tico_entry.h"
 #include "tico_library.h"
 
+#include "deps/stb/stb_image.h" // stbi_load: nanovg.c has the implementation
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#define STB_IMAGE_WRITE_STATIC
+#include "deps/stb/stb_image_write.h"
+
 extern "C" {
 #include "cdbase.h"
 #include "cheat.h"
@@ -49,8 +54,10 @@ constexpr int kAutoSlot = OverlayUI::kAutoStateSlot;
 constexpr int kStateBackups = 2;
 constexpr u64 kRepeatDelayMs = 350;
 constexpr u64 kRepeatRateMs = 80;
-constexpr int kPreviewWidth = 320;
-constexpr uint32_t kPreviewMagic = 0x4D485459; // "YTHM"
+// A state's picture fits in this box, as in tico's other cores
+constexpr int kPreviewMaxWidth = 256;
+constexpr int kPreviewMaxHeight = 192;
+constexpr uint32_t kPreviewMagic = 0x4D485459; // "YTHM", the raw pictures of earlier builds
 
 // The overlay's message for key in tico's language, or `fallback` when the
 // language files do not have it.
@@ -362,33 +369,70 @@ std::string StatePath(int slot) {
            (slot == kAutoSlot ? std::string(".auto") : ".state" + std::to_string(slot));
 }
 
+// <state>.png beside the state, which tico shows too
 std::string PreviewPath(int slot) {
+    return StatePath(slot) + ".png";
+}
+
+// What earlier builds wrote instead, raw: still read until the slot is saved again
+std::string LegacyPreviewPath(int slot) {
     return StatePath(slot) + ".thumb";
 }
 
-// The paused frame, scaled to kPreviewWidth, beside the state.
+// The paused frame, shrunk to fit kPreviewMaxWidth x kPreviewMaxHeight (box
+// filtered), beside the state.
 void WritePreview(int slot) {
     std::vector<uint8_t> rgba;
     int width = 0, height = 0;
     if (!s.host.paused_frame || !s.host.paused_frame(rgba, width, height) || width <= 0 ||
         height <= 0)
         return;
-    const int out_w = std::min(width, kPreviewWidth);
-    const int out_h = std::max(1, height * out_w / width);
-    std::vector<uint8_t> scaled(static_cast<std::size_t>(out_w) * out_h * 4);
+    const float fit = std::min({1.0f, static_cast<float>(kPreviewMaxWidth) / width,
+                                static_cast<float>(kPreviewMaxHeight) / height});
+    const int out_w = std::max(1, static_cast<int>(width * fit));
+    const int out_h = std::max(1, static_cast<int>(height * fit));
+    std::vector<uint8_t> out(static_cast<std::size_t>(out_w) * out_h * 4);
     for (int y = 0; y < out_h; y++) {
-        const uint8_t* src_row = rgba.data() + static_cast<std::size_t>(y * height / out_h) * width * 4;
-        uint8_t* dst = scaled.data() + static_cast<std::size_t>(y) * out_w * 4;
-        for (int x = 0; x < out_w; x++)
-            std::memcpy(dst + x * 4, src_row + static_cast<std::size_t>(x * width / out_w) * 4, 4);
+        const int y0 = y * height / out_h, y1 = std::max(y0 + 1, (y + 1) * height / out_h);
+        for (int x = 0; x < out_w; x++) {
+            const int x0 = x * width / out_w, x1 = std::max(x0 + 1, (x + 1) * width / out_w);
+            unsigned sum[3] = {0, 0, 0}, n = 0;
+            for (int sy = y0; sy < y1; sy++) {
+                const uint8_t* px = rgba.data() + (static_cast<std::size_t>(sy) * width + x0) * 4;
+                for (int sx = x0; sx < x1; sx++, px += 4) {
+                    sum[0] += px[0];
+                    sum[1] += px[1];
+                    sum[2] += px[2];
+                    n++;
+                }
+            }
+            uint8_t* dst = out.data() + (static_cast<std::size_t>(y) * out_w + x) * 4;
+            dst[0] = sum[0] / n;
+            dst[1] = sum[1] / n;
+            dst[2] = sum[2] / n;
+            dst[3] = 255;
+        }
     }
-    if (FILE* fp = std::fopen(PreviewPath(slot).c_str(), "wb")) {
-        const uint32_t header[3] = {kPreviewMagic, static_cast<uint32_t>(out_w),
-                                    static_cast<uint32_t>(out_h)};
-        std::fwrite(header, sizeof(header), 1, fp);
-        std::fwrite(scaled.data(), 1, scaled.size(), fp);
-        std::fclose(fp);
+    if (stbi_write_png(PreviewPath(slot).c_str(), out_w, out_h, 4, out.data(), out_w * 4))
+        std::remove(LegacyPreviewPath(slot).c_str());
+}
+
+// The picture of an earlier build's state, if it has one.
+bool ReadLegacyPreview(int slot, std::vector<uint8_t>& rgba, int& width, int& height) {
+    FILE* fp = std::fopen(LegacyPreviewPath(slot).c_str(), "rb");
+    if (!fp)
+        return false;
+    uint32_t header[3] = {};
+    bool ok = std::fread(header, sizeof(header), 1, fp) == 1 && header[0] == kPreviewMagic &&
+              header[1] > 0 && header[1] <= 4096 && header[2] > 0 && header[2] <= 4096;
+    if (ok) {
+        width = static_cast<int>(header[1]);
+        height = static_cast<int>(header[2]);
+        rgba.resize(static_cast<std::size_t>(width) * height * 4);
+        ok = std::fread(rgba.data(), 1, rgba.size(), fp) == rgba.size();
     }
+    std::fclose(fp);
+    return ok;
 }
 
 OverlayUI::SlotPreview Preview(int slot) {
@@ -404,20 +448,17 @@ OverlayUI::SlotPreview Preview(int slot) {
     char when[32];
     std::strftime(when, sizeof(when), "%Y-%m-%d %H:%M", std::localtime(&status.st_mtime));
     preview.saved_at = when;
-    if (FILE* fp = std::fopen(PreviewPath(slot).c_str(), "rb")) {
-        uint32_t header[3] = {};
-        if (std::fread(header, sizeof(header), 1, fp) == 1 && header[0] == kPreviewMagic &&
-            header[1] > 0 && header[1] <= 4096 && header[2] > 0 && header[2] <= 4096) {
-            std::vector<uint8_t> rgba(static_cast<std::size_t>(header[1]) * header[2] * 4);
-            if (std::fread(rgba.data(), 1, rgba.size(), fp) == rgba.size()) {
-                picture = ImGuiOverlay::CreateTexture(rgba.data(), static_cast<int>(header[1]),
-                                                      static_cast<int>(header[2]));
-                preview.texture = picture;
-                preview.aspect = static_cast<float>(header[1]) / header[2];
-            }
-        }
-        std::fclose(fp);
+    std::vector<uint8_t> rgba;
+    int width = 0, height = 0, channels = 0;
+    if (unsigned char* png = stbi_load(PreviewPath(slot).c_str(), &width, &height, &channels, 4)) {
+        rgba.assign(png, png + static_cast<std::size_t>(width) * height * 4);
+        stbi_image_free(png);
+    } else if (!ReadLegacyPreview(slot, rgba, width, height)) {
+        return preview;
     }
+    picture = ImGuiOverlay::CreateTexture(rgba.data(), width, height);
+    preview.texture = picture;
+    preview.aspect = static_cast<float>(width) / height;
     return preview;
 }
 
@@ -774,6 +815,10 @@ void OfferResume() {
         return;
     }
     Open();
+    // the prompt loads the auto save's picture as it opens: a texture made
+    // while the VDP thread holds the renderer comes out empty
+    if (s.host.pause)
+        s.host.pause();
     OverlayUI::ShowResumePrompt();
 }
 

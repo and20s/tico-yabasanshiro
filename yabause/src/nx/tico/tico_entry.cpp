@@ -29,6 +29,7 @@ std::string s_rom;
 std::string s_title;
 std::string s_stem;
 std::string s_system_dir;
+std::string s_legacy_system_dir;
 std::string s_saves_dir;
 std::string s_states_dir;
 std::string s_bios;
@@ -81,7 +82,9 @@ void FindBios() {
         s_system_dir + "saturn_bios.bin",
         s_system_dir + "sega_101.bin",
         s_system_dir + "mpr-17933.bin",
-        "sdmc:/tico/system/saturn/saturn_bios.bin",
+        s_legacy_system_dir + "saturn_bios.bin",
+        s_legacy_system_dir + "sega_101.bin",
+        s_legacy_system_dir + "mpr-17933.bin",
         "sdmc:/tiicu/system/saturn/saturn_bios.bin",
         "./yabasanshiro/saturn_bios.bin",
     };
@@ -140,7 +143,9 @@ void tico_make_path(const char* path) {
 void tico_prepare(int argc, char** argv) {
     RememberLaunch(argc, argv);
 
-    s_system_dir = ContentRoot("tico_system_path", "sdmc:/tico/system/") + TICO_CORE_SLUG "/";
+    // the core's own folder, as tico's other cores (module.json's system_dir)
+    s_system_dir = ContentRoot("tico_system_path", "sdmc:/tico/system/") + "yabasanshiro/";
+    s_legacy_system_dir = ContentRoot("tico_system_path", "sdmc:/tico/system/") + TICO_CORE_SLUG "/";
     s_saves_dir = tico::UserContentRoot(ContentRoot("tico_saves_path", "sdmc:/tico/saves/"), true) +
                   TICO_CORE_SLUG "/";
     s_states_dir =
@@ -184,6 +189,7 @@ const char* tico_rom_path(void) { return s_rom.c_str(); }
 const char* tico_display_title(void) { return s_title.c_str(); }
 const char* tico_game_stem(void) { return s_stem.c_str(); }
 const char* tico_system_dir(void) { return s_system_dir.c_str(); }
+const char* tico_legacy_system_dir(void) { return s_legacy_system_dir.c_str(); }
 const char* tico_saves_dir(void) { return s_saves_dir.c_str(); }
 const char* tico_states_dir(void) { return s_states_dir.c_str(); }
 const char* tico_bios_path(void) { return s_bios.empty() ? nullptr : s_bios.c_str(); }

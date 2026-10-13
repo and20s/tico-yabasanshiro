@@ -180,6 +180,7 @@
   "launcher_error_game_not_found": "Jogo Não Encontrado",
   "settings_yabasanshiro_async_rendering": "Renderização Assíncrona",
   "settings_yabasanshiro_bios": "BIOS",
+  "settings_yabasanshiro_bios_region": "Região da BIOS",
   "settings_yabasanshiro_cartridge_type": "Tipo de Cartucho",
   "settings_yabasanshiro_controller_1": "Controle 1",
   "settings_yabasanshiro_controller_2": "Controle 2",

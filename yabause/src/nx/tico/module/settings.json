@@ -166,6 +166,10 @@
             {
               "key": "vdp2_composite",
               "label": "settings_yabasanshiro_vdp2_composite",
+              "depends_on": {
+                "key": "renderer",
+                "value": "vulkan"
+              },
               "type": "enum",
               "default": "Accurate",
               "choices": [
@@ -437,6 +441,31 @@
                   "value": "emulated"
                 }
               ],
+              "restart": true
+            },
+            {
+              "key": "bios_region",
+              "label": "settings_yabasanshiro_bios_region",
+              "type": "enum",
+              "default": "auto",
+              "choices": [
+                {
+                  "label": "By the game's region",
+                  "value": "auto"
+                },
+                {
+                  "label": "Japan",
+                  "value": "japan"
+                },
+                {
+                  "label": "US / Europe",
+                  "value": "overseas"
+                }
+              ],
+              "depends_on": {
+                "key": "bios",
+                "value": "real"
+              },
               "restart": true
             },
             {

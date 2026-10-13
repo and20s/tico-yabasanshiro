@@ -23,6 +23,10 @@ struct Host {
     /// The game frame shown when the menu opened, RGBA top row first: the
     /// picture a saved state keeps.
     std::function<bool(std::vector<uint8_t>& rgba, int& width, int& height)> paused_frame;
+    /// Pauses the game now and gives the main thread the renderer, for a
+    /// screen that loads pictures as it opens (the main loop would only pause
+    /// on its next turn).
+    std::function<void()> pause;
 };
 
 /// Registers the overlay's callbacks. In library mode (no game) the menu is

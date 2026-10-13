@@ -38,6 +38,9 @@ const char *tico_game_stem(void);
 /* The content folders, each with a trailing '/': the module's system folder
  * (<root>/saturn/), and this user's saves and states (<root>/saturn/). */
 const char *tico_system_dir(void);
+/* sdmc:/tico/system/saturn/, where earlier builds kept the BIOS and the
+ * cartridge dumps: still looked in, so an upgrade boots as before. */
+const char* tico_legacy_system_dir(void);
 const char *tico_saves_dir(void);
 const char *tico_states_dir(void);
 

@@ -180,6 +180,7 @@
   "launcher_error_game_not_found": "Jeu introuvable",
   "settings_yabasanshiro_async_rendering": "Rendu Asynchrone",
   "settings_yabasanshiro_bios": "BIOS",
+  "settings_yabasanshiro_bios_region": "Région du BIOS",
   "settings_yabasanshiro_cartridge_type": "Type de Cartouche",
   "settings_yabasanshiro_controller_1": "Manette 1",
   "settings_yabasanshiro_controller_2": "Manette 2",

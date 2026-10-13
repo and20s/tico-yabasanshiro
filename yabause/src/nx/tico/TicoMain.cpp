@@ -12,14 +12,17 @@
 /// (at your option) any later version.
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <string>
 #include <vector>
 
+#include <dirent.h>
 #include <pthread.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <zlib.h>
 
 #include <SDL2/SDL.h>
 #include <SDL_mixer.h>
@@ -936,10 +939,15 @@ static void PrepareCartridge()
     case CART_ROM16MBIT:
     {
         std::vector<std::string> candidates;
-        if (g_cartType == CART_PAR)
-            candidates = {system + "ar.bin", system + "action_replay.bin"};
-        else
-            candidates = {system + tico_game_stem() + ".rom", system + "rom_cart.bin"};
+        // the core's system folder first, then where earlier builds kept them
+        for (const std::string &dir : {system, std::string(tico_legacy_system_dir())})
+        {
+            if (g_cartType == CART_PAR)
+                candidates.insert(candidates.end(), {dir + "ar.bin", dir + "action_replay.bin"});
+            else
+                candidates.insert(candidates.end(),
+                                  {dir + tico_game_stem() + ".rom", dir + "rom_cart.bin"});
+        }
         for (const std::string &candidate : candidates)
         {
             if (IsFile(candidate))
@@ -968,16 +976,143 @@ static void PrepareCartridge()
     LOG_INFO("EMU", "cartridge %d (%s)", g_cartType, cartpath[0] ? cartpath : "no file");
 }
 
+// A Saturn BIOS: Japanese ones boot Japanese (and Asian) discs, overseas ones
+// the US, European and Brazilian discs.
+enum class BiosRegion
+{
+    Unknown,
+    Japan,
+    Overseas
+};
+
+struct BiosFile
+{
+    std::string path;
+    BiosRegion region;
+};
+
+// The dumps MAME knows by CRC32 (src/mame/sega/sat_console.cpp), else a hint in
+// the file name, as Thorhax's Switch port tells them apart.
+static BiosRegion BiosRegionOf(const std::string &path)
+{
+    if (FILE *fp = std::fopen(path.c_str(), "rb"))
+    {
+        std::vector<unsigned char> data(512 * 1024);
+        const size_t size = std::fread(data.data(), 1, data.size(), fp);
+        std::fclose(fp);
+        switch (crc32(crc32(0L, Z_NULL, 0), data.data(), static_cast<uInt>(size)))
+        {
+        case 0x224b752c: // Japan v1.01, sega_101.bin
+        case 0xb3c63c25: // Japan v1.003, sega1003.bin
+        case 0x2aba43c2: // Japan v1.00, sega_100.bin
+        case 0xe4d61811: // JVC V-Saturn, vsaturn.bin
+        case 0x3408dbf4: // Hitachi HiSaturn v1.02, mpr-18100.bin
+        case 0x721e1b60: // Hitachi HiSaturn v1.01, hisaturn.bin
+            return BiosRegion::Japan;
+        case 0x4afcf0fa: // Overseas v1.01a, mpr-17933.bin
+        case 0xf90f0089: // Overseas v1.00a, sega_100a.bin
+            return BiosRegion::Overseas;
+        }
+    }
+    std::string name = path.substr(path.find_last_of('/') + 1);
+    for (char &c : name)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    const auto has = [&](const char *word) { return name.find(word) != std::string::npos; };
+    if (has("us") || has("eu") || has("mpr-17933") || has("sega_100a") || has("pal"))
+        return BiosRegion::Overseas;
+    if (has("jp") || has("jap") || has("sega_10") || has("sega1003") || has("hisaturn") ||
+        has("vsaturn") || has("mpr-18100"))
+        return BiosRegion::Japan;
+    return BiosRegion::Unknown;
+}
+
+// Every BIOS image (512 KB) in the system folder, then where earlier builds kept
+// them; the usual names first, in that order.
+static std::vector<BiosFile> FindBiosFiles()
+{
+    std::vector<BiosFile> files;
+    const auto add = [&](const std::string &path) {
+        struct stat st;
+        if (stat(path.c_str(), &st) != 0 || !S_ISREG(st.st_mode) || st.st_size != 512 * 1024)
+            return;
+        for (const BiosFile &file : files)
+            if (file.path == path)
+                return;
+        files.push_back({path, BiosRegionOf(path)});
+    };
+    for (const std::string dir : {std::string(tico_system_dir()), std::string(tico_legacy_system_dir())})
+    {
+        for (const char *name : {"saturn_bios.bin", "sega_101.bin", "mpr-17933.bin"})
+            add(dir + name);
+        std::vector<std::string> names;
+        if (DIR *d = opendir(dir.c_str()))
+        {
+            while (dirent *entry = readdir(d))
+                names.push_back(entry->d_name);
+            closedir(d);
+        }
+        std::sort(names.begin(), names.end());
+        for (const std::string &name : names)
+            add(dir + name);
+    }
+    return files;
+}
+
+// The game's region from its Redump name: "(Japan)", "(USA, Brazil)"...
+static BiosRegion DiscRegion()
+{
+    const std::string name = tico_game_stem();
+    for (size_t open = name.find('('); open != std::string::npos; open = name.find('(', open + 1))
+    {
+        const std::string tag = name.substr(open + 1, name.find(')', open) - open - 1);
+        for (const char *japan : {"Japan", "Korea", "Taiwan", "Asia"})
+            if (tag.compare(0, std::strlen(japan), japan) == 0)
+                return BiosRegion::Japan;
+        for (const char *overseas : {"USA", "Europe", "Brazil", "World"})
+            if (tag.compare(0, std::strlen(overseas), overseas) == 0)
+                return BiosRegion::Overseas;
+    }
+    return BiosRegion::Unknown;
+}
+
+// The BIOS for the game: the region the setting asks for (by default the
+// game's own), else one of unknown region, else whatever there is.
+static void SelectBios()
+{
+    const std::vector<BiosFile> files = FindBiosFiles();
+    for (const BiosFile &file : files)
+        LOG_INFO("EMU", "BIOS %s (%s)", file.path.c_str(),
+                 file.region == BiosRegion::Japan      ? "Japan"
+                 : file.region == BiosRegion::Overseas ? "US / Europe"
+                                                       : "region unknown");
+    if (files.empty())
+        return;
+    const std::string choice = TicoConfig::GetConfigValue("bios_region", "auto");
+    const BiosRegion wanted = choice == "japan"      ? BiosRegion::Japan
+                              : choice == "overseas" ? BiosRegion::Overseas
+                                                     : DiscRegion();
+    const BiosFile *pick = nullptr;
+    if (wanted != BiosRegion::Unknown)
+    {
+        for (BiosRegion region : {wanted, BiosRegion::Unknown})
+        {
+            for (const BiosFile &file : files)
+                if (!pick && file.region == region)
+                    pick = &file;
+        }
+    }
+    if (!pick)
+        pick = &files.front();
+    std::snprintf(biospath, sizeof(biospath), "%s", pick->path.c_str());
+}
+
 static void PreparePaths()
 {
     std::snprintf(cdpath, sizeof(cdpath), "%s", tico_disc_path());
     // the real BIOS when there is one, unless the game is set to the emulated one
     biospath[0] = '\0';
     if (TicoConfig::GetConfigValue("bios", "real") != "emulated")
-    {
-        if (const char *bios = tico_bios_path())
-            std::snprintf(biospath, sizeof(biospath), "%s", bios);
-    }
+        SelectBios();
 
     // Backup RAM per game, shared by its discs: "(Disc N)" is left out
     std::string name = tico_game_stem();
@@ -1209,6 +1344,7 @@ int main(int argc, char **argv)
 
     YabaMenu::Host host;
     host.apply_live_settings = ApplyLiveSettings;
+    host.pause = Pause;
     host.paused_frame = [](std::vector<uint8_t> &rgba, int &w, int &h) {
         if (g_pausedFrame.empty())
             return false;
