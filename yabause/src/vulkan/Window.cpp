@@ -233,7 +233,13 @@ void Window::EndRender(std::vector<VkSemaphore> wait_semaphores) {
   present_info.pImageIndices = &_active_swapchain_image_id;
   present_info.pResults = &present_result;
 
-  funcResult = vkQueuePresentKHR(_renderer->GetVulkanQueue(), &present_info);
+  SwapchainHooks &hooks = swapchainHooks();
+  if (_extraImagesGranted && hooks.present &&
+      hooks.present(_renderer->GetVulkanQueue(), present_info, funcResult)) {
+    present_result = funcResult;
+  } else {
+    funcResult = vkQueuePresentKHR(_renderer->GetVulkanQueue(), &present_info);
+  }
   // ErrorCheck( vkQueueWaitIdle( _renderer->GetVulkanQueue() ) );
   ErrorCheck(funcResult);
   ErrorCheck(present_result);
@@ -342,6 +348,20 @@ void Window::_InitSwapchain() {
     if (_swapchain_image_count > _surface_capabilities.maxImageCount)
       _swapchain_image_count = _surface_capabilities.maxImageCount;
   }
+  const uint32_t plain_image_count = _swapchain_image_count;
+  SwapchainHooks &hooks = swapchainHooks();
+  _extraImagesGranted = false;
+  if (hooks.extraImages > 0) {
+    if (!(_surface_capabilities.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT)) {
+      if (hooks.failed)
+        hooks.failed("the swapchain's images cannot be copied");
+    } else {
+      _swapchain_image_count += hooks.extraImages;
+      if (_surface_capabilities.maxImageCount > 0 && _swapchain_image_count > _surface_capabilities.maxImageCount)
+        _swapchain_image_count = _surface_capabilities.maxImageCount;
+      _extraImagesGranted = true;
+    }
+  }
 
   VkPresentModeKHR present_mode = VK_PRESENT_MODE_FIFO_KHR;
   {
@@ -400,12 +420,27 @@ void Window::_InitSwapchain() {
   //fullScreenExclusiveInfo.fullScreenExclusive = VK_FULL_SCREEN_EXCLUSIVE_ALLOWED_EXT;
   //swapchain_create_info.pNext = &fullScreenExclusiveInfo;
 
-  ErrorCheck(vkCreateSwapchainKHR(_renderer->GetVulkanDevice(), &swapchain_create_info, nullptr, &_swapchain));
+  VkResult created = vkCreateSwapchainKHR(_renderer->GetVulkanDevice(), &swapchain_create_info, nullptr, &_swapchain);
+  if (created != VK_SUCCESS && _extraImagesGranted) {
+    // the driver will not make the bigger one: a plain swapchain
+    if (hooks.failed)
+      hooks.failed("the driver rejected the swapchain it needs");
+    _extraImagesGranted = false;
+    _swapchain_image_count = plain_image_count;
+    swapchain_create_info.minImageCount = _swapchain_image_count;
+    created = vkCreateSwapchainKHR(_renderer->GetVulkanDevice(), &swapchain_create_info, nullptr, &_swapchain);
+  }
+  ErrorCheck(created);
 
   ErrorCheck(vkGetSwapchainImagesKHR(_renderer->GetVulkanDevice(), _swapchain, &_swapchain_image_count, nullptr));
 }
 
-void Window::_DeInitSwapchain() { vkDestroySwapchainKHR(_renderer->GetVulkanDevice(), _swapchain, nullptr); }
+void Window::_DeInitSwapchain() {
+  SwapchainHooks &hooks = swapchainHooks();
+  if (_extraImagesGranted && hooks.destroyed)
+    hooks.destroyed();
+  vkDestroySwapchainKHR(_renderer->GetVulkanDevice(), _swapchain, nullptr);
+}
 
 void Window::_InitSwapchainImages() {
   _swapchain_images.resize(_swapchain_image_count);
@@ -433,6 +468,12 @@ void Window::_InitSwapchainImages() {
     ErrorCheck(
         vkCreateImageView(_renderer->GetVulkanDevice(), &image_view_create_info, nullptr, &_swapchain_image_views[i]));
   }
+
+  SwapchainHooks &hooks = swapchainHooks();
+  if (_extraImagesGranted && hooks.created)
+    hooks.created(_swapchain, VkExtent2D{_surface_capabilities.currentExtent.width,
+                                         _surface_capabilities.currentExtent.height},
+                  _swapchain_images);
 }
 
 void Window::_DeInitSwapchainImages() {

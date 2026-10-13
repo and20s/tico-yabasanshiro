@@ -40,9 +40,11 @@
 
 #include "nanovg.h"
 #include "vulkan/Renderer.h"
+#include "vulkan/Window.h"
 #include "vulkan/VIDVulkan.h"
 
 #include "TicoLogger.h"
+#include "TicoLsfg.h"
 #include "TicoSession.h"
 #include "UsbStorage.h"
 #include "YabaMenu.h"
@@ -506,8 +508,35 @@ static bool s_vulkanReady = false;
 
 /// The instance and device, and the default window for VIDVulkan. Before
 /// YabauseInit: VIDVulkanInit needs the renderer and window to exist.
+// Frame generation, when the player has put Lossless.dll in place: the
+// swapchain is made ready for it (two more images, which it presents through),
+// so it can be switched on in game.
+static void PrepareFrameGeneration()
+{
+    Window::SwapchainHooks &hooks = Window::swapchainHooks();
+    hooks = {};
+    if (!TicoLsfg::Prepare())
+        return;
+    hooks.extraImages = 2;
+    hooks.created = [](VkSwapchainKHR swapchain, VkExtent2D extent, const std::vector<VkImage> &images) {
+        TicoLsfg::Device device;
+        device.instance = s_renderer->GetVulkanInstance();
+        device.gpu = s_renderer->GetVulkanPhysicalDevice();
+        device.device = s_renderer->GetVulkanDevice();
+        device.queueFamily = s_renderer->GetVulkanGraphicsQueueFamilyIndex();
+        device.getInstanceProcAddr = vkGetInstanceProcAddr;
+        TicoLsfg::RegisterSwapchain(device, swapchain, extent, images);
+    };
+    hooks.destroyed = [] { TicoLsfg::UnregisterSwapchain(); };
+    hooks.failed = [](const char *reason) { TicoLsfg::Disable(reason); };
+    hooks.present = [](VkQueue queue, const VkPresentInfoKHR &info, VkResult &result) {
+        return TicoLsfg::Present(queue, info, result);
+    };
+}
+
 static bool InitVulkan()
 {
+    PrepareFrameGeneration();
     s_renderer = new Renderer();
     s_renderer->setNativeWindow(nwindowGetDefault());
     VIDVulkan::getInstance()->setRenderer(s_renderer);
@@ -527,8 +556,9 @@ static bool InitVulkan()
 static void DeinitVulkan()
 {
     s_vulkanReady = false;
-    delete s_renderer;
+    delete s_renderer; // the swapchain goes, and frame generation with it
     s_renderer = nullptr;
+    Window::swapchainHooks() = {};
     // Whatever the core leaked still references the driver, which keeps its
     // nvmap handles and the pages behind them: the homebrew loader then fails
     // to take the memory back (0xD401). Close the sessions regardless.
@@ -781,6 +811,16 @@ static void ApplyVdp2Composite()
     VIDCore->SetSettingValue(VDP_SETTING_VDP2_NEW_COMPOSITE, accurate ? 1 : 0);
 }
 
+// Frame generation's options: read at every present, so they apply in game.
+static void ApplyFrameGeneration()
+{
+    if (!g_vulkan)
+        return;
+    TicoLsfg::SetOptions(TicoConfig::GetConfigValue("lsfg_enabled", "disabled") == "enabled",
+                         TicoConfig::GetConfigValue("lsfg_flow_scale", "0.25") == "0.5" ? 0.5f : 0.25f,
+                         TicoConfig::GetConfigValue("lsfg_performance_mode", "enabled") == "enabled");
+}
+
 // Vulkan's final upscale when the internal resolution is below the screen's:
 // nearest, or AMD FSR 1.0 with its sharpness (in stops, 0 the sharpest).
 static void ApplyUpscaling()
@@ -796,6 +836,7 @@ static void ApplyLiveSettings()
 {
     ApplyVdp2Composite();
     ApplyUpscaling();
+    ApplyFrameGeneration();
     // paused: the main thread holds the renderer
     ApplyDisplaySettings();
 
@@ -1348,6 +1389,7 @@ int main(int argc, char **argv)
         ApplyDisplaySettings();
         ApplyVdp2Composite();
         ApplyUpscaling();
+        ApplyFrameGeneration();
     }
     else
     {

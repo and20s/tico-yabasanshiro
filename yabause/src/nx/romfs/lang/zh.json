@@ -220,6 +220,9 @@
   "settings_yabasanshiro_vdp2_composite": "VDP2 合成",
   "settings_yabasanshiro_upscaling": "放大",
   "settings_yabasanshiro_fsr_sharpness": "FSR 锐度",
+  "settings_yabasanshiro_lsfg": "帧生成 (LSFG)",
+  "settings_yabasanshiro_lsfg_flow_scale": "运动估计比例",
+  "settings_yabasanshiro_lsfg_performance_mode": "性能着色器",
   "settings_yabasanshiro_video_filter": "视频滤镜",
   "settings_yabasanshiro_video_format": "视频格式"
 }

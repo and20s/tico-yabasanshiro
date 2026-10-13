@@ -191,6 +191,46 @@
               }
             },
             {
+              "key": "lsfg_enabled",
+              "label": "settings_yabasanshiro_lsfg",
+              "type": "bool",
+              "default": "disabled",
+              "depends_on": {
+                "key": "renderer",
+                "value": "vulkan"
+              }
+            },
+            {
+              "key": "lsfg_flow_scale",
+              "label": "settings_yabasanshiro_lsfg_flow_scale",
+              "type": "enum",
+              "default": "0.25",
+              "choices": [
+                {
+                  "label": "25%",
+                  "value": "0.25"
+                },
+                {
+                  "label": "50%",
+                  "value": "0.5"
+                }
+              ],
+              "depends_on": {
+                "key": "lsfg_enabled",
+                "value": "enabled"
+              }
+            },
+            {
+              "key": "lsfg_performance_mode",
+              "label": "settings_yabasanshiro_lsfg_performance_mode",
+              "type": "bool",
+              "default": "enabled",
+              "depends_on": {
+                "key": "lsfg_enabled",
+                "value": "enabled"
+              }
+            },
+            {
               "key": "polygon_mode",
               "label": "settings_yabasanshiro_polygon_generation",
               "type": "enum",

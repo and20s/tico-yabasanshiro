@@ -219,6 +219,9 @@
   "settings_yabasanshiro_vdp2_composite": "Композиция VDP2",
   "settings_yabasanshiro_upscaling": "Масштабирование",
   "settings_yabasanshiro_fsr_sharpness": "Резкость FSR",
+  "settings_yabasanshiro_lsfg": "Генерация кадров (LSFG)",
+  "settings_yabasanshiro_lsfg_flow_scale": "Масштаб оценки движения",
+  "settings_yabasanshiro_lsfg_performance_mode": "Шейдеры производительности",
   "settings_yabasanshiro_video_filter": "Видеофильтр",
   "settings_yabasanshiro_video_format": "Формат видео"
 }

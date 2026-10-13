@@ -86,6 +86,7 @@ set(yabause_nx_SOURCES
     tico/TicoMain.cpp
     tico/YabaMenu.cpp
     tico/YabaRA.cpp
+    tico/TicoLsfg.cpp
     tico/YabaSanshiroConfig.cpp
     tico/tico_entry.cpp
     tico/tico_library.cpp
@@ -157,8 +158,29 @@ link_directories(
 ) 
 
 add_executable(yabause-nx ${yabause_nx_SOURCES})
+
+# Frame generation (LSFG): tico/deps/LSFG-VK, as tico-flycast builds it. It
+# reads Lossless Scaling's shaders from the player's own Lossless.dll at run
+# time, and reaches Vulkan through the vkGetInstanceProcAddr it is given.
+set(TICO_LSFG ${CMAKE_CURRENT_SOURCE_DIR}/tico/deps/LSFG-VK)
+file(GLOB TICO_LSFG_SOURCES
+    ${TICO_LSFG}/bridge/lsfg_bridge.cpp
+    ${TICO_LSFG}/lsfg-vk-common/src/helpers/*.cpp
+    ${TICO_LSFG}/lsfg-vk-common/src/vulkan/*.cpp
+    ${TICO_LSFG}/lsfg-vk-backend/src/*.cpp
+    ${TICO_LSFG}/lsfg-vk-backend/src/extraction/*.cpp
+    ${TICO_LSFG}/lsfg-vk-backend/src/helpers/*.cpp
+    ${TICO_LSFG}/lsfg-vk-backend/src/shaderchains/*.cpp)
+add_library(tico_lsfg STATIC ${TICO_LSFG_SOURCES})
+target_include_directories(tico_lsfg PUBLIC ${TICO_LSFG}/bridge)
+target_include_directories(tico_lsfg PRIVATE
+    ${TICO_LSFG}/lsfg-vk-common/include ${TICO_LSFG}/lsfg-vk-backend/include
+    ${TICO_LSFG}/lsfg-vk-backend/src)
+# after the project's -std=gnu++17
+target_compile_options(tico_lsfg PRIVATE -std=gnu++20 -fexceptions -frtti)
+target_compile_definitions(tico_lsfg PRIVATE USE_VULKAN=1 VK_NO_PROTOTYPES=1)
 # USB drives (libusbhsfs with usbntfs), and libsodium to open the session tico seals
-target_link_libraries(yabause-nx yabause ${YABAUSE_LIBRARIES} ${PORT_LIBRARIES} ${LIBCHDR_LIBRARIES} curl usbhsfs usbntfs sodium)
+target_link_libraries(yabause-nx tico_lsfg yabause ${YABAUSE_LIBRARIES} ${PORT_LIBRARIES} ${LIBCHDR_LIBRARIES} curl usbhsfs usbntfs sodium)
 
 # glm is fetched as an ExternalProject by the parent vulkan block — make sure
 # it exists before nx sources (which include VIDVulkan.h → glm) compile.

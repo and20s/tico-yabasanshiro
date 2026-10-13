@@ -220,6 +220,9 @@
   "settings_yabasanshiro_vdp2_composite": "VDP2合成",
   "settings_yabasanshiro_upscaling": "アップスケーリング",
   "settings_yabasanshiro_fsr_sharpness": "FSRのシャープネス",
+  "settings_yabasanshiro_lsfg": "フレーム生成 (LSFG)",
+  "settings_yabasanshiro_lsfg_flow_scale": "モーション推定スケール",
+  "settings_yabasanshiro_lsfg_performance_mode": "パフォーマンスシェーダー",
   "settings_yabasanshiro_video_filter": "ビデオフィルター",
   "settings_yabasanshiro_video_format": "ビデオフォーマット"
 }

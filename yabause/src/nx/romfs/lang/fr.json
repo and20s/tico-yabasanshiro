@@ -220,6 +220,9 @@
   "settings_yabasanshiro_vdp2_composite": "Composition VDP2",
   "settings_yabasanshiro_upscaling": "Mise à l’échelle",
   "settings_yabasanshiro_fsr_sharpness": "Netteté FSR",
+  "settings_yabasanshiro_lsfg": "Génération d'images (LSFG)",
+  "settings_yabasanshiro_lsfg_flow_scale": "Échelle d'estimation du mouvement",
+  "settings_yabasanshiro_lsfg_performance_mode": "Shaders performance",
   "settings_yabasanshiro_video_filter": "Filtre Vidéo",
   "settings_yabasanshiro_video_format": "Format Vidéo"
 }

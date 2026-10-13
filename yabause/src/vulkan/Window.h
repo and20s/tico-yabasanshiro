@@ -118,6 +118,23 @@ public:
 
   uint32_t getSwapchainImageCount() const { return _swapchain_image_count; }
 
+  // Lets the frontend take part in presenting, as frame generation (LSFG)
+  // does: set before the swapchain is made. extraImages more images are
+  // asked for; if the driver refuses them, failed says so and the swapchain
+  // is made as usual (the other hooks are then not called). present stands
+  // in for vkQueuePresentKHR when it returns true.
+  struct SwapchainHooks {
+    uint32_t extraImages = 0;
+    std::function<void(VkSwapchainKHR swapchain, VkExtent2D extent, const std::vector<VkImage> &images)> created;
+    std::function<void()> destroyed;
+    std::function<void(const char *reason)> failed;
+    std::function<bool(VkQueue queue, const VkPresentInfoKHR &info, VkResult &result)> present;
+  };
+  static SwapchainHooks &swapchainHooks() {
+    static SwapchainHooks hooks;
+    return hooks;
+  }
+
 private:
   void _InitOSWindow();
   void _DeInitOSWindow();
@@ -195,6 +212,7 @@ private:
   VkPresentModeKHR presentMode = VK_PRESENT_MODE_FIFO_KHR;
 
   PrePresentHook               _prePresentHook;
+  bool                         _extraImagesGranted = false; // swapchainHooks' images were added
   VkSemaphore                  _pre_present_finished_semaphore = VK_NULL_HANDLE;
   VkCommandPool                _pre_present_cmd_pool = VK_NULL_HANDLE;
   // size == _swapchain_image_count; one CB pre-allocated per image idx.

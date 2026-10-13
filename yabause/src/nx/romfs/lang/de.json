@@ -219,6 +219,9 @@
   "settings_yabasanshiro_vdp2_composite": "VDP2-Komposition",
   "settings_yabasanshiro_upscaling": "Hochskalierung",
   "settings_yabasanshiro_fsr_sharpness": "FSR-Schärfe",
+  "settings_yabasanshiro_lsfg": "Bildgenerierung (LSFG)",
+  "settings_yabasanshiro_lsfg_flow_scale": "Bewegungsschätzung (Skalierung)",
+  "settings_yabasanshiro_lsfg_performance_mode": "Performance-Shader",
   "settings_yabasanshiro_video_filter": "Videofilter",
   "settings_yabasanshiro_video_format": "Videoformat"
 }

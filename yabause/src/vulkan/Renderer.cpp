@@ -37,6 +37,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 
 #include <cstdlib>
 #include <assert.h>
+#include <cstring>
 #include <vector>
 #include <iostream>
 #include <sstream>
@@ -411,6 +412,26 @@ void Renderer::_InitDevice()
          _graphics_queue_supports_timestamp ? 1 : 0,
          graphicsQueueCount);
 
+    // Timeline semaphores when the GPU has them: frame generation (LSFG)
+    // synchronizes with them. Nothing else uses them.
+    VkPhysicalDeviceTimelineSemaphoreFeaturesKHR timelineFeatures{};
+    timelineFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR;
+    void *deviceNext = nullptr;
+    {
+      uint32_t count = 0;
+      vkEnumerateDeviceExtensionProperties(_gpu, nullptr, &count, nullptr);
+      std::vector<VkExtensionProperties> extensions(count);
+      vkEnumerateDeviceExtensionProperties(_gpu, nullptr, &count, extensions.data());
+      for (const VkExtensionProperties &extension : extensions) {
+        if (strcmp(extension.extensionName, VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME) == 0) {
+          _device_extensions.push_back(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME);
+          timelineFeatures.timelineSemaphore = VK_TRUE;
+          deviceNext = &timelineFeatures;
+          break;
+        }
+      }
+    }
+
     if (_compute_family_index == _graphics_family_index) {
 
     float queue_priorities[]{ 0.5f, 1.0f };
@@ -435,6 +456,7 @@ void Renderer::_InitDevice()
 #endif
     VkDeviceCreateInfo device_create_info{};
     device_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+    device_create_info.pNext = deviceNext;
     device_create_info.pEnabledFeatures = &features;
     device_create_info.queueCreateInfoCount = 1;
     device_create_info.pQueueCreateInfos = infos;
@@ -483,6 +505,7 @@ void Renderer::_InitDevice()
 #endif
     VkDeviceCreateInfo device_create_info{};
     device_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+    device_create_info.pNext = deviceNext;
     device_create_info.pEnabledFeatures = &features;
     device_create_info.queueCreateInfoCount = 2;
     device_create_info.pQueueCreateInfos = infos;
