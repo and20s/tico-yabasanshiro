@@ -202,15 +202,28 @@ static u64 NowMs()
 // Input
 //==============================================================================
 
-static const int MAX_PLAYERS = 2;
+// The Switch's eight controllers. Without the multitap one pad sits in each of
+// the Saturn's two ports; with it (the 6Player adaptor), players 1-6 share
+// port 1 and players 7-8 port 2, as RetroArch's YabaSanshiro lays them out.
+static const int MAX_PLAYERS = 8;
+static const int PORT_PLAYERS = 2;   // one pad per port, without the multitap
+static const int SIXAXIS_PLAYERS = 2; // the light gun aims with players 1-2's motion
+static bool g_multitap = false;
 
 // per player: 0 = Saturn pad (digital), 1 = 3D controller (analog), 2 = light gun
-static int g_padMode[MAX_PLAYERS] = {0, 0};
-static void *g_padbits[MAX_PLAYERS] = {nullptr, nullptr};
+static int g_padMode[MAX_PLAYERS] = {};
+static void *g_padbits[MAX_PLAYERS] = {};
 static PadState g_pads[MAX_PLAYERS];
 static int g_numPlayers = 1;
-static HidSixAxisSensorHandle g_sixaxis[MAX_PLAYERS][4];
-static PortData_struct *g_portData[MAX_PLAYERS] = {&PORTDATA1, &PORTDATA2};
+static HidSixAxisSensorHandle g_sixaxis[SIXAXIS_PLAYERS][4];
+
+// The Saturn port a player's pad is in
+static PortData_struct *PortOf(int player)
+{
+    if (g_multitap)
+        return player < 6 ? &PORTDATA1 : &PORTDATA2;
+    return player == 0 ? &PORTDATA1 : &PORTDATA2;
+}
 
 #define MAKE_PAD(a, b) ((a << 24) | (b))
 
@@ -236,24 +249,26 @@ static void InitPeripherals()
     PerPortReset();
     for (int p = 0; p < g_numPlayers; p++)
     {
-        if (g_padMode[p] == 2)
+        // the light gun cannot go through the multitap (the core refuses it)
+        if (g_padMode[p] == 2 && !g_multitap)
         {
-            g_padbits[p] = (void *)PerGunAdd(g_portData[p]);
+            g_padbits[p] = (void *)PerGunAdd(PortOf(p));
             PerSetKey(MAKE_PAD(p, PERGUN_TRIGGER), PERGUN_TRIGGER, g_padbits[p]);
             PerSetKey(MAKE_PAD(p, PERGUN_START), PERGUN_START, g_padbits[p]);
         }
         else if (g_padMode[p] == 1)
         {
-            g_padbits[p] = (void *)Per3DPadAdd(g_portData[p]);
+            g_padbits[p] = (void *)Per3DPadAdd(PortOf(p));
             RegisterPadKeys(p, g_padbits[p]);
         }
         else
         {
-            g_padbits[p] = (void *)PerPadAdd(g_portData[p]);
+            g_padbits[p] = (void *)PerPadAdd(PortOf(p));
             RegisterPadKeys(p, g_padbits[p]);
         }
     }
-    LOG_INFO("INPUT", "Peripherals initialized for %d player(s)", g_numPlayers);
+    LOG_INFO("INPUT", "Peripherals initialized for %d player(s)%s", g_numPlayers,
+             g_multitap ? " through the multitap" : "");
 }
 
 static void Key(int player, int key, bool down)
@@ -264,40 +279,111 @@ static void Key(int player, int key, bool down)
         PerKeyUp(MAKE_PAD(player, key));
 }
 
+// Settings > Controls: the Switch button each Saturn button sits on, for
+// every player. The defaults are the layout the port always had: the face
+// buttons as RetroArch places them, X and Z on the shoulders, the Saturn's
+// shoulder buttons on ZL / ZR.
+struct ButtonMapping
+{
+    const char *key;
+    const char *fallback;
+    int saturn;
+};
+static const ButtonMapping kButtonMappings[] = {
+    {"map_a", "Y", PERPAD_A},
+    {"map_b", "B", PERPAD_B},
+    {"map_c", "A", PERPAD_C},
+    {"map_x", "L", PERPAD_X},
+    {"map_y", "X", PERPAD_Y},
+    {"map_z", "R", PERPAD_Z},
+    {"map_l", "ZL", PERPAD_LEFT_TRIGGER},
+    {"map_r", "ZR", PERPAD_RIGHT_TRIGGER},
+    {"map_start", "Plus", PERPAD_START},
+    {"map_up", "Up", PERPAD_UP},
+    {"map_down", "Down", PERPAD_DOWN},
+    {"map_left", "Left", PERPAD_LEFT},
+    {"map_right", "Right", PERPAD_RIGHT},
+};
+static constexpr size_t kMappingCount = sizeof(kButtonMappings) / sizeof(kButtonMappings[0]);
+static u64 g_mapping[kMappingCount];
+static bool g_stickAsDpad = true;
+
+static u64 SwitchButton(const std::string &name)
+{
+    static const struct
+    {
+        const char *name;
+        u64 bit;
+    } kButtons[] = {
+        {"A", HidNpadButton_A},         {"B", HidNpadButton_B},         {"X", HidNpadButton_X},
+        {"Y", HidNpadButton_Y},         {"L", HidNpadButton_L},         {"R", HidNpadButton_R},
+        {"ZL", HidNpadButton_ZL},       {"ZR", HidNpadButton_ZR},       {"Plus", HidNpadButton_Plus},
+        {"Minus", HidNpadButton_Minus}, {"StickL", HidNpadButton_StickL}, {"StickR", HidNpadButton_StickR},
+        {"Up", HidNpadButton_Up},       {"Down", HidNpadButton_Down},   {"Left", HidNpadButton_Left},
+        {"Right", HidNpadButton_Right},
+    };
+    for (const auto &button : kButtons)
+        if (name == button.name)
+            return button.bit;
+    return 0; // "None": the Saturn button is left off
+}
+
+static void LoadButtonMapping()
+{
+    for (size_t i = 0; i < kMappingCount; i++)
+        g_mapping[i] = SwitchButton(
+            TicoConfig::GetConfigValue(kButtonMappings[i].key, kButtonMappings[i].fallback));
+    g_stickAsDpad = TicoConfig::GetConfigValue("analog_dpad", "enabled") == "enabled";
+}
+
 static void HandleInput(int player, PadState *pad)
 {
     const u64 held = padGetButtons(pad);
     void *padbits = g_padbits[player];
-
-    Key(player, PERPAD_C, held & HidNpadButton_A);
-    Key(player, PERPAD_B, held & HidNpadButton_B);
-    Key(player, PERPAD_Y, held & HidNpadButton_X);
-    Key(player, PERPAD_A, held & HidNpadButton_Y);
-    Key(player, PERPAD_X, held & HidNpadButton_L);
-    Key(player, PERPAD_Z, held & HidNpadButton_R);
-
+    const bool gun = g_padMode[player] == 2 && !g_multitap;
     const HidAnalogStickState stick = padGetStickPos(pad, 0);
+
+    if (!gun)
+    {
+        for (size_t i = 0; i < kMappingCount; i++)
+        {
+            bool down = g_mapping[i] && (held & g_mapping[i]);
+            // the Saturn pad's d-pad also follows the left stick; the 3D
+            // controller reads the stick as its analog one instead
+            if (g_padMode[player] == 0 && g_stickAsDpad)
+            {
+                switch (kButtonMappings[i].saturn)
+                {
+                case PERPAD_LEFT: down = down || stick.x < -16384; break;
+                case PERPAD_RIGHT: down = down || stick.x > 16384; break;
+                case PERPAD_UP: down = down || stick.y > 16384; break;
+                case PERPAD_DOWN: down = down || stick.y < -16384; break;
+                default: break;
+                }
+            }
+            Key(player, kButtonMappings[i].saturn, down);
+        }
+    }
+
     if (g_padMode[player] == 1)
     {
-        // 3D controller: the stick is analog, the d-pad digital
+        // 3D controller: the stick is analog, the d-pad digital. Its L and R
+        // are analog too (games such as NiGHTS read them): the mapped buttons
+        // press them all the way, as the digital bits above do.
         PerAnalog_struct *analog = (PerAnalog_struct *)padbits;
         analog->analogbits[2] = (u8)((stick.x + 32768) >> 8);
         analog->analogbits[3] = (u8)((-stick.y + 32768) >> 8);
-        Key(player, PERPAD_LEFT, held & HidNpadButton_Left);
-        Key(player, PERPAD_RIGHT, held & HidNpadButton_Right);
-        Key(player, PERPAD_UP, held & HidNpadButton_Up);
-        Key(player, PERPAD_DOWN, held & HidNpadButton_Down);
-    }
-    else
-    {
-        // Saturn pad: the stick is a second d-pad
-        Key(player, PERPAD_LEFT, (held & HidNpadButton_Left) || stick.x < -16384);
-        Key(player, PERPAD_RIGHT, (held & HidNpadButton_Right) || stick.x > 16384);
-        Key(player, PERPAD_UP, (held & HidNpadButton_Up) || stick.y > 16384);
-        Key(player, PERPAD_DOWN, (held & HidNpadButton_Down) || stick.y < -16384);
+        for (size_t i = 0; i < kMappingCount; i++)
+        {
+            const bool down = g_mapping[i] && (held & g_mapping[i]);
+            if (kButtonMappings[i].saturn == PERPAD_LEFT_TRIGGER)
+                analog->analogbits[4] = down ? 0xFF : 0x00;
+            else if (kButtonMappings[i].saturn == PERPAD_RIGHT_TRIGGER)
+                analog->analogbits[5] = down ? 0xFF : 0x00;
+        }
     }
 
-    if (g_padMode[player] == 2)
+    if (gun)
     {
         Key(player, PERGUN_TRIGGER, held & (HidNpadButton_ZR | HidNpadButton_ZL));
         Key(player, PERGUN_START, held & (HidNpadButton_Plus | HidNpadButton_Minus));
@@ -332,24 +418,21 @@ static void HandleInput(int player, PadState *pad)
             gun->gunbits[4] = 112;
         }
     }
-    else
-    {
-        Key(player, PERPAD_START, held & HidNpadButton_Plus);
-        Key(player, PERPAD_RIGHT_TRIGGER, held & HidNpadButton_ZR);
-        Key(player, PERPAD_LEFT_TRIGGER, held & HidNpadButton_ZL);
-    }
 }
 
 static void InitControllers()
 {
     padConfigureInput(MAX_PLAYERS, HidNpadStyleSet_NpadStandard);
     padInitializeDefault(&g_pads[0]);
-    padInitialize(&g_pads[1], HidNpadIdType_No2);
-    g_numPlayers = 1;
+    for (int p = 1; p < MAX_PLAYERS; p++)
+        padInitialize(&g_pads[p], static_cast<HidNpadIdType>(HidNpadIdType_No1 + p));
+    g_multitap = TicoConfig::GetConfigValue("multitap", "disabled") == "enabled";
+    LoadButtonMapping();
+    g_numPlayers = g_multitap ? MAX_PLAYERS : 1;
     g_padMode[0] = std::clamp(g_config.GetControllerMode(0), 0, 2);
     g_padMode[1] = std::clamp(g_config.GetControllerMode(1), 0, 1);
 
-    for (int p = 0; p < MAX_PLAYERS; p++)
+    for (int p = 0; p < SIXAXIS_PLAYERS; p++)
     {
         const HidNpadIdType id = p == 0 ? HidNpadIdType_No1 : HidNpadIdType_No2;
         hidGetSixAxisSensorHandles(&g_sixaxis[p][0], 1, p == 0 ? HidNpadIdType_Handheld : id,
@@ -363,14 +446,17 @@ static void InitControllers()
 
 static void StopControllers()
 {
-    for (int p = 0; p < MAX_PLAYERS; p++)
+    for (int p = 0; p < SIXAXIS_PLAYERS; p++)
         for (int i = 0; i < 4; i++)
             hidStopSixAxisSensor(g_sixaxis[p][i]);
 }
 
-// A second controller joins or leaves port 2.
+// A second controller joins or leaves port 2. With the multitap every pad is
+// in from the start, as on a console with the adaptor plugged in.
 static void UpdatePlayers()
 {
+    if (g_multitap)
+        return;
     const bool second = padIsConnected(&g_pads[1]);
     if (second && g_numPlayers < 2)
     {
@@ -841,11 +927,18 @@ static void ApplyLiveSettings()
     ApplyDisplaySettings();
 
     // a new controller is plugged in right away, as the game would see it
-    const int modes[MAX_PLAYERS] = {ControllerMode(0), ControllerMode(1)};
-    if (modes[0] != g_padMode[0] || modes[1] != g_padMode[1])
+    LoadButtonMapping();
+    const int modes[PORT_PLAYERS] = {ControllerMode(0), ControllerMode(1)};
+    const bool multitap = TicoConfig::GetConfigValue("multitap", "disabled") == "enabled";
+    if (modes[0] != g_padMode[0] || modes[1] != g_padMode[1] || multitap != g_multitap)
     {
         g_padMode[0] = modes[0];
         g_padMode[1] = modes[1];
+        if (multitap != g_multitap)
+        {
+            g_multitap = multitap;
+            g_numPlayers = multitap ? MAX_PLAYERS : (padIsConnected(&g_pads[1]) ? 2 : 1);
+        }
         InitPeripherals();
     }
     if (TicoConfig::GetConfigValue("frame_skip", "enabled") == "enabled")

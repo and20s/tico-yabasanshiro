@@ -274,7 +274,13 @@ std::vector<Disc> FindDiscs(const std::string& disc_path) {
 }
 
 // ---------------------------------------------------------------------------
-// Players: what is plugged into the Saturn's two ports
+// Players: what is plugged into the Saturn's two ports, or into the multitap
+
+// The 6Player adaptor (Settings > Input): players 1-6 on port 1, 7-8 on port 2
+bool Multitap() {
+    return TicoConfig::GetConfigValue("multitap", "disabled") == "enabled";
+}
+constexpr int kMultitapPlayers = 8; // the Switch's controllers
 
 std::vector<std::string> ControllerNames() {
     auto name = [](u32 style) -> std::string {
@@ -302,13 +308,15 @@ std::vector<std::string> ControllerNames() {
         return Tr(key, fallback);
     };
     std::vector<std::string> names;
-    // port 1 is the first controller or the handheld console, port 2 the second
-    u32 first = hidGetNpadStyleSet(HidNpadIdType_No1);
-    if (!first)
-        first = hidGetNpadStyleSet(HidNpadIdType_Handheld);
-    const u32 second = hidGetNpadStyleSet(HidNpadIdType_No2);
-    names.push_back(first ? name(first) : std::string());
-    names.push_back(second ? name(second) : std::string());
+    // player 1 is the first controller or the handheld console; without the
+    // multitap port 2 is the second controller, with it every controller is a player
+    const int players = Multitap() ? kMultitapPlayers : 2;
+    for (int p = 0; p < players; p++) {
+        u32 style = hidGetNpadStyleSet(static_cast<HidNpadIdType>(HidNpadIdType_No1 + p));
+        if (p == 0 && !style)
+            style = hidGetNpadStyleSet(HidNpadIdType_Handheld);
+        names.push_back(style ? name(style) : std::string());
+    }
     return names;
 }
 
@@ -316,7 +324,8 @@ bool ShowControllerOrder() {
     HidLaControllerSupportArg arg;
     hidLaCreateControllerSupportArg(&arg);
     arg.hdr.player_count_min = 0;
-    arg.hdr.player_count_max = 2; // the Saturn's two ports
+    // the Saturn's two ports, or every controller through the multitap
+    arg.hdr.player_count_max = Multitap() ? kMultitapPlayers : 2;
     HidLaControllerSupportResultInfo info{};
     return R_SUCCEEDED(hidLaShowControllerSupport(&info, &arg));
 }
@@ -731,6 +740,9 @@ void Init(const Host& host, bool library_mode) {
     OverlayUI::PlayerCallbacks players;
     players.ports = [] { return ControllerNames(); };
     players.note = [] {
+        if (Multitap())
+            return Tr("yabasanshiro_players_note_multitap",
+                      "Multitap: players 1 to 6 on port 1, 7 and 8 on port 2.");
         return Tr("yabasanshiro_players_note",
                   "The Saturn has two controller ports: the first two controllers.");
     };
