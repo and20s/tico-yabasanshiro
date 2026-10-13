@@ -20,6 +20,8 @@ add_definitions(
     -DYAB_ASYNC_RENDERING
     # the ImGui OpenGL backend's Switch path (Mesa's GL headers, no loader)
     -DIMGUI_IMPL_OPENGL_LOADER_CUSTOM
+    # no fork/exec here for ImGui's "open in shell"
+    -DIMGUI_DISABLE_DEFAULT_SHELL_FUNCTIONS
     -DHAVE_LIBCHDR
     -DRC_CLIENT_SUPPORTS_HASH=1
     -D_GNU_SOURCE

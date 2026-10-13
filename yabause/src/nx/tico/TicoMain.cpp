@@ -529,6 +529,10 @@ static void DeinitVulkan()
     // nvmap handles and the pages behind them: the homebrew loader then fails
     // to take the memory back (0xD401). Close the sessions regardless.
     nouveau_horizon_runtime_shutdown(nullptr);
+    // It leaves the base nvdrv session open, and with it the 8 MB of our heap
+    // lent to it as transfer memory. Every thread has been joined by now, so
+    // nothing can hold libnx's lock on it.
+    nvExit();
 }
 
 // The overlay's view of the render pass the renderer has open.

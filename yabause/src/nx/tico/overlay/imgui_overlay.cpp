@@ -594,6 +594,7 @@ bool EnsureVulkanBackend(const YabaVkOverlayContext& context) {
 
     const u32 image_count = context.image_count >= 2 ? context.image_count : 2;
     ImGui_ImplVulkan_InitInfo init{};
+    init.ApiVersion = VK_API_VERSION_1_1;
     init.Instance = context.instance;
     init.PhysicalDevice = context.physical_device;
     init.Device = context.device;
@@ -602,18 +603,11 @@ bool EnsureVulkanBackend(const YabaVkOverlayContext& context) {
     init.DescriptorPool = s_vk.descriptor_pool;
     init.MinImageCount = image_count;
     init.ImageCount = image_count;
-    // the backend bundled here takes the render pass directly
-    init.RenderPass = context.render_pass;
-    init.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
-    init.Subpass = 0;
+    init.PipelineInfoMain.RenderPass = context.render_pass;
+    init.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+    init.PipelineInfoMain.Subpass = 0;
     if (!ImGui_ImplVulkan_Init(&init)) {
         tico_log("%s ImGui_ImplVulkan_Init failed\n", TAG);
-        DestroyVulkanBackend();
-        return false;
-    }
-    // and uploads the font atlas on request
-    if (!ImGui_ImplVulkan_CreateFontsTexture()) {
-        tico_log("%s ImGui_ImplVulkan_CreateFontsTexture failed\n", TAG);
         DestroyVulkanBackend();
         return false;
     }
