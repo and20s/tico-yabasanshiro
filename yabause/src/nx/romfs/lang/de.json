@@ -243,5 +243,8 @@
   "settings_yabasanshiro_map_down": "Steuerkreuz unten",
   "settings_yabasanshiro_map_left": "Steuerkreuz links",
   "settings_yabasanshiro_map_right": "Steuerkreuz rechts",
-  "yabasanshiro_vulkan_heavier": "Vulkan ist aufwendiger als OpenGL: Übertakte die Switch für volle Geschwindigkeit"
+  "yabasanshiro_vulkan_heavier": "Vulkan ist aufwendiger als OpenGL: Übertakte die Switch für volle Geschwindigkeit",
+  "yabasanshiro_fsr_running": "AMD FSR:",
+  "yabasanshiro_fsr_failed": "AMD FSR konnte nicht starten:",
+  "yabasanshiro_fsr_native": "AMD FSR braucht eine interne Auflösung unter der des Bildschirms (Original oder 2x)"
 }

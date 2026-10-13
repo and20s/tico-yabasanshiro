@@ -33,6 +33,18 @@ int YglFsrUpscale(unsigned int srcTexture, int srcWidth, int srcHeight, unsigned
 /* Frees the GL objects; the context must be current. */
 void YglFsrDeInit(void);
 
+/* What FSR last did, from either renderer, for the frontend to show: the
+   serial changes with every new state. */
+enum
+{
+  FSR_STATUS_NONE = 0,
+  FSR_STATUS_RUNNING, /* src -> dst */
+  FSR_STATUS_FAILED   /* reason */
+};
+void FsrReport(int state, int srcWidth, int srcHeight, int dstWidth, int dstHeight, const char *reason);
+unsigned int FsrStatus(int *state, int *srcWidth, int *srcHeight, int *dstWidth, int *dstHeight,
+                       const char **reason);
+
 #ifdef __cplusplus
 }
 #endif

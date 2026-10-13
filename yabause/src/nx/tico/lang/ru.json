@@ -243,5 +243,8 @@
   "settings_yabasanshiro_map_down": "Крестовина вниз",
   "settings_yabasanshiro_map_left": "Крестовина влево",
   "settings_yabasanshiro_map_right": "Крестовина вправо",
-  "yabasanshiro_vulkan_heavier": "Vulkan тяжелее OpenGL: для полной скорости разгоните Switch"
+  "yabasanshiro_vulkan_heavier": "Vulkan тяжелее OpenGL: для полной скорости разгоните Switch",
+  "yabasanshiro_fsr_running": "AMD FSR:",
+  "yabasanshiro_fsr_failed": "Не удалось запустить AMD FSR:",
+  "yabasanshiro_fsr_native": "AMD FSR нужно внутреннее разрешение ниже экранного (Original или 2x)"
 }

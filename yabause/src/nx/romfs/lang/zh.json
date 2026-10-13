@@ -244,5 +244,8 @@
   "settings_yabasanshiro_map_down": "方向键下",
   "settings_yabasanshiro_map_left": "方向键左",
   "settings_yabasanshiro_map_right": "方向键右",
-  "yabasanshiro_vulkan_heavier": "Vulkan 比 OpenGL 更吃性能：需超频 Switch 才能全速运行"
+  "yabasanshiro_vulkan_heavier": "Vulkan 比 OpenGL 更吃性能：需超频 Switch 才能全速运行",
+  "yabasanshiro_fsr_running": "AMD FSR：",
+  "yabasanshiro_fsr_failed": "AMD FSR 无法启动：",
+  "yabasanshiro_fsr_native": "AMD FSR 需要低于屏幕的内部分辨率（Original 或 2x）"
 }

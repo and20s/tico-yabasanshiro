@@ -58,6 +58,7 @@ VkShaderModule FsrUpscaler::compile(const char* source, const char* name) {
       compiler.CompileGlslToSpv(source, shaderc_compute_shader, name, options);
   if (result.GetCompilationStatus() != shaderc_compilation_status_success) {
     printf("FsrUpscaler: %s does not compile: %s\n", name, result.GetErrorMessage().c_str());
+    failure = std::string(name) + " does not compile: " + result.GetErrorMessage();
     return VK_NULL_HANDLE;
   }
   std::vector<uint32_t> spirv(result.cbegin(), result.cend());
@@ -66,8 +67,10 @@ VkShaderModule FsrUpscaler::compile(const char* source, const char* name) {
   info.codeSize = spirv.size() * sizeof(uint32_t);
   info.pCode = spirv.data();
   VkShaderModule module = VK_NULL_HANDLE;
-  if (vkCreateShaderModule(vulkan->getDevice(), &info, nullptr, &module) != VK_SUCCESS)
+  if (vkCreateShaderModule(vulkan->getDevice(), &info, nullptr, &module) != VK_SUCCESS) {
+    failure = std::string(name) + ": no shader module";
     return VK_NULL_HANDLE;
+  }
   return module;
 }
 
@@ -88,8 +91,10 @@ bool FsrUpscaler::setup() {
   samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
   samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
   samplerInfo.maxLod = 0.0f;
-  if (vkCreateSampler(device, &samplerInfo, nullptr, &sampler) != VK_SUCCESS)
+  if (vkCreateSampler(device, &samplerInfo, nullptr, &sampler) != VK_SUCCESS) {
+    failure = "no sampler";
     return false;
+  }
 
   VkDescriptorSetLayoutBinding bindings[2]{};
   bindings[0].binding = 0;
@@ -104,8 +109,10 @@ bool FsrUpscaler::setup() {
   layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
   layoutInfo.bindingCount = 2;
   layoutInfo.pBindings = bindings;
-  if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &setLayout) != VK_SUCCESS)
+  if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &setLayout) != VK_SUCCESS) {
+    failure = "no descriptor set layout";
     return false;
+  }
 
   VkPushConstantRange range{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(PushConstants)};
   VkPipelineLayoutCreateInfo plInfo{};
@@ -114,8 +121,10 @@ bool FsrUpscaler::setup() {
   plInfo.pSetLayouts = &setLayout;
   plInfo.pushConstantRangeCount = 1;
   plInfo.pPushConstantRanges = &range;
-  if (vkCreatePipelineLayout(device, &plInfo, nullptr, &pipelineLayout) != VK_SUCCESS)
+  if (vkCreatePipelineLayout(device, &plInfo, nullptr, &pipelineLayout) != VK_SUCCESS) {
+    failure = "no pipeline layout";
     return false;
+  }
 
   for (int pass = 0; pass < 2; pass++) {
     const std::string source = std::string(kVulkanHeader) + (pass == 0 ? kFsrEasuBody : kFsrRcasBody);
@@ -132,8 +141,10 @@ bool FsrUpscaler::setup() {
     VkPipeline& pipeline = pass == 0 ? easuPipeline : rcasPipeline;
     const VkResult result = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline);
     vkDestroyShaderModule(device, module, nullptr);
-    if (result != VK_SUCCESS)
+    if (result != VK_SUCCESS) {
+      failure = std::string(pass == 0 ? "fsr_easu" : "fsr_rcas") + ": no pipeline (" + std::to_string(result) + ")";
       return false;
+    }
   }
 
   VkDescriptorPoolSize sizes[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2},
@@ -143,8 +154,10 @@ bool FsrUpscaler::setup() {
   poolInfo.maxSets = 2;
   poolInfo.poolSizeCount = 2;
   poolInfo.pPoolSizes = sizes;
-  if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS)
+  if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
+    failure = "no descriptor pool";
     return false;
+  }
   VkDescriptorSetLayout layouts[2] = {setLayout, setLayout};
   VkDescriptorSet sets[2] = {};
   VkDescriptorSetAllocateInfo allocInfo{};
@@ -152,8 +165,10 @@ bool FsrUpscaler::setup() {
   allocInfo.descriptorPool = descriptorPool;
   allocInfo.descriptorSetCount = 2;
   allocInfo.pSetLayouts = layouts;
-  if (vkAllocateDescriptorSets(device, &allocInfo, sets) != VK_SUCCESS)
+  if (vkAllocateDescriptorSets(device, &allocInfo, sets) != VK_SUCCESS) {
+    failure = "no descriptor sets";
     return false;
+  }
   easuSet = sets[0];
   rcasSet = sets[1];
 
@@ -218,6 +233,7 @@ bool FsrUpscaler::resize(uint32_t w, uint32_t h) {
   vkDeviceWaitIdle(vulkan->getDevice());
   destroyTargets();
   if (!createTarget(easuOut, w, h) || !createTarget(rcasOut, w, h)) {
+    failure = "no " + std::to_string(w) + "x" + std::to_string(h) + " images";
     destroyTargets();
     return false;
   }

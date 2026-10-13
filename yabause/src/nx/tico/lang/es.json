@@ -244,5 +244,8 @@
   "settings_yabasanshiro_map_down": "Cruceta abajo",
   "settings_yabasanshiro_map_left": "Cruceta izquierda",
   "settings_yabasanshiro_map_right": "Cruceta derecha",
-  "yabasanshiro_vulkan_heavier": "Vulkan es más pesado que OpenGL: haz overclock a la Switch para ir a velocidad completa"
+  "yabasanshiro_vulkan_heavier": "Vulkan es más pesado que OpenGL: haz overclock a la Switch para ir a velocidad completa",
+  "yabasanshiro_fsr_running": "AMD FSR:",
+  "yabasanshiro_fsr_failed": "AMD FSR no pudo iniciarse:",
+  "yabasanshiro_fsr_native": "AMD FSR necesita una resolución interna inferior a la de la pantalla (Original o 2x)"
 }

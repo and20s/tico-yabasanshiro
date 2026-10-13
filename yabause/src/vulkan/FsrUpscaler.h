@@ -6,6 +6,7 @@
 // shaders, so the swapchain needs no storage usage.
 
 #include <cstdint>
+#include <string>
 #include <vulkan/vulkan.h>
 
 class VIDVulkan;
@@ -29,6 +30,9 @@ public:
               uint32_t srcWidth, uint32_t srcHeight, VkImage dstImage, int32_t dstX, int32_t dstY,
               uint32_t dstWidth, uint32_t dstHeight, VkImageLayout finalDstLayout);
 
+  // Why the last record() could not run.
+  const std::string &lastFailure() const { return failure; }
+
   // The source's view is about to be destroyed: bind the next one afresh.
   void sourceChanged() { boundSource = VK_NULL_HANDLE; }
 
@@ -49,6 +53,7 @@ private:
 
   VIDVulkan* vulkan;
   float sharpnessStops = 0.2f;
+  std::string failure;
   bool ready = false;
   bool failed = false;
 

@@ -909,6 +909,49 @@ static void ApplyFrameGeneration()
                          TicoConfig::GetConfigValue("lsfg_performance_mode", "enabled") == "enabled");
 }
 
+// A string in tico's language, or `fallback`
+static std::string TrText(const char *key, const char *fallback)
+{
+    const std::string text = SwitchFrontend::OverlayTranslation::tr(key);
+    return text.empty() || text == key ? fallback : text;
+}
+
+// What FSR does, shown once each time it changes: running (and at what
+// size), not applicable, or why it could not start.
+static unsigned int g_fsrSerial = 0;
+static void ShowFsrStatus()
+{
+    if (TicoConfig::GetConfigValue("upscaling", "nearest") != "fsr")
+        return;
+    int state, srcW, srcH, dstW, dstH;
+    const char *reason;
+    const unsigned int serial = FsrStatus(&state, &srcW, &srcH, &dstW, &dstH, &reason);
+    if (serial == g_fsrSerial)
+        return;
+    g_fsrSerial = serial;
+    char text[256];
+    if (state == FSR_STATUS_RUNNING)
+        std::snprintf(text, sizeof(text), "%s %dx%d -> %dx%d",
+                      TrText("yabasanshiro_fsr_running", "AMD FSR:").c_str(), srcW, srcH, dstW, dstH);
+    else if (state == FSR_STATUS_FAILED)
+        std::snprintf(text, sizeof(text), "%s %s",
+                      TrText("yabasanshiro_fsr_failed", "AMD FSR could not start:").c_str(), reason);
+    else
+        return;
+    OverlayUI::ShowToast(text, OverlayUI::ToastCorner::TopRight);
+}
+
+// FSR upscales a picture smaller than the screen: at the native internal
+// resolution there is none, so it does nothing, and says so.
+static void ShowFsrNeedsLowerResolution()
+{
+    if (TicoConfig::GetConfigValue("upscaling", "nearest") == "fsr" &&
+        TicoConfig::GetConfigValue("resolution_mode", "Native") == "Native")
+        OverlayUI::ShowToast(TrText("yabasanshiro_fsr_native",
+                                    "AMD FSR needs an internal resolution below the screen's (Original or 2x)"),
+                             OverlayUI::ToastCorner::TopRight);
+}
+
 // The final upscale when the internal resolution is below the screen's:
 // nearest, or AMD FSR 1.0 with its sharpness (in stops, 0 the sharpest).
 static void ApplyUpscaling()
@@ -1506,6 +1549,7 @@ int main(int argc, char **argv)
         GlBorrow();
         ApplyDisplaySettings();
         GlGiveBack();
+        ApplyUpscaling();
     }
 
     YabaMenu::Host host;
@@ -1527,6 +1571,7 @@ int main(int argc, char **argv)
         OverlayUI::ShowToast(std::string("No Saturn BIOS in ") + tico_system_dir() +
                                  ": the emulated BIOS runs (a few games need the real one)",
                              OverlayUI::ToastCorner::TopRight);
+    ShowFsrNeedsLowerResolution();
     if (g_vulkan)
     {
         // Vulkan does more of the work on the GPU than OpenGL here
@@ -1575,6 +1620,7 @@ int main(int argc, char **argv)
             HandleInput(p, &g_pads[p]);
         YabauseExec();
         YabaRA::DoFrame();
+        ShowFsrStatus();
         tico::PlaytimeFrame(); // this frame's time to the player's playtime
 
         // The backup RAM (and a backup RAM cartridge) go to their files a second

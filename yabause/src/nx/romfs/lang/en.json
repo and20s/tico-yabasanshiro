@@ -244,5 +244,8 @@
   "settings_yabasanshiro_map_down": "D-Pad Down",
   "settings_yabasanshiro_map_left": "D-Pad Left",
   "settings_yabasanshiro_map_right": "D-Pad Right",
-  "yabasanshiro_vulkan_heavier": "Vulkan is heavier than OpenGL: overclock the Switch for full speed"
+  "yabasanshiro_vulkan_heavier": "Vulkan is heavier than OpenGL: overclock the Switch for full speed",
+  "yabasanshiro_fsr_running": "AMD FSR:",
+  "yabasanshiro_fsr_failed": "AMD FSR could not start:",
+  "yabasanshiro_fsr_native": "AMD FSR needs an internal resolution below the screen's (Original or 2x)"
 }

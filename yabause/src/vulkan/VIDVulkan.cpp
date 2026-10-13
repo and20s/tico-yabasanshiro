@@ -40,6 +40,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 #include "Vdp2GBuffer.h"
 #include "Vdp2Compositor.h"
 #include "FsrUpscaler.h"
+#include "ygl_fsr.h"
 #include "Vdp2SpriteDecoder.h"
 
 #include "Vdp2ColorCalcState.h"
@@ -8991,10 +8992,13 @@ void VIDVulkan::blitSubRenderTarget(VkCommandBuffer commandBuffer, const glm::ve
     if (fsr == nullptr)
       fsr = new FsrUpscaler(this);
     fsr->setSharpness(fsrSharpness);
-    if (fsr->record(commandBuffer, subRenderTarget.color.image, subRenderTarget.color.view,
-                    VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, subRenderTarget.width, subRenderTarget.height, dstImage,
-                    (int32_t)viewportData.x, (int32_t)viewportData.y, (uint32_t)viewportData.z,
-                    (uint32_t)viewportData.w, VK_IMAGE_LAYOUT_GENERAL))
+    const bool ran = fsr->record(commandBuffer, subRenderTarget.color.image, subRenderTarget.color.view,
+                                 VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, subRenderTarget.width, subRenderTarget.height,
+                                 dstImage, (int32_t)viewportData.x, (int32_t)viewportData.y,
+                                 (uint32_t)viewportData.z, (uint32_t)viewportData.w, VK_IMAGE_LAYOUT_GENERAL);
+    FsrReport(ran ? FSR_STATUS_RUNNING : FSR_STATUS_FAILED, subRenderTarget.width, subRenderTarget.height,
+              (int)viewportData.z, (int)viewportData.w, ran ? nullptr : fsr->lastFailure().c_str());
+    if (ran)
       return;
   }
 

@@ -12,6 +12,41 @@
 
 #include "ygl_fsr.h"
 
+#include <stdio.h>
+#include <string.h>
+
+/* Written by the rendering thread, read by the frontend's: only the serial
+   tells a new state, and a torn read only delays it a frame. */
+static volatile unsigned int s_statusSerial = 0;
+static volatile int s_status[5] = {0, 0, 0, 0, 0};
+static char s_statusReason[128] = "";
+
+void FsrReport(int state, int srcWidth, int srcHeight, int dstWidth, int dstHeight, const char *reason)
+{
+  if (s_status[0] == state && s_status[1] == srcWidth && s_status[2] == srcHeight &&
+      s_status[3] == dstWidth && s_status[4] == dstHeight)
+    return;
+  s_status[0] = state;
+  s_status[1] = srcWidth;
+  s_status[2] = srcHeight;
+  s_status[3] = dstWidth;
+  s_status[4] = dstHeight;
+  snprintf(s_statusReason, sizeof(s_statusReason), "%s", reason ? reason : "");
+  s_statusSerial++;
+}
+
+unsigned int FsrStatus(int *state, int *srcWidth, int *srcHeight, int *dstWidth, int *dstHeight,
+                       const char **reason)
+{
+  *state = s_status[0];
+  *srcWidth = s_status[1];
+  *srcHeight = s_status[2];
+  *dstWidth = s_status[3];
+  *dstHeight = s_status[4];
+  *reason = s_statusReason;
+  return s_statusSerial;
+}
+
 #ifdef NX
 
 #include <math.h>
@@ -47,6 +82,7 @@ static GLuint s_targets[2] = {0, 0};  /* the upscaled picture, the sharpened one
 static GLuint s_readFbo = 0;          /* the sharpened picture, for the blit */
 static int s_width = 0;
 static int s_height = 0;
+static char s_failure[128] = ""; /* why Setup or Resize gave up */
 
 void YglFsrSetUpscaling(int mode, float sharpnessStops)
 {
@@ -69,6 +105,7 @@ static GLuint Compile(const char *body, const char *name)
     char info[1024] = {0};
     glGetShaderInfoLog(shader, sizeof(info) - 1, NULL, info);
     printf("YglFsr: %s does not compile: %s\n", name, info);
+    snprintf(s_failure, sizeof(s_failure), "%s does not compile: %s", name, info);
     glDeleteShader(shader);
     return 0;
   }
@@ -80,6 +117,7 @@ static GLuint Compile(const char *body, const char *name)
   if (!ok)
   {
     printf("YglFsr: %s does not link\n", name);
+    snprintf(s_failure, sizeof(s_failure), "%s does not link", name);
     glDeleteProgram(program);
     return 0;
   }
@@ -135,6 +173,7 @@ static int Resize(int width, int height)
   glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, s_targets[1], 0);
   if (glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
   {
+    snprintf(s_failure, sizeof(s_failure), "its %dx%d picture cannot be read back", width, height);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
     DeleteTargets();
     return 0;
@@ -164,7 +203,10 @@ int YglFsrUpscale(unsigned int srcTexture, int srcWidth, int srcHeight, unsigned
   if (srcWidth <= 0 || srcHeight <= 0 || dstWidth <= 0 || dstHeight <= 0)
     return 0;
   if (!Setup() || !Resize(dstWidth, dstHeight))
+  {
+    FsrReport(FSR_STATUS_FAILED, srcWidth, srcHeight, dstWidth, dstHeight, s_failure);
     return 0;
+  }
 
   glGetIntegerv(GL_CURRENT_PROGRAM, &savedProgram);
   glGetIntegerv(GL_ACTIVE_TEXTURE, &savedActive);
@@ -195,6 +237,7 @@ int YglFsrUpscale(unsigned int srcTexture, int srcWidth, int srcHeight, unsigned
   glBindFramebuffer(GL_FRAMEBUFFER, drawFbo);
 
   glBindImageTexture(1, 0, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
+  FsrReport(FSR_STATUS_RUNNING, srcWidth, srcHeight, dstWidth, dstHeight, NULL);
   glBindTexture(GL_TEXTURE_2D, savedTexture);
   glActiveTexture(savedActive);
   glUseProgram(savedProgram);
