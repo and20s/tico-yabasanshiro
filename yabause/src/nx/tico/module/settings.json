@@ -152,11 +152,7 @@
                   "label": "AMD FSR 1.0",
                   "value": "fsr"
                 }
-              ],
-              "depends_on": {
-                "key": "renderer",
-                "value": "vulkan"
-              }
+              ]
             },
             {
               "key": "fsr_sharpness",

@@ -26,6 +26,7 @@
 #include "vidshared.h"
 #include "debug.h"
 #include "frameprofile.h"
+#include "ygl_fsr.h"
 
 #define NUM_TEXTURE_BUFFER 1
 
@@ -1804,6 +1805,7 @@ void YglDeInit(void)
 
   // ---- Phase 2: RBG compute shader resources ----
   RBGGenerator_deinit();
+  YglFsrDeInit(); // FSR's programs and targets
 
   // ---- Phase 3: Texture manager ----
   YglTMDeInit(YglTM);
@@ -4828,6 +4830,12 @@ void YglRender(void)
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
 
+    // AMD FSR 1.0 when the picture grows on its way to the screen; the
+    // hardware blit below otherwise, or if FSR cannot run
+    if (!(YglFsrEnabled() && GlWidth > _Ygl->width && GlHeight > _Ygl->height &&
+          YglFsrUpscale(_Ygl->fxaa_fbotex, _Ygl->width, _Ygl->height, _Ygl->default_fbo,
+                        _Ygl->originx, _Ygl->originy, GlWidth, GlHeight)))
+    {
     // Hardware blit: fxaa_fbo (internal res) -> default_fbo (screen)
     glBindFramebuffer(GL_READ_FRAMEBUFFER, _Ygl->fxaa_fbo);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, _Ygl->default_fbo);
@@ -4837,6 +4845,7 @@ void YglRender(void)
                       _Ygl->originx + GlWidth, _Ygl->originy + GlHeight,
                       GL_COLOR_BUFFER_BIT, blit_filter);
     glBindFramebuffer(GL_FRAMEBUFFER, _Ygl->default_fbo);
+    }
   }
   else
   {

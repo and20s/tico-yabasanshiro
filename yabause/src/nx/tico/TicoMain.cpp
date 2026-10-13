@@ -57,6 +57,7 @@
 #include "overlay/translation_manager.h"
 #include "tico_entry.h"
 #include "yaba_overlay_hook.h"
+#include "ygl_fsr.h"
 
 namespace ImGuiOverlay = SwitchFrontend::ImGuiOverlay;
 namespace OverlayUI = SwitchFrontend::OverlayUI;
@@ -908,15 +909,16 @@ static void ApplyFrameGeneration()
                          TicoConfig::GetConfigValue("lsfg_performance_mode", "enabled") == "enabled");
 }
 
-// Vulkan's final upscale when the internal resolution is below the screen's:
+// The final upscale when the internal resolution is below the screen's:
 // nearest, or AMD FSR 1.0 with its sharpness (in stops, 0 the sharpest).
 static void ApplyUpscaling()
 {
-    if (!g_vulkan)
-        return;
     const bool fsr = TicoConfig::GetConfigValue("upscaling", "nearest") == "fsr";
     const float stops = std::strtof(TicoConfig::GetConfigValue("fsr_sharpness", "0.2").c_str(), nullptr);
-    VIDVulkan::getInstance()->setUpscaling(fsr ? 1 : 0, stops);
+    if (g_vulkan)
+        VIDVulkan::getInstance()->setUpscaling(fsr ? 1 : 0, stops);
+    else
+        YglFsrSetUpscaling(fsr ? 1 : 0, stops);
 }
 
 static void ApplyLiveSettings()

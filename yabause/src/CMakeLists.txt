@@ -172,7 +172,7 @@ endif()
 if (IOS)
 	# iOS can't use compute shader
 else ()
-	set(yabause_SOURCES ${yabause_SOURCES} ygl_texture.cpp)
+	set(yabause_SOURCES ${yabause_SOURCES} ygl_texture.cpp ygl_fsr.c)
 endif ()
 
 option(YAB_WANT_SH2_CACHE "Enable Sh2 cache emulation" OFF)
