@@ -46,6 +46,10 @@ extern "C"
 
    /* Before rendering in a thread, it needs to revoke current rendering thread */
    int YuiRevokeOGLOnThisThread();
+#ifdef NX
+   /* Unbinds every context from this thread: for a thread that is ending. */
+   void YuiReleaseOGLOnThisThread();
+#endif
 
    //////////////////////////////////////////////////////////////////////////////
    // Helper functions(you can use these in your own port)

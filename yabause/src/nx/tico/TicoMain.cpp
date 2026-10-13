@@ -612,6 +612,17 @@ extern "C"
         return 0;
     }
 
+    // A thread that is ending must hold no context: EGL only destroys a
+    // context or surface once nothing has it current, so whatever stayed
+    // bound to a dead thread is never freed, and its GPU buffers outlive the
+    // NRO (the homebrew loader then fails with 0xD401 on exit).
+    void YuiReleaseOGLOnThisThread()
+    {
+        if (g_vulkan || s_display == EGL_NO_DISPLAY)
+            return;
+        eglMakeCurrent(s_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+    }
+
     int YuiUseOGLOnThisThread()
     {
         if (g_vulkan || s_display == EGL_NO_DISPLAY || s_surface == EGL_NO_SURFACE)

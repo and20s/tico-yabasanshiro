@@ -935,7 +935,12 @@ extern "C" void * VdpProc( void *arg ){
       // Release the GL context BEFORE exiting. If we skip this, the EGL
       // context stays bound to this (dead) thread and the next NRO launch
       // cannot re-acquire it → instant crash on second run.
+#ifdef NX
+      // Revoke keeps the shared context current here; this thread is ending
+      YuiReleaseOGLOnThisThread();
+#else
       YuiRevokeOGLOnThisThread();
+#endif
       vdp_proc_running = 0;
       printf("VdpProc: GL context released, exiting\n");
       fflush(stdout);

@@ -210,6 +210,10 @@ RBGDrawInfo g_rgb1;
 YabMutex *g_rotate_mtx;
 RBGDrawInfo *curret_rbg = NULL;
 volatile int Vdp2DrawRotationThread_running = 0;
+// Set while the rotation thread exists. The running flag above cannot say:
+// with async rendering the VDP thread clears it on FINSH so the rotation
+// thread leaves its loop, before VIDOGLDeInit gets to join it.
+static int Vdp2DrawRotationThread_started = 0;
 static void Vdp2DrawRotation_in(RBGDrawInfo *rbg);
 static void Vdp2DrawRotationSync();
 static void Vdp2DrawRBG0(void);
@@ -3577,6 +3581,8 @@ void * Vdp2DrawRotationThread(void * p) {
   while (Vdp2DrawRotationThread_running) {
     YabThreadLock(g_rotate_mtx);
     if (Vdp2DrawRotationThread_running == 0) {
+      // libnx mutexes are owning: only this thread can let go of it
+      YabThreadUnLock(g_rotate_mtx);
       break;
     }
     FrameProfileAdd("Vdp2DrawRotationThread start");
@@ -3764,7 +3770,8 @@ static void FASTCALL Vdp2DrawRotation(RBGDrawInfo * rbg)
       Vdp2DrawRotationThread_running = 1;
       g_rotate_mtx = YabThreadCreateMutex();
       YabThreadLock(g_rotate_mtx);
-      YabThreadStart(YAB_THREAD_VIDSOFT_LAYER_RBG0, "vdp rotate", Vdp2DrawRotationThread, NULL);
+      if (YabThreadStart(YAB_THREAD_VIDSOFT_LAYER_RBG0, "vdp rotate", Vdp2DrawRotationThread, NULL) == 0)
+        Vdp2DrawRotationThread_started = 1;
     }
     Vdp2RgbTextureSync();
     YGL_THREAD_DEBUG("Vdp2DrawRotation in %d\n", curret_rbg->vdp2_sync_flg);
@@ -4511,13 +4518,19 @@ int VIDOGLInit(void)
 
 void VIDOGLDeInit(void)
 {
-  YglDeInit();
-
-  if (Vdp2DrawRotationThread_running != 0) {
+  // Joined whenever it was started, even if FINSH already stopped it: a
+  // thread nobody joins is never closed, and on Switch its stack stays mapped
+  // over the heap, which the homebrew loader then fails to take back (0xD401).
+  if (Vdp2DrawRotationThread_started) {
     Vdp2DrawRotationThread_running = 0;
-    YabThreadUnLock(g_rotate_mtx);
+    if (g_rotate_mtx && YabThreadIsLockedByCurrentThread(g_rotate_mtx))
+      YabThreadUnLock(g_rotate_mtx);
     YabThreadWait(YAB_THREAD_VIDSOFT_LAYER_RBG0);
+    Vdp2DrawRotationThread_started = 0;
   }
+
+  // after the join: the rotation thread draws with what this frees
+  YglDeInit();
 }
 
 //////////////////////////////////////////////////////////////////////////////

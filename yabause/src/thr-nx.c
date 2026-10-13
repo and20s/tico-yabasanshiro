@@ -222,13 +222,17 @@ void YabThreadWait(unsigned int id)
         Result pause_rc = svcSetThreadActivity(thread_handle[id].handle, 1); // ThreadActivity_Paused
         printf("YabThreadWait: svcSetThreadActivity(Paused) for thread %d: 0x%x\n", id, pause_rc);
 
-        // Close the handle but do NOT free the stack or unmap memory.
-        // The thread is frozen and still references its stack. Freeing it
-        // would corrupt memory. The kernel keeps the thread alive (paused)
-        // until the process terminates.
-        svcCloseHandle(thread_handle[id].handle);
+        // The thread never runs again, so threadClose is safe: it unmaps the
+        // stack mirror, takes the thread off libnx's thread list and closes
+        // the handle (which does not end the thread). Left mapped, the mirror
+        // keeps the heap pages under it aliased, and the homebrew loader
+        // cannot take them back when the NRO returns (0xD401 in hbl).
+        // The stack itself is ours (threadCreate was given it), so it is not
+        // freed: the frozen thread still points into it.
+        Result close_rc = threadClose(&thread_handle[id]);
+        printf("YabThreadWait: threadClose for force-paused thread %d: 0x%x\n", id, close_rc);
         memset(&thread_handle[id], 0, sizeof(Thread));
-        // thread_stack[id] intentionally leaked — thread still references it
+        // thread_stack[id] intentionally leaked
         return;
     }
 

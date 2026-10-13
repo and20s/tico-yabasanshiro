@@ -564,12 +564,14 @@ void YabFlushBackups(void)
 void YabauseDeInit(void)
 {
 
-   printf("YabauseDeInit: OSDDeInit\n");
-   fflush(stdout);
-   OSDDeInit();
+   // Vdp2DeInit first: with async rendering it stops the VDP thread, which
+   // draws the OSD and may still be working through queued frames.
    printf("YabauseDeInit: Vdp2DeInit\n");
    fflush(stdout);
    Vdp2DeInit();
+   printf("YabauseDeInit: OSDDeInit\n");
+   fflush(stdout);
+   OSDDeInit();
    printf("YabauseDeInit: Vdp1DeInit\n");
    fflush(stdout);
    Vdp1DeInit();
