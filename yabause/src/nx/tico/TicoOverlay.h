@@ -10,8 +10,6 @@
 #include <sys/stat.h>
 #include <dirent.h>
 
-#define GL_GLEXT_PROTOTYPES 1
-#include <GL/gl.h>
 
 #ifdef __SWITCH__
 #include <switch.h>
@@ -144,12 +142,12 @@ private:
 
     // Social area
     std::string m_nickname;
-    GLuint m_avatarTexture = 0;
+    ImTextureID m_avatarTexture = 0;
     int m_avatarWidth = 0;
     int m_avatarHeight = 0;
 
     // Bolt (charging) icon
-    GLuint m_boltTexture = 0;
+    ImTextureID m_boltTexture = 0;
     int m_boltWidth = 0;
     int m_boltHeight = 0;
 

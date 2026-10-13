@@ -90,6 +90,11 @@ public:
     window = (SDL_Window*)nativeWindow;
   }
   SDL_Window* window;
+#elif defined(__SWITCH__)
+  void setNativeWindow(void* nativeWindow) {
+    window = nativeWindow;
+  }
+  void* window; // NWindow*
 #else
   void setNativeWindow(void* nativeWindow) {}
   GLFWwindow *getWindowHandle() { return _glfw_window; }

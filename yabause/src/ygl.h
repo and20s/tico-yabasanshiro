@@ -49,10 +49,15 @@ extern "C"
 #if defined(__LIBRETRO__) && !defined(_USEGLEW_)
 #include <glsym/glsym.h>
 #include <glsm/glsm.h>
-#elif defined(__ANDROID__)
+#elif defined(__ANDROID__) || (defined(__SWITCH__) && !defined(HAVE_LIBGL))
+// Android, or Vulkan-only Switch builds: the GLES 3.1 headers provide the GL
+// types/tokens the shared declarations below need. On Switch no GL library is
+// linked — these stay declarations only (headers bundled in gllibs/include).
 #include <GLES3/gl31.h>
+#if defined(__ANDROID__)
 #include <GLES3/gl3ext.h>
 #include <EGL/egl.h>
+#endif
 
 #define GL_GEOMETRY_SHADER 0x8DD9
 

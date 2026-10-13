@@ -388,8 +388,24 @@ public:
 
   // issue #22 debug: G-buffer slice viewer index (-1 = normal). See setter.
   int _vdp2DebugViewSlice = -1;
+  // Frontend overlay hook (e.g. ImGui). Invoked from Vdp2DrawEnd while a
+  // render pass on the swapchain framebuffer is active, right after the OSD.
+  // Runs on the rendering (VDP) thread.
+  void setOnOverlayRender(const std::function<void(
+    VkCommandBuffer commandBuffer,
+    VkRenderPass renderPass,
+    int width,
+    int height)>& f) {
+    onOverlayRender = f;
+  }
+
+  Renderer * getRenderer() {
+    return _renderer;
+  }
 
 protected:
+
+  std::function<void(VkCommandBuffer, VkRenderPass, int, int)> onOverlayRender;
 
   Vdp1Renderer * vdp1;
   Vdp1ComputeRasterizer * vdp1Compute = nullptr;

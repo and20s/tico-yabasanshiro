@@ -1,6 +1,6 @@
 /// @file TicoMain.cpp
 /// @brief Entry point for tico-integrated YabaSanshiro NRO
-/// Sets up EGL/ImGui and runs the main loop with tico overlay
+/// Sets up Vulkan (NVK)/ImGui and runs the main loop with tico overlay
 ///
 /// Copyright 2019 devMiyax(smiyaxdev@gmail.com)
 /// Copyright 2025 tico
@@ -28,18 +28,19 @@
 #include <stdlib.h>
 
 #include <SDL2/SDL.h>
-#define GL_GLEXT_PROTOTYPES 1
-#include <SDL2/SDL_opengl.h>
-#include <EGL/egl.h>
-#include <EGL/eglext.h>
 
 #include <switch.h>
 
-// ImGui
+// ImGui (Vulkan backend on top of VIDVulkan's swapchain)
 #include "imgui.h"
-#include "imgui_impl_opengl3.h"
+#include "imgui_impl_vulkan.h"
+
+// Vulkan video core (C++ side)
+#include "vulkan/VIDVulkan.h"
+#include "vulkan/Renderer.h"
 
 // Tico
+#include "TicoVulkan.h"
 #include "TicoOverlay.h"
 #include "TicoConfig.h"
 #include "TicoLogger.h"
@@ -114,7 +115,7 @@ struct RANotification {
     std::string title;
     std::string description;
     std::string badge_name;     
-    unsigned int textureId = 0; 
+    ImTextureID textureId = 0;
     float timer = 0.0f;
     float duration = 4.0f; 
     float slideIn = 0.4f;  
@@ -122,8 +123,8 @@ struct RANotification {
 };
 
 static std::vector<RANotification> g_raNotifications;
-static unsigned int g_raIconTexture = 0;
-static std::map<std::string, unsigned int> g_raBadgeCache;
+static ImTextureID g_raIconTexture = 0;
+static std::map<std::string, ImTextureID> g_raBadgeCache;
 static std::vector<std::pair<std::string, std::vector<unsigned char>>> g_raPendingBadgeUploads;
 static std::mutex g_raBadgeUploadMutex;
 
@@ -144,7 +145,7 @@ static void PushRANotification(const std::string& title, const std::string& desc
     g_raNotifications.push_back(std::move(n));
 }
 
-static unsigned int GetRABadgeTexture(const std::string& badge_name)
+static ImTextureID GetRABadgeTexture(const std::string& badge_name)
 {
     auto it = g_raBadgeCache.find(badge_name);
     if (it != g_raBadgeCache.end()) return it->second;
@@ -155,14 +156,9 @@ static unsigned int GetRABadgeTexture(const std::string& badge_name)
     int w, h, ch;
     unsigned char* data = stbi_load(path.c_str(), &w, &h, &ch, 4);
     if (data) {
-        unsigned int tex = 0;
-        glGenTextures(1, &tex);
-        glBindTexture(GL_TEXTURE_2D, tex);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
-        glBindTexture(GL_TEXTURE_2D, 0);
+        ImTextureID tex = TicoVulkan::CreateTextureRGBA(data, (uint32_t)w, (uint32_t)h);
         stbi_image_free(data);
+        if (tex == 0) return 0;
         g_raBadgeCache[badge_name] = tex;
         return tex;
     }
@@ -184,12 +180,7 @@ static void RenderRANotifications(ImDrawList *dl, int screenW, int screenH, floa
                 unsigned char* img = (unsigned char*)malloc(w * h * 4);
                 if (img) {
                     nsvgRasterize(rast, image, 0, 0, sc, img, w, h, w * 4);
-                    glGenTextures(1, &g_raIconTexture);
-                    glBindTexture(GL_TEXTURE_2D, g_raIconTexture);
-                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-                    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, img);
-                    glBindTexture(GL_TEXTURE_2D, 0);
+                    g_raIconTexture = TicoVulkan::CreateTextureRGBA(img, (uint32_t)w, (uint32_t)h);
                     free(img);
                 }
                 nsvgDeleteRasterizer(rast);
@@ -363,7 +354,7 @@ extern "C"
 #include "vdp2.h"
 #include "scsp.h"
 #include "vidsoft.h"
-#include "vidogl.h"
+#include "vulkan/VIDVulkanCInterface.h"
 #include "peripheral.h"
 #include "m68kcore.h"
 #include "sh2core.h"
@@ -433,12 +424,15 @@ extern "C"
 
     VideoInterface_struct *VIDCoreList[] = {
         &VIDDummy,
-        &VIDOGL,
+        &CVIDVulkan,
         NULL};
 
 #ifdef YAB_PORT_OSD
 #include "nanovg/nanovg_osdcore.h"
+    // OSDNnovg (GL) is never selected — it's listed so the linker pulls
+    // nanovg_osdcore.o, which owns the Roboto font data the Vulkan OSD uses.
     OSD_struct *OSDCoreList[] = {
+        &OSDNnovgVulkan,
         &OSDNnovg,
         &OSDDummy,
         NULL};
@@ -449,13 +443,8 @@ extern "C"
 // Globals
 //==============================================================================
 
-static EGLDisplay s_display = EGL_NO_DISPLAY;
-static EGLContext s_context = EGL_NO_CONTEXT;
-static EGLContext s_context_sub = EGL_NO_CONTEXT; // Shared context for rotation thread (compute shaders)
-static EGLSurface s_surface = EGL_NO_SURFACE;
-static EGLSurface s_pbuffer = EGL_NO_SURFACE; // PBuffer surface for sub-context (compute shaders)
-static EGLConfig s_config = NULL; // Stored for reference
 static pthread_t s_main_thread_id = 0; // The main thread ID
+static bool s_vulkanReady = false;     // VIDVulkan device + swapchain are up
 
 // Emulator paths
 static char biospath[256] = "";
@@ -502,7 +491,9 @@ static int SanitizePadMode(int padMode)
 }
 
 // Overlay pause state
-static GLuint g_capturedFrameTex = 0;
+static ImTextureID g_capturedFrameTex = 0;
+static int g_capturedFrameW = 0;
+static int g_capturedFrameH = 0;
 static bool g_wasPaused = false;
 
 // Viewport (emulator rendering area)
@@ -511,7 +502,7 @@ static int g_viewportY = 0;
 static int g_viewportW = 1280;
 static int g_viewportH = 720;
 
-// Screen dimensions (dynamic: 1280x720 handheld, 1920x1080 docked)
+// Screen dimensions (fixed 1280x720 — the OS compositor upscales when docked)
 static int g_screenW = 1280;
 static int g_screenH = 720;
 static u8 g_lastOperationMode = 255; // Invalid initial → forces first update
@@ -526,18 +517,17 @@ static int g_lastDisplaySize = 1; // SaturnDisplaySize::_4_3
 
 #include "nanovg.h"
 
-extern "C"
+// In-game overlay (pad toasts, light gun crosshairs, RA notifications).
+// Invoked by VIDVulkan's overlay hook on the rendering (VDP) thread while a
+// render pass on the swapchain framebuffer is active — the Vulkan counterpart
+// of what the GL port did inside YuiSwapBuffers before eglSwapBuffers.
+static void RenderInGameOverlayVulkan(VkCommandBuffer commandBuffer, int fbWidth, int fbHeight)
 {
-    NVGcontext *getGlobalNanoVGContext() { return NULL; }
-    void DrawDebugInfo() {}
-    void YuiErrorMsg(const char *string) { LOG_ERROR("YUI", "%s", string); }
-
-    void YuiSwapBuffers(void)
-    {
-        if (s_display == EGL_NO_DISPLAY || s_surface == EGL_NO_SURFACE)
+        (void)fbWidth;
+        (void)fbHeight;
+        if (!TicoVulkan::IsReady())
             return;
 
-        // Render pad mode toast, crosshairs, and RA notifications on top of game frame (before swap)
         bool anyToast = false;
         bool anyLightGun = false;
         bool anyRANotif = !g_raNotifications.empty();
@@ -550,10 +540,7 @@ extern "C"
 
         if (anyToast || anyLightGun || anyRANotif)
         {
-            // Save GL state the emulator may rely on
-            glViewport(0, 0, g_screenW, g_screenH);
-
-            ImGui_ImplOpenGL3_NewFrame();
+            ImGui_ImplVulkan_NewFrame();
             ImGui::NewFrame();
 
             ImDrawList *fg = ImGui::GetForegroundDrawList();
@@ -647,97 +634,41 @@ extern "C"
             }
 
             ImGui::Render();
-            ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-
-            // Restore emulator viewport
-            glViewport(g_viewportX, g_viewportY, g_viewportW, g_viewportH);
+            TicoVulkan::RenderDrawData(ImGui::GetDrawData(), commandBuffer);
+        }
         }
 
-        eglSwapBuffers(s_display, s_surface);
+extern "C"
+{
+    NVGcontext *getGlobalNanoVGContext() { return NULL; }
+    void DrawDebugInfo() {}
+    void YuiErrorMsg(const char *string) { LOG_ERROR("YUI", "%s", string); }
 
-        // Clear the fresh back buffer fully black for clean letterbox borders.
-        // After eglSwapBuffers, the new back buffer is undefined — without this,
-        // the area outside the emulator viewport (letterbox borders) would show
-        // garbage. The emulator's VDP thread will render game content into the
-        // viewport sub-rect on top of this clean black canvas.
-        glViewport(0, 0, g_screenW, g_screenH);
-        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
-        glViewport(g_viewportX, g_viewportY, g_viewportW, g_viewportH);
+    const char *YuiGetShaderCachePath()
+    {
+        // Trailing slash required — callers append "<hash>.spv" directly.
+        return "sdmc:/tico/cache/saturn/";
+    }
 
+    void YuiSwapBuffers(void)
+    {
+        if (!s_vulkanReady)
+            return;
+        // VIDVulkan submitted the frame's command buffer right before calling
+        // us — presenting here is all that's left to do.
+        VIDVulkan::getInstance()->present();
         SetOSDToggle(0);
     }
 
     int YuiRevokeOGLOnThisThread()
     {
-        if (s_display == EGL_NO_DISPLAY)
-            return -1;
-        if (yabsys.UseAsyncRendering)
-        {
-            // Check if sub-context is already current on this thread (avoid EGL_BAD_ACCESS)
-            EGLContext currentCtx = eglGetCurrentContext();
-            if (currentCtx == s_context_sub)
-            {
-                // Already on sub-context, nothing to do
-                return 0;
-            }
-
-            // DO NOT let the main thread bind s_context_sub! The main thread has no business with it,
-            // and doing so during initialization starves the VDP thread and causes EGL_BAD_ACCESS (0x3002).
-            if (pthread_self() == s_main_thread_id)
-            {
-                eglMakeCurrent(s_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-                return 0;
-            }
-
-            // Switch to the shared sub-context with PBuffer surface.
-            // This allows other threads (like rotation thread) to make GL calls
-            // while the VDP thread doesn't need the main context.
-            // The sub-context shares resources with the main context.
-            if (s_context_sub != EGL_NO_CONTEXT && s_pbuffer != EGL_NO_SURFACE)
-            {
-                LOG_INFO("EGL", "YuiRevokeOGLOnThisThread: switching to sub-context %p with pbuffer %p", s_context_sub, s_pbuffer);
-                if (!eglMakeCurrent(s_display, s_pbuffer, s_pbuffer, s_context_sub))
-                {
-                    LOG_ERROR("EGL", "YuiRevokeOGLOnThisThread: pbuffer sub-context switch failed! error: 0x%x", eglGetError());
-                    // Fallback: try surfaceless mode (KHR_surfaceless_context)
-                    if (!eglMakeCurrent(s_display, EGL_NO_SURFACE, EGL_NO_SURFACE, s_context_sub))
-                    {
-                        LOG_ERROR("EGL", "YuiRevokeOGLOnThisThread: surfaceless fallback also failed! error: 0x%x", eglGetError());
-                        eglMakeCurrent(s_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-                    }
-                }
-            }
-            else if (s_context_sub != EGL_NO_CONTEXT)
-            {
-                // No PBuffer, try surfaceless mode
-                LOG_WARN("EGL", "YuiRevokeOGLOnThisThread: no pbuffer, trying surfaceless sub-context %p", s_context_sub);
-                if (!eglMakeCurrent(s_display, EGL_NO_SURFACE, EGL_NO_SURFACE, s_context_sub))
-                {
-                    LOG_ERROR("EGL", "YuiRevokeOGLOnThisThread: surfaceless sub-context failed! error: 0x%x", eglGetError());
-                    eglMakeCurrent(s_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-                }
-            }
-            else
-            {
-                LOG_WARN("EGL", "YuiRevokeOGLOnThisThread: no sub-context available, unbinding completely");
-                eglMakeCurrent(s_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-            }
-        }
+        // Vulkan has no thread-bound context — nothing to release.
         return 0;
     }
 
     int YuiUseOGLOnThisThread()
     {
-        if (s_display == EGL_NO_DISPLAY || s_surface == EGL_NO_SURFACE || s_context == EGL_NO_CONTEXT)
-            return -1;
-        if (yabsys.UseAsyncRendering)
-        {
-            // Check if main context is already current on this thread
-            if (eglGetCurrentContext() == s_context)
-                return 0;
-            eglMakeCurrent(s_display, s_surface, s_surface, s_context);
-        }
+        // Vulkan has no thread-bound context — nothing to claim.
         return 0;
     }
 }
@@ -749,158 +680,44 @@ extern "C"
 #define TRACE(fmt, ...) ((void)0)
 
 //==============================================================================
-// EGL Init/Deinit
+// Vulkan Init/Deinit
 //==============================================================================
 
-static bool InitEgl(NWindow *win)
+/// Create the Vulkan instance/device (NVK) and hand the default NWindow to
+/// VIDVulkan. Must run BEFORE YabauseInit() — VIDVulkanInit() requires the
+/// Renderer/Window to exist already (same contract as the Android port).
+static Renderer *s_renderer = nullptr;
+
+static bool InitVulkan()
 {
-    s_display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
-    if (!s_display)
+    s_renderer = new Renderer();
+    s_renderer->setNativeWindow(nwindowGetDefault());
+    VIDVulkan::getInstance()->setRenderer(s_renderer);
+
+    if (s_renderer->GetVulkanDevice() == VK_NULL_HANDLE)
     {
-        TRACE("Could not connect to display! error: %d", eglGetError());
+        LOG_ERROR("VULKAN", "Vulkan device creation failed");
         return false;
     }
 
-    eglInitialize(s_display, NULL, NULL);
-    eglBindAPI(EGL_OPENGL_API);
-
-    EGLConfig config;
-    EGLint numConfigs;
-    // Note: We use KHR_surfaceless_context for sub-context, so no PBUFFER_BIT needed
-    static const EGLint fbAttribs[] = {
-        EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
-        EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8,
-        EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, 8,
-        EGL_DEPTH_SIZE, 24, EGL_STENCIL_SIZE, 8,
-        EGL_NONE};
-    eglChooseConfig(s_display, fbAttribs, &config, 1, &numConfigs);
-    if (numConfigs == 0)
-    {
-        TRACE("No EGL config found! error: %d", eglGetError());
-        eglTerminate(s_display);
-        s_display = NULL;
-        return false;
-    }
-
-    s_surface = eglCreateWindowSurface(s_display, config, win, NULL);
-    if (!s_surface)
-    {
-        TRACE("Surface creation failed! error: %d", eglGetError());
-        eglTerminate(s_display);
-        s_display = NULL;
-        return false;
-    }
-
-    static const EGLint ctxAttribs[] = {
-        EGL_CONTEXT_MAJOR_VERSION_KHR, 4,
-        EGL_CONTEXT_MINOR_VERSION_KHR, 3,
-        EGL_CONTEXT_OPENGL_PROFILE_MASK_KHR, EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT_KHR,
-        EGL_NONE};
-    s_context = eglCreateContext(s_display, config, EGL_NO_CONTEXT, ctxAttribs);
-    if (!s_context)
-    {
-        TRACE("Context creation failed! error: %d", eglGetError());
-        eglDestroySurface(s_display, s_surface);
-        s_surface = NULL;
-        eglTerminate(s_display);
-        s_display = NULL;
-        return false;
-    }
-
-    // Create shared sub-context for rotation thread (compute shaders with async rendering)
-    // This context shares resources (textures, buffers) with the main context
-    LOG_INFO("EGL", "Creating shared sub-context for compute shader support...");
-    s_context_sub = eglCreateContext(s_display, config, s_context, ctxAttribs);
-    if (!s_context_sub)
-    {
-        LOG_ERROR("EGL", "Sub-context creation failed! error: 0x%x (compute shaders may not work with async rendering)", eglGetError());
-        // Non-fatal: compute shaders just won't work with async rendering
-    }
-    else
-    {
-        LOG_INFO("EGL", "Sub-context created successfully: %p (shared with main: %p)", s_context_sub, s_context);
-        
-        // Create a 1x1 PBuffer surface for the sub-context
-        // This is needed to make the sub-context current for compute shader dispatch
-        const EGLint pbufferAttribs[] = {
-            EGL_WIDTH, 1,
-            EGL_HEIGHT, 1,
-            EGL_NONE
-        };
-        s_pbuffer = eglCreatePbufferSurface(s_display, config, pbufferAttribs);
-        if (s_pbuffer == EGL_NO_SURFACE)
-        {
-            LOG_WARN("EGL", "PBuffer creation failed! error: 0x%x - will use surfaceless context as fallback", eglGetError());
-        }
-        else
-        {
-            LOG_INFO("EGL", "PBuffer surface created: %p (1x1 for sub-context)", s_pbuffer);
-        }
-    }
-
-    s_config = config; // Store for later use
-    eglMakeCurrent(s_display, s_surface, s_surface, s_context);
-    eglSwapInterval(s_display, 1); // VSync (60 Hz)
-
-    LOG_INFO("EGL", "OpenGL %s | %s | %s",
-             glGetString(GL_VERSION), glGetString(GL_RENDERER), glGetString(GL_VENDOR));
+    VkExtent2D extent = VIDVulkan::getInstance()->getSurfaceSize();
+    LOG_INFO("VULKAN", "Vulkan ready — swapchain %ux%u", extent.width, extent.height);
+    s_vulkanReady = true;
     return true;
 }
 
-static void DeinitEgl()
+/// Destroy the Vulkan device/instance. Must run AFTER YabauseDeInit() —
+/// VIDVulkan::deInit() frees its own objects but not the Renderer. Releasing
+/// everything matters: leaked GPU buffer objects survive into the next
+/// chainloaded NRO and corrupt its heap memory attributes.
+static void DeinitVulkan()
 {
-    if (!s_display)
-        return;
-
-    FILE *dbg;
-
-    // Ensure GL context is current on this thread before glFinish().
-    // This is needed for BOTH async and non-async modes — in non-async mode
-    // the context might have been implicitly unbound, and in async mode the
-    // VDP thread released it during shutdown.
-    if (s_surface != EGL_NO_SURFACE && s_context != EGL_NO_CONTEXT)
+    s_vulkanReady = false;
+    if (s_renderer != nullptr)
     {
-        if (eglGetCurrentContext() != s_context)
-            eglMakeCurrent(s_display, s_surface, s_surface, s_context);
+        delete s_renderer; // also destroys the Window/swapchain/device/instance
+        s_renderer = nullptr;
     }
-
-    glFinish();
-
-    // CRITICAL: Unbind context BEFORE destroying it.
-    // This is required for both async and non-async modes — destroying a
-    // context while it's still current can cause hangs on some drivers.
-    eglMakeCurrent(s_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-
-    // Clean up sub-context and pbuffer (for async rendering compute shader support)
-    if (s_context_sub)
-    {
-        eglDestroyContext(s_display, s_context_sub);
-        s_context_sub = EGL_NO_CONTEXT;
-    }
-    if (s_pbuffer)
-    {
-        eglDestroySurface(s_display, s_pbuffer);
-        s_pbuffer = EGL_NO_SURFACE;
-    }
-
-    if (s_context)
-    {
-        eglDestroyContext(s_display, s_context);
-        s_context = NULL;
-    }
-    if (s_surface)
-    {
-        eglDestroySurface(s_display, s_surface);
-        s_surface = NULL;
-    }
-
-    s_config = NULL;
-    eglTerminate(s_display);
-    s_display = EGL_NO_DISPLAY;
-
-    // Chainloaded NROs can inherit main-thread TLS, so explicitly drop
-    // any remaining per-thread EGL state after the display is gone.
-    eglReleaseThread();
 }
 
 //==============================================================================
@@ -1092,14 +909,9 @@ static void ProcessPendingBadgeUploads()
         int w, h, ch;
         unsigned char* pixels = stbi_load_from_memory(data.data(), (int)data.size(), &w, &h, &ch, 4);
         if (pixels) {
-            unsigned int tex = 0;
-            glGenTextures(1, &tex);
-            glBindTexture(GL_TEXTURE_2D, tex);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-            glBindTexture(GL_TEXTURE_2D, 0);
+            ImTextureID tex = TicoVulkan::CreateTextureRGBA(pixels, (uint32_t)w, (uint32_t)h);
             stbi_image_free(pixels);
+            if (tex != 0)
             g_raBadgeCache[name] = tex;
         }
     }
@@ -1265,8 +1077,9 @@ static bool InitImGui(bool romfsAvailable)
     }
     io.Fonts->Build();
 
-    ImGui_ImplOpenGL3_Init("#version 430");
-    LOG_INFO("IMGUI", "ImGui initialized");
+    // The Vulkan backend is initialized later (TicoVulkan::InitOverlayRenderer)
+    // once VIDVulkan's device and swapchain exist (after YabauseInit).
+    LOG_INFO("IMGUI", "ImGui context initialized");
     return true;
 }
 
@@ -1287,7 +1100,7 @@ static int InitEmulator()
 #else
     yinit.sh2coretype = SH2CORE_INTERPRETER;
 #endif
-    yinit.vidcoretype = VIDCORE_OGL;
+    yinit.vidcoretype = VIDCORE_VULKAN;
     yinit.sndcoretype = SNDCORE_SDL;
     yinit.cdcoretype = CDCORE_ISO;
     yinit.carttype = g_yabaSanshiroConfig.GetCartridgeType();
@@ -1706,68 +1519,21 @@ static void RecalculateViewport()
 // Forward declaration (defined below UpdateScreenMode)
 void ApplySaturnDisplaySettings(int displayMode, int displaySize);
 
-/// Detect handheld/docked mode change and update nwindow crop, screen dimensions,
-/// viewport, and ImGui display size. Following PlatformSwitch pattern.
-/// Returns true if the mode actually changed.
+/// Detect handheld/docked mode change.
+/// With Vulkan the swapchain stays at the NWindow default (1280x720) for both
+/// modes — the OS compositor upscales when docked — so no crop or swapchain
+/// rebuild is needed. We only track the mode for logging.
 static bool UpdateScreenMode(bool isPaused)
 {
+    (void)isPaused;
     u8 operationMode = appletGetOperationMode();
     if (operationMode == g_lastOperationMode)
         return false;
-
-    // Update nwindow crop (no GL context needed)
-    if (operationMode == AppletOperationMode_Handheld)
-    {
-        // Handheld: Crop 1080p surface to 720p BOTTOM-LEFT
-        // OpenGL renders to bottom-left (Y=0), so show bottom 720 rows.
-        // Top-Left indexing: Top = 1080 - 720 = 360, Bottom = 1080.
-        nwindowSetCrop(nwindowGetDefault(), 0, 360, 1280, 1080);
-        g_screenW = 1280;
-        g_screenH = 720;
-    }
-    else
-    {
-        // Docked: Reset crop (full 1080p)
-        nwindowSetCrop(nwindowGetDefault(), 0, 0, 1920, 1080);
-        g_screenW = 1920;
-        g_screenH = 1080;
-    }
     g_lastOperationMode = operationMode;
 
-    // Update ImGui display size
-    ImGuiIO &io = ImGui::GetIO();
-    io.DisplaySize = ImVec2((float)g_screenW, (float)g_screenH);
-
-    // Re-apply the current display settings (display mode + display size)
-    // for the new screen dimensions. ApplySaturnDisplaySettings recalculates
-    // viewport, calls VIDCore->Resize, and clears the framebuffer.
-    if (isPaused)
-    {
-        // Main thread already has GL context while paused
-        ApplySaturnDisplaySettings(g_lastDisplayMode, g_lastDisplaySize);
-    }
-    else
-    {
-        if (yabsys.UseAsyncRendering)
-        {
-            // VDP thread has GL context — borrow it briefly
-            VdpRevoke();
-            eglMakeCurrent(s_display, s_surface, s_surface, s_context);
-        }
-
-        ApplySaturnDisplaySettings(g_lastDisplayMode, g_lastDisplaySize);
-
-        if (yabsys.UseAsyncRendering)
-        {
-            eglMakeCurrent(s_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-            VdpResume();
-        }
-    }
-
-    LOG_INFO("DISPLAY", "Mode changed → %s (%dx%d, viewport=%d,%d %dx%d)",
+    LOG_INFO("DISPLAY", "Mode changed → %s (render fixed at %dx%d)",
              operationMode == AppletOperationMode_Handheld ? "Handheld" : "Docked",
-             g_screenW, g_screenH, g_viewportX, g_viewportY, g_viewportW, g_viewportH);
-
+             g_screenW, g_screenH);
     return true;
 }
 
@@ -1864,16 +1630,11 @@ void ApplySaturnDisplaySettings(int displayMode, int displaySize)
         }
     }
 
-    // Apply to the engine — we already hold the GL context (paused)
-    VIDCore->Resize(g_viewportX, g_viewportY, g_viewportW, g_viewportH, 1, g_engineAspectMode);
-
-    // Clear full framebuffer for clean borders
-    glViewport(0, 0, g_screenW, g_screenH);
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
-
-    // Set the new viewport
-    glViewport(g_viewportX, g_viewportY, g_viewportW, g_viewportH);
+    // Apply to the engine. The Vulkan core ignores origin offsets and handles
+    // pillarbox/letterbox internally from the aspect mode (Android does the
+    // same: always full surface size). Integer-scale sub-rects degrade to
+    // ORIGINAL aspect mode (set above) — the engine centers native pixels.
+    VIDCore->Resize(0, 0, g_screenW, g_screenH, 1, g_engineAspectMode);
 
     LOG_INFO("DISPLAY", "ApplyDisplaySettings: mode=%d, size=%d → viewport=%d,%d %dx%d, aspectMode=%d",
              displayMode, displaySize, g_viewportX, g_viewportY, g_viewportW, g_viewportH, g_engineAspectMode);
@@ -1972,34 +1733,29 @@ bool SaturnStateExists(int slot)
 
 static void RenderOverlay(TicoOverlay &overlay)
 {
-    // Clear full framebuffer black before overlay rendering
-    glViewport(0, 0, g_screenW, g_screenH);
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
+    if (!TicoVulkan::IsReady())
+        return;
 
-    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplVulkan_NewFrame();
     ImGui::NewFrame();
 
-    // Draw captured game frame as background
+    // Draw captured game frame as background (the render pass used by
+    // PresentOverlayFrame clears the swapchain image to black first)
     if (g_capturedFrameTex != 0)
     {
         ImDrawList *bg = ImGui::GetBackgroundDrawList();
         bg->AddImage(
-            (ImTextureID)(intptr_t)g_capturedFrameTex,
+            g_capturedFrameTex,
             ImVec2(0, 0), ImVec2((float)g_screenW, (float)g_screenH),
-            ImVec2(0.0f, 1.0f), // UV: flip vertically (GL origin is bottom-left)
-            ImVec2(1.0f, 0.0f));
+            ImVec2(0.0f, 0.0f),
+            ImVec2(1.0f, 1.0f));
     }
 
     overlay.Render();
     ImGui::Render();
 
-    glViewport(0, 0, g_screenW, g_screenH);
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-    eglSwapBuffers(s_display, s_surface);
-
-    // Restore emulator viewport
-    glViewport(g_viewportX, g_viewportY, g_viewportW, g_viewportH);
+    // Acquire a swapchain image, record the draw data and present
+    TicoVulkan::PresentOverlayFrame(ImGui::GetDrawData());
 }
 
 //==============================================================================
@@ -2010,46 +1766,36 @@ static void OnPause()
 {
     if (yabsys.UseAsyncRendering)
     {
-        // Ask VDP thread to release GL context, then reclaim it on main thread
+        // Wait for the VDP thread to finish any in-flight frame before we
+        // touch the queue/swapchain from the main thread.
         VdpRevoke();
-        eglMakeCurrent(s_display, s_surface, s_surface, s_context);
     }
-    // Capture front buffer into texture
-    if (g_capturedFrameTex == 0)
-        glGenTextures(1, &g_capturedFrameTex);
-    glBindTexture(GL_TEXTURE_2D, g_capturedFrameTex);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glReadBuffer(GL_FRONT);
-    glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 0, 0, g_screenW, g_screenH, 0);
-    glReadBuffer(GL_BACK);
-    glBindTexture(GL_TEXTURE_2D, 0);
+
+    // Capture the last presented game frame into a texture (pause background)
+    if (g_capturedFrameTex != 0)
+    {
+        TicoVulkan::DestroyTexture(g_capturedFrameTex);
+        g_capturedFrameTex = 0;
+    }
+    g_capturedFrameTex = TicoVulkan::CaptureGameFrame(&g_capturedFrameW, &g_capturedFrameH);
 
     // Mute audio
     ScspMuteAudio(SCSP_MUTE_SYSTEM);
     SDL_PauseAudio(1);
 
-    LOG_INFO("OVERLAY", "Paused — frame captured, audio muted");
+    LOG_INFO("OVERLAY", "Paused — frame captured (%dx%d), audio muted",
+             g_capturedFrameW, g_capturedFrameH);
 }
 
 static void OnResume()
 {
     if (yabsys.UseAsyncRendering)
     {
-        // Ensure GPU commands finish, unbind from main thread, hand back to VDP
-        glFinish();
-        eglMakeCurrent(s_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
         VdpResume();
-    }
-    else
-    {
-        // Non-async mode: ensure any pending GL commands from pause complete.
-        // The main thread keeps the GL context, but we still need to sync.
-        glFinish();
     }
     SDL_PauseAudio(0);
     ScspUnMuteAudio(SCSP_MUTE_SYSTEM);
-    LOG_INFO("OVERLAY", "Resumed — audio unmuted, GL context returned to VDP thread");
+    LOG_INFO("OVERLAY", "Resumed — audio unmuted");
 }
 
 //==============================================================================
@@ -2071,41 +1817,41 @@ static void Cleanup()
     }
 
     // If we're exiting while paused, resume first so the VDP thread
-    // (if YAB_ASYNC_RENDERING) gets its GL context back and can process
-    // the FINSH event during Vdp2DeInit cleanly.
+    // (if YAB_ASYNC_RENDERING) can process the FINSH event during
+    // Vdp2DeInit cleanly.
     if (g_wasPaused)
     {
         OnResume();
         g_wasPaused = false;
     }
 
-    // 1. Yabause (stops VDP thread which releases GL context via VDPEV_FINSH)
-    YabauseDeInit();
+    // 1. Park the VDP thread past any in-flight frame, then tear down the
+    // ImGui Vulkan backend + overlay textures. This must happen BEFORE
+    // YabauseDeInit: VIDVulkan::deInit() deletes the VIDVulkan singleton our
+    // helpers go through (the VkDevice itself lives until DeinitVulkan).
+    if (yabsys.UseAsyncRendering)
+        VdpRevoke();
 
-    // 2. Reclaim GL context on main thread for cleanup.
-    // - In async mode: VDP thread released it during DeInit, need to reclaim.
-    // - In non-async mode: context should still be current, but verify to be safe.
-    if (s_display != EGL_NO_DISPLAY && s_surface != EGL_NO_SURFACE && s_context != EGL_NO_CONTEXT)
-    {
-        if (eglGetCurrentContext() != s_context)
-            eglMakeCurrent(s_display, s_surface, s_surface, s_context);
-    }
-
-    // 3. Delete captured frame texture (now safe — we have GL context)
     if (g_capturedFrameTex != 0)
     {
-        glDeleteTextures(1, &g_capturedFrameTex);
+        TicoVulkan::DestroyTexture(g_capturedFrameTex);
         g_capturedFrameTex = 0;
     }
+    TicoVulkan::ShutdownOverlayRenderer();
 
-    // 4. ImGui (needs GL context to free resources)
-    ImGui_ImplOpenGL3_Shutdown();
+    if (yabsys.UseAsyncRendering)
+        VdpResume();
+
+    // 2. Yabause (stops VDP thread, VIDVulkan::deInit frees the video core)
+    YabauseDeInit();
+
+    // 3. ImGui context (backend already shut down above)
     ImGui::DestroyContext();
 
-    // 5. EGL (last GPU operation before SDL teardown)
-    DeinitEgl();
+    // 4. Vulkan device/instance (last GPU operation before SDL teardown)
+    DeinitVulkan();
 
-    // 6. SDL Audio
+    // 5. SDL Audio
     Mix_CloseAudio();
     SDL_Quit();
 
@@ -2187,42 +1933,25 @@ int main(int argc, char **argv)
     apmSetPerformanceConfiguration(ApmPerformanceMode_Normal, 0x92220007);
     apmSetPerformanceConfiguration(ApmPerformanceMode_Boost, 0x92220008);
 
-    // ---- Set native window to 1080p framebuffer ----
-    // libnx defaults to 1280x720. We need 1920x1080 so that:
-    //   - Docked: render at full 1920x1080
-    //   - Handheld: render at 1280x720 in bottom-left, crop selects that region
-    // Must be called BEFORE EGL init (which allocates buffers and locks dimensions).
-    nwindowSetDimensions(nwindowGetDefault(), 1920, 1080);
-
-    // ---- Detect initial display mode ----
-    {
-        u8 operationMode = appletGetOperationMode();
-        if (operationMode == AppletOperationMode_Handheld)
-        {
-            // Crop to bottom-left 1280x720 of the 1080p buffer.
-            // GL origin is bottom-left, so our 1280x720 rendering at (0,0)
-            // maps to top-left rows 360..1080 → exactly the cropped region.
-            nwindowSetCrop(nwindowGetDefault(), 0, 360, 1280, 1080);
+    // ---- Display setup ----
+    // The Vulkan swapchain uses the NWindow default 1280x720 buffer for both
+    // handheld and docked (the OS compositor upscales when docked).
             g_screenW = 1280;
             g_screenH = 720;
-        }
-        else
-        {
-            // Docked: full 1080p, no crop needed
-            nwindowSetCrop(nwindowGetDefault(), 0, 0, 1920, 1080);
-            g_screenW = 1920;
-            g_screenH = 1080;
-        }
-        g_lastOperationMode = operationMode;
-        LOG_INFO("DISPLAY", "Initial mode: %s (%dx%d)",
-                 operationMode == AppletOperationMode_Handheld ? "Handheld" : "Docked",
+    g_lastOperationMode = appletGetOperationMode();
+    LOG_INFO("DISPLAY", "Initial mode: %s (render %dx%d)",
+             g_lastOperationMode == AppletOperationMode_Handheld ? "Handheld" : "Docked",
                  g_screenW, g_screenH);
-    }
 
-    // ---- EGL ----
-    if (!InitEgl(nwindowGetDefault()))
+    // ---- Shader cache (GLSL→SPIR-V results, see YuiGetShaderCachePath) ----
+    mkdir("sdmc:/tico", 0777);
+    mkdir("sdmc:/tico/cache", 0777);
+    mkdir("sdmc:/tico/cache/saturn", 0777);
+
+    // ---- Vulkan (NVK instance/device + VIDVulkan window) ----
+    if (!InitVulkan())
     {
-        LOG_ERROR("HOME", "EGL init failed");
+        LOG_ERROR("HOME", "Vulkan init failed");
         return EXIT_FAILURE;
     }
 
@@ -2230,7 +1959,7 @@ int main(int argc, char **argv)
     if (!InitImGui(romfsOk))
     {
         LOG_ERROR("HOME", "ImGui init failed");
-        DeinitEgl();
+        DeinitVulkan();
         return EXIT_FAILURE;
     }
 
@@ -2238,11 +1967,29 @@ int main(int argc, char **argv)
     if (InitEmulator() == -1)
     {
         LOG_ERROR("HOME", "Emulator init failed");
-        ImGui_ImplOpenGL3_Shutdown();
         ImGui::DestroyContext();
-        DeinitEgl();
+        DeinitVulkan();
         return EXIT_FAILURE;
     }
+
+    // ---- ImGui Vulkan backend + in-game overlay hook ----
+    // Needs VIDVulkan's device/swapchain, which exist after YabauseInit.
+    if (!TicoVulkan::InitOverlayRenderer())
+    {
+        LOG_ERROR("HOME", "Overlay renderer init failed");
+        ImGui::DestroyContext();
+        DeinitVulkan();
+        return EXIT_FAILURE;
+    }
+    VIDVulkan::getInstance()->setOnOverlayRender(
+        [](VkCommandBuffer commandBuffer, VkRenderPass renderPass, int width, int height) {
+            (void)renderPass;
+            RenderInGameOverlayVulkan(commandBuffer, width, height);
+        });
+
+    // ---- OSD (FPS display etc.) via nanovg's Vulkan backend ----
+    OSDInit(0);
+    OSDChangeCore(OSDCORE_NANOVG_VULKAN);
 
     // ---- Overlay ----
     // NOTE: The overlay object is created here but Init() is deferred to the
@@ -2272,30 +2019,12 @@ int main(int argc, char **argv)
 
     // ---- Viewport ----
     {
-        if (yabsys.UseAsyncRendering)
-        {
-            // With async rendering, the VDP thread now owns the GL context.
-            // Borrow it briefly to set up the viewport, then return it.
-            VdpRevoke(); // VDP thread releases GL context
-            eglMakeCurrent(s_display, s_surface, s_surface, s_context);
-        }
-
-        // Init OSD/NanoVG here — needs GL context (NanoVG creates shaders/textures)
-        // OSDInit(0);
-        // OSDChangeCore(OSDCORE_NANOVG);
-
-        // Initialize overlay GL resources (avatar texture, bolt icon) — must happen
-        // while the main thread holds the GL context.
+        // No frames have been executed yet (the VDP thread is idle), so it's
+        // safe to upload overlay textures and resize from the main thread.
         overlay.Init();
 
         // Apply saved in-game display settings (display mode + integer scale).
         ApplySaturnDisplaySettings((int)overlay.GetDisplayMode(), (int)overlay.GetDisplaySize());
-
-        if (yabsys.UseAsyncRendering)
-        {
-            eglMakeCurrent(s_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-            VdpResume(); // VDP thread reclaims GL context
-        }
     }
 
     // ---- Peripherals & Controllers ----

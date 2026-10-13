@@ -55,6 +55,24 @@ void AddRequiredPlatformInstanceExtensions(std::vector<const char *> *instance_e
 #endif
 
 
+#if defined(__SWITCH__)
+
+void InitPlatform()
+{
+}
+
+void DeInitPlatform()
+{
+}
+
+void AddRequiredPlatformInstanceExtensions(std::vector<const char *> *instance_extensions)
+{
+  instance_extensions->push_back(VK_NN_VI_SURFACE_EXTENSION_NAME);
+}
+
+#endif
+
+
 #if USE_FRAMEWORK_GLFW
 
 

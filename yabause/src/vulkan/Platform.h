@@ -70,6 +70,12 @@ void AddRequiredPlatformDeviceExtensions(std::vector<const char*>* device_extens
 #include <android/native_window.h> // requires ndk r5 or newer
 #include <android/native_window_jni.h> // requires ndk r5 or newer
 
+// NINTENDO SWITCH ( libnx + NVK, surface via VK_NN_vi_surface )
+#elif defined(__SWITCH__)
+
+#define VK_USE_PLATFORM_VI_NN 1
+#include <switch.h>
+
 // LINUX ( Via XCB library )
 #elif defined( __linux )
 // there are other ways to create windows on linux,
@@ -85,7 +91,7 @@ void AddRequiredPlatformDeviceExtensions(std::vector<const char*>* device_extens
 #error Platform not yet supported
 #endif
 
-#if defined(HAVE_LIBSDL2) 
+#if defined(HAVE_LIBSDL2) && !defined(__SWITCH__)
 
 #include <SDL.h>
 #include <SDL_vulkan.h>

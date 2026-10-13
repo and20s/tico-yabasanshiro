@@ -915,6 +915,10 @@ struct RBGUniform
   unsigned int priority;
 };
 
+// GL compute-shader RBG generator — only for builds that link OpenGL.
+// (Vulkan-only builds use RBGGeneratorVulkan below; the shared shader
+// sources and RBGUniform above stay available to both.)
+#if defined(HAVE_LIBGL) || defined(_OGLES3_)
 class RBGGenerator
 {
   GLuint prg_rbg_0_2w_bitmap_4bpp_ = 0;
@@ -3159,7 +3163,14 @@ public:
   }
 };
 
+#endif // HAVE_LIBGL || _OGLES3_
 #if defined(HAVE_VULKAN)
+
+// Shader-source list helper, normally defined inside the GL RBGGenerator
+// above — redefine for Vulkan-only builds where that region is compiled out.
+#ifndef S
+#define S(A) A, sizeof(A) / sizeof(char *)
+#endif
 
 #include "vulkan/RBGGeneratorVulkan.h"
 #include <iostream>
@@ -5652,6 +5663,7 @@ void RBGGeneratorVulkan::onFinish()
 }
 
 #endif
+#if defined(HAVE_LIBGL) || defined(_OGLES3_)
 
 RBGGenerator *RBGGenerator::instance_ = nullptr;
 
@@ -5725,3 +5737,5 @@ extern "C"
     RBGGenerator::destroyInstance();
   }
 }
+
+#endif // HAVE_LIBGL || _OGLES3_

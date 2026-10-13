@@ -2,7 +2,8 @@ project(yabause-nx)
 
 yab_port_start()
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14")
+# C++17 for the Vulkan renderer headers (vulkan.hpp) and ImGui Vulkan backend
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=gnu++17")
 
 # Platform-specific definitions matching build_yabause()
 add_definitions(
@@ -14,10 +15,8 @@ add_definitions(
     -DNDEBUG
     -DHAVE_MUSASHI
     -DYAB_WANT_SCSP
-    -DYAB_WANT_OPENGL
     -DYAB_WANT_SH2_CACHE
     -DYAB_ASYNC_RENDERING
-    -DIMGUI_IMPL_OPENGL_LOADER_CUSTOM
     -DHAVE_LIBCHDR
     -DRC_CLIENT_SUPPORTS_HASH=1
     -D_GNU_SOURCE
@@ -39,6 +38,9 @@ set(PORT_INCLUDE_DIRS
     "${CMAKE_CURRENT_BINARY_DIR}/../"
     "${DEVKITPRO}/libnx/include"
     "${DEVKITPRO}/portlibs/switch/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../vulkan/Include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../gllibs/include"
+    "${GLM_INCLUDE_DIRS}"
     "${CMAKE_CURRENT_SOURCE_DIR}/tico/deps/imgui"
     "${CMAKE_CURRENT_SOURCE_DIR}/tico/deps/imgui/backends"
     "${CMAKE_CURRENT_SOURCE_DIR}/tico"
@@ -47,12 +49,21 @@ set(PORT_INCLUDE_DIRS
     "${CMAKE_CURRENT_SOURCE_DIR}/../../../rcheevos/src"
 )
 
-# Mesa (EGL + GLES + nouveau driver) from the devkitPro portlibs
-set(PORT_LIBRARIES 
+# Both renderers in one NRO, picked at launch:
+#   OpenGL -- devkitPro's Mesa 20.1 (EGL/GLES through nvc0) and libdrm_nouveau
+#   Vulkan -- mesa-switch NVK, the loaderless libvulkan.a from the
+#             switch-dev-legacy-vulkan image (its Mesa internals are renamed
+#             so they do not clash with the legacy OpenGL's)
+set(PORT_LIBRARIES
+    vulkan
+    ${SHADERC_LIBRARIES}
     EGL
     GLESv2
     glapi
     drm_nouveau
+    expat
+    zstd
+    z
     nx 
     m 
     SDL2
@@ -68,6 +79,8 @@ set(PORT_LIBRARIES
 set(yabause_nx_SOURCES
     # Tico entry point
     tico/TicoMain.cpp
+    # Tico Vulkan host (ImGui backend glue on top of VIDVulkan)
+    tico/TicoVulkan.cpp
     # Tico Overlay
     tico/TicoOverlay.cpp
     tico/TicoTranslationManager.cpp
@@ -79,6 +92,7 @@ set(yabause_nx_SOURCES
     tico/deps/imgui/imgui_tables.cpp
     tico/deps/imgui/imgui_widgets.cpp
     # ImGui backends
+    tico/deps/imgui/backends/imgui_impl_vulkan.cpp
     tico/deps/imgui/backends/imgui_impl_opengl3.cpp
     # RetroAchievements (rcheevos)
     # RetroAchievements (rcheevos)
@@ -134,6 +148,12 @@ link_directories(
 
 add_executable(yabause-nx ${yabause_nx_SOURCES})
 target_link_libraries(yabause-nx yabause ${YABAUSE_LIBRARIES} ${PORT_LIBRARIES} ${LIBCHDR_LIBRARIES} curl)
+
+# glm is fetched as an ExternalProject by the parent vulkan block — make sure
+# it exists before nx sources (which include VIDVulkan.h → glm) compile.
+if (YAB_WANT_VULKAN)
+    add_dependencies(yabause-nx glm)
+endif()
 
 # Linker flags matching build_yabause() architecture and specs
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -specs=${DEVKITPRO}/libnx/switch.specs -g -Wl,-Map,memory.map -Wl,--gc-sections")

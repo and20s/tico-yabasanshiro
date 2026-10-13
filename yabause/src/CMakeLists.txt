@@ -101,10 +101,10 @@ string(COMPARE EQUAL ${YAB_PORTS} "qt" qt_port)
 
 if ("${CMAKE_SYSTEM_NAME}" STREQUAL "Switch")
 add_definitions(-DYAB_PORT_OSD)
-add_definitions(-D_OGL3_)
 add_definitions(-DNX)
-add_definitions(-DHAVE_LIBGL)
 add_definitions(-DYAB_ASYNC_RENDERING)
+add_definitions(-D_OGL3_)
+add_definitions(-DHAVE_LIBGL)
 add_definitions(-DYAB_PORT_OSD)
 include_directories(./ ./nanovg ../../../../../../for_reference/mesa/include)		
 set(yabause_SOURCES
@@ -117,6 +117,20 @@ set(yabause_SOURCES
 	nanovg/nanovg_osdcore.c
 	sndsdl.c
 	)
+if (YAB_WANT_VULKAN)
+	# Vulkan (NVK) beside the OpenGL renderer above; the frontend picks one at
+	# launch. The core also uses CPU-side helpers from the GL sources
+	# (fixVdp2Regs, Vdp2ColorRamGetColor, rotation-parameter readers, the
+	# Vulkan shader sources in yglshaderes.c, ...) with either renderer.
+	# C++17 for the Vulkan renderer (vulkan.hpp); overrides the global c++11.
+	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=gnu++17")
+	# Global, not per-include: every vulkan.h in any TU must pull vulkan_vi.h
+	# (VK_NN_vi_surface), regardless of include order relative to Platform.h.
+	add_definitions(-DVK_USE_PLATFORM_VI_NN=1)
+	# vulkan.hpp's DynamicLoader needs dlopen — unavailable on libnx and not
+	# needed: NVK is a static libvulkan.a linked directly.
+	add_definitions(-DVULKAN_HPP_ENABLE_DYNAMIC_LOADER_TOOL=0)
+endif ()
 set(YABAUSE_LIBRARIES ${YABAUSE_LIBRARIES} SDL2)
 endif ()
 
@@ -746,6 +760,17 @@ if (${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 		set(LIBVULKAN ${CMAKE_CURRENT_SOURCE_DIR}/vulkan/lib/x86/vulkan-1.lib )	
 	endif()
 
+elseif ("${CMAKE_SYSTEM_NAME}" STREQUAL "Switch")
+	# Bundled Vulkan headers (v296, includes VK_NN_vi_surface).
+	# The Vulkan driver itself is NVK (Mesa) — linked by the nx port as a
+	# static libvulkan.a, so no LIBVULKAN here.
+	# shaderc must be cross-compiled with devkitA64 (see build_yabasanshiro_nro.sh)
+	# and pointed to via -DSWITCH_SHADERC_DIR=<prefix>.
+	set( SWITCH_SHADERC_DIR "/opt/shaderc-switch" CACHE PATH "Prefix with include/ and lib/libshaderc_combined.a built for Switch" )
+	set( LIBVULKAN_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/vulkan/Include)
+	set( SHADERC_INCLUDE_DIR ${SWITCH_SHADERC_DIR}/include )
+	set( SHADERC_LIBRARIES ${SWITCH_SHADERC_DIR}/lib/libshaderc_combined.a )
+	set( LIBVULKAN "" )
 else()
 	set( LIBVULKAN_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/vulkan/Include)
 	set( SHADERC_INCLUDE_DIR ${ANDROID_NDK}/sources/third_party/shaderc/include  )
@@ -804,6 +829,10 @@ set( VULKAN_SOURCES
  vulkan/Window.h
  nanovg/nanovg_vulkan_osdcore.cpp
 )
+
+if ("${CMAKE_SYSTEM_NAME}" STREQUAL "Switch")
+	set( VULKAN_SOURCES ${VULKAN_SOURCES} vulkan/Window_switch.cpp )
+endif()
 
 include_directories( ${VULKAN_INCLUDE_DIRS} )
 

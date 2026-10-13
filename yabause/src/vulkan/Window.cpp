@@ -53,6 +53,9 @@ Window::Window(Renderer *renderer, uint32_t size_x, uint32_t size_y, std::string
 #if defined(__RETORO_ARENA__)  
     window = (SDL_Window*)nativeWindow;
 #endif
+#if defined(__SWITCH__)
+  window = nativeWindow;
+#endif
 	_InitOSWindow();
 	_InitSurface();
 	_InitSwapchain();

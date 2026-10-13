@@ -14,10 +14,8 @@
 #include "TicoTranslationManager.h"
 #include "TicoUtils.h"
 
-// OpenGL headers (Yabause uses GL_GLEXT_PROTOTYPES)
-#include <EGL/egl.h>
-#include <GL/gl.h>
-#include <GL/glext.h>
+// Vulkan-backed texture helpers (ImGui Vulkan backend)
+#include "TicoVulkan.h"
 
 #include <sys/stat.h>
 #include <string>
@@ -108,12 +106,12 @@ TicoOverlay::~TicoOverlay()
 #endif
     if (m_avatarTexture != 0)
     {
-        glDeleteTextures(1, &m_avatarTexture);
+        TicoVulkan::DestroyTexture(m_avatarTexture);
         m_avatarTexture = 0;
     }
     if (m_boltTexture != 0)
     {
-        glDeleteTextures(1, &m_boltTexture);
+        TicoVulkan::DestroyTexture(m_boltTexture);
         m_boltTexture = 0;
     }
 }
@@ -143,13 +141,7 @@ bool TicoOverlay::Init()
                 nsvgRasterize(rast, svg, 0, 0, scale, pixels, m_boltWidth, m_boltHeight, m_boltWidth * 4);
                 nsvgDeleteRasterizer(rast);
 
-                glGenTextures(1, &m_boltTexture);
-                glBindTexture(GL_TEXTURE_2D, m_boltTexture);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, m_boltWidth, m_boltHeight, 0,
-                             GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-                glBindTexture(GL_TEXTURE_2D, 0);
+                m_boltTexture = TicoVulkan::CreateTextureRGBA(pixels, (uint32_t)m_boltWidth, (uint32_t)m_boltHeight);
             }
             free(pixels);
         }
@@ -326,13 +318,8 @@ void TicoOverlay::LoadAvatar()
             if (data)
             {
                 if (m_avatarTexture != 0)
-                    glDeleteTextures(1, &m_avatarTexture);
-                glGenTextures(1, &m_avatarTexture);
-                glBindTexture(GL_TEXTURE_2D, m_avatarTexture);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
-                glBindTexture(GL_TEXTURE_2D, 0);
+                    TicoVulkan::DestroyTexture(m_avatarTexture);
+                m_avatarTexture = TicoVulkan::CreateTextureRGBA(data, (uint32_t)width, (uint32_t)height);
 
                 m_avatarWidth = width;
                 m_avatarHeight = height;
@@ -389,13 +376,8 @@ void TicoOverlay::LoadAvatar()
                         if (rgba)
                         {
                             if (m_avatarTexture != 0)
-                                glDeleteTextures(1, &m_avatarTexture);
-                            glGenTextures(1, &m_avatarTexture);
-                            glBindTexture(GL_TEXTURE_2D, m_avatarTexture);
-                            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-                            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-                            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
-                            glBindTexture(GL_TEXTURE_2D, 0);
+                                TicoVulkan::DestroyTexture(m_avatarTexture);
+                            m_avatarTexture = TicoVulkan::CreateTextureRGBA(rgba, (uint32_t)width, (uint32_t)height);
                             m_avatarWidth = width;
                             m_avatarHeight = height;
                             stbi_image_free(rgba);

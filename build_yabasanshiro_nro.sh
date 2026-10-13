@@ -6,9 +6,84 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 YABA_DIR="$SCRIPT_DIR"
 BUILD_DIR="$YABA_DIR/build_tico"
 
-echo "=== Building YabaSanshiro2 for Switch ===" 
+# shaderc (GLSL→SPIR-V, used by the VIDVulkan renderer at runtime).
+# Cross-compiled once with devkitA64 and cached inside the project tree so
+# ephemeral docker runs reuse it.
+SHADERC_PREFIX="${SWITCH_SHADERC_DIR:-$YABA_DIR/.cache/shaderc-switch}"
+SHADERC_TAG="${SHADERC_TAG:-v2024.3}"
+
+echo "=== Building YabaSanshiro (OpenGL + Vulkan) for Switch ==="
 echo "Source: $YABA_DIR"
 echo "Build:  $BUILD_DIR"
+echo "shaderc: $SHADERC_PREFIX"
+
+# ============================================================
+# Build shaderc for Switch (once, cached in .cache/)
+# ============================================================
+if [ ! -f "$SHADERC_PREFIX/lib/libshaderc_combined.a" ]; then
+    echo "=== shaderc not found — cross-compiling $SHADERC_TAG with devkitA64 ==="
+
+    command -v git >/dev/null || { echo "ERROR: git is required to fetch shaderc"; exit 1; }
+    if ! command -v python3 >/dev/null; then
+        echo "python3 missing — attempting pacman install..."
+        pacman -S --noconfirm python || { echo "ERROR: python3 is required (shaderc dependency sync + SPIRV-Tools codegen)"; exit 1; }
+    fi
+
+    SHADERC_SRC="$YABA_DIR/.cache/shaderc-src"
+    SHADERC_BUILD="$YABA_DIR/.cache/shaderc-build"
+    mkdir -p "$YABA_DIR/.cache"
+
+    if [ ! -d "$SHADERC_SRC/.git" ]; then
+        git clone --depth 1 --branch "$SHADERC_TAG" https://github.com/google/shaderc "$SHADERC_SRC"
+    fi
+    (cd "$SHADERC_SRC" && ./utils/git-sync-deps)
+
+    # SPIRV-Tools rejects unknown platforms ("NintendoSwitch" from the devkitPro
+    # toolchain). Teach it about ours — newlib is close enough to Linux for the
+    # bits these defines gate (console printing; timers are disabled below).
+    SPVT_CMAKE="$SHADERC_SRC/third_party/spirv-tools/CMakeLists.txt"
+    if ! grep -q 'NintendoSwitch' "$SPVT_CMAKE"; then
+        python3 - "$SPVT_CMAKE" <<'PYEOF'
+import sys
+p = sys.argv[1]
+src = open(p).read()
+needle = 'else()\n  message(FATAL_ERROR "Your platform'
+patch = ('elseif("${CMAKE_SYSTEM_NAME}" STREQUAL "NintendoSwitch")\n'
+         '  add_definitions(-DSPIRV_LINUX)\n'
+         + needle)
+if needle not in src:
+    sys.exit("SPIRV-Tools platform check not found — update the patch in build_yabasanshiro_nro.sh")
+open(p, "w").write(src.replace(needle, patch, 1))
+print("Patched SPIRV-Tools platform check for NintendoSwitch")
+PYEOF
+    fi
+
+    SWITCH_TOOLCHAIN="$DEVKITPRO/cmake/Switch.cmake"
+    if [ ! -f "$SWITCH_TOOLCHAIN" ]; then
+        SWITCH_TOOLCHAIN="$YABA_DIR/yabause/src/nx/nx-toolchain.cmake"
+    fi
+
+    rm -rf "$SHADERC_BUILD"
+    mkdir -p "$SHADERC_BUILD"
+    cmake -S "$SHADERC_SRC" -B "$SHADERC_BUILD" \
+        -DCMAKE_TOOLCHAIN_FILE="$SWITCH_TOOLCHAIN" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DSHADERC_SKIP_TESTS=ON \
+        -DSHADERC_SKIP_EXAMPLES=ON \
+        -DSHADERC_SKIP_COPYRIGHT_CHECK=ON \
+        -DENABLE_GLSLANG_BINARIES=OFF \
+        -DSPIRV_SKIP_EXECUTABLES=ON \
+        -DSPIRV_SKIP_TESTS=ON \
+        -DSPIRV_ALLOW_TIMERS=OFF \
+        -DSPIRV_WERROR=OFF \
+        -DSHADERC_ENABLE_WERROR_COMPILE=OFF
+    cmake --build "$SHADERC_BUILD" --target shaderc_combined -j"$(nproc)"
+
+    mkdir -p "$SHADERC_PREFIX/lib" "$SHADERC_PREFIX/include"
+    cp "$SHADERC_BUILD/libshaderc/libshaderc_combined.a" "$SHADERC_PREFIX/lib/"
+    cp -r "$SHADERC_SRC/libshaderc/include/shaderc" "$SHADERC_PREFIX/include/"
+    echo "=== shaderc installed to $SHADERC_PREFIX ==="
+fi
 
 if [ ! -d "$YABA_DIR" ]; then
     echo "Error: YabaSanshiro2 source directory not found at $YABA_DIR"
@@ -47,10 +122,10 @@ sed -i 's/-mtp=soft//g' "$YABA_DIR/yabause/src/nx/nx-toolchain.cmake"
 sed -i 's/-fno-exceptions//g' "$YABA_DIR/yabause/src/nx/nx-toolchain.cmake"
 
 # WORKAROUND: exclude cd-web.cpp (requires ifaddrs.h which is missing on Switch)
-sed -i 's/cd-web.cpp/#cd-web.cpp/g' "$YABA_DIR/yabause/src/CMakeLists.txt"
+sed -i 's/^\([[:space:]]*\)cd-web.cpp/\1#cd-web.cpp/' "$YABA_DIR/yabause/src/CMakeLists.txt"
 
 # WORKAROUND: exclude PlayRecorder.cpp (causes linker errors with zlib and threading)
-sed -i 's/PlayRecorder.cpp/#PlayRecorder.cpp/g' "$YABA_DIR/yabause/src/CMakeLists.txt"
+sed -i 's/^\([[:space:]]*\)PlayRecorder.cpp/\1#PlayRecorder.cpp/' "$YABA_DIR/yabause/src/CMakeLists.txt"
 
 # Using the nx-toolchain.cmake from the repository
 cmake "$YABA_DIR/yabause" \
@@ -61,6 +136,9 @@ cmake "$YABA_DIR/yabause" \
     -DYAB_PORTS=nx \
     -DCMAKE_BUILD_TYPE=Release \
     -DDEVKITPRO=/opt/devkitpro \
+    -DYAB_WANT_VULKAN=ON \
+    -DYAB_WANT_OPENGL=ON \
+    -DSWITCH_SHADERC_DIR="$SHADERC_PREFIX" \
     -DHAVE_LIBSDL=1 \
     -DYAB_WANT_DYNAREC_DEVMIYAX=TRUE \
     -DDYNAREC_DEVMIYAX=TRUE \

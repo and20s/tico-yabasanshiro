@@ -1908,6 +1908,10 @@ void VIDVulkan::Vdp2DrawEnd(void) {
                             commandBuffer,
                             pretransformFlag);
     OSDDisplayMessages(NULL, 0, 0);
+    if (onOverlayRender) {
+      VkExtent2D ssize = _renderer->getWindow()->GetVulkanSurfaceSize();
+      onOverlayRender(commandBuffer, _renderer->getWindow()->GetVulkanRenderPass(), ssize.width, ssize.height);
+    }
     vkCmdEndRenderPass(commandBuffer);
     goto ENDEND;
   } else {
@@ -2367,6 +2371,10 @@ void VIDVulkan::Vdp2DrawEnd(void) {
       NanovgVulkanSetDevices(device, this->getPhysicalDevice(), _renderer->getWindow()->GetVulkanRenderPass(),
                              commandBuffer, pretransformFlag);
       OSDDisplayMessages(NULL, 0, 0);
+      if (onOverlayRender) {
+        VkExtent2D ssize = _renderer->getWindow()->GetVulkanSurfaceSize();
+        onOverlayRender(commandBuffer, _renderer->getWindow()->GetVulkanRenderPass(), ssize.width, ssize.height);
+      }
     }
 
     vkCmdEndRenderPass(commandBuffer);
@@ -2453,6 +2461,9 @@ void VIDVulkan::Vdp2DrawEnd(void) {
       NanovgVulkanSetDevices(device, this->getPhysicalDevice(), _renderer->getWindow()->GetVulkanKeepRenderPass(),
                              commandBuffer, pretransformFlag);
       OSDDisplayMessages(NULL, finalWidth, finalHeight);
+      if (onOverlayRender) {
+        onOverlayRender(commandBuffer, _renderer->getWindow()->GetVulkanKeepRenderPass(), deviceWidth, deviceHeight);
+      }
       vkCmdEndRenderPass(commandBuffer);
 
     }
