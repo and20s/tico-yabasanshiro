@@ -243,5 +243,6 @@
   "settings_yabasanshiro_map_up": "方向键上",
   "settings_yabasanshiro_map_down": "方向键下",
   "settings_yabasanshiro_map_left": "方向键左",
-  "settings_yabasanshiro_map_right": "方向键右"
+  "settings_yabasanshiro_map_right": "方向键右",
+  "yabasanshiro_vulkan_heavier": "Vulkan 比 OpenGL 更吃性能：需超频 Switch 才能全速运行"
 }

@@ -242,5 +242,6 @@
   "settings_yabasanshiro_map_up": "Крестовина вверх",
   "settings_yabasanshiro_map_down": "Крестовина вниз",
   "settings_yabasanshiro_map_left": "Крестовина влево",
-  "settings_yabasanshiro_map_right": "Крестовина вправо"
+  "settings_yabasanshiro_map_right": "Крестовина вправо",
+  "yabasanshiro_vulkan_heavier": "Vulkan тяжелее OpenGL: для полной скорости разгоните Switch"
 }

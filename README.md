@@ -10,6 +10,9 @@
 
 This port is exclusive to Tico, adapted to work with its frontend and runtime, and provided as a standalone build for the Nintendo Switch. It focuses on integration, consistency, and predictable behavior within the Tico ecosystem.
 
+> [!CAUTION]
+> **Vulkan is heavier than OpenGL.** It needs an overclocked Switch to run at full speed. OpenGL is the default and the lighter renderer.
+
 ----------
 
 ## Summary
@@ -19,7 +22,9 @@ This port focuses on making YabaSanshiro fit naturally within Tico, rather than 
 It adds:
 
 -   Custom overlay matching Tico design, including time, date, user avatar, and game title
--   A renderer choice: OpenGL (devkitPro's Mesa) or Vulkan (NVK), in one build
+-   A renderer choice in one build: OpenGL (devkitPro's Mesa, the lighter one) or Vulkan (NVK), which is heavier and needs an overclocked Switch to run at full speed
+-   With Vulkan: AMD FSR 1.0 upscaling and frame generation (LSFG, with your own Lossless.dll)
+-   Button mapping, and the multitap for up to 8 players
 -   Explicit control over display (integer scaling and aspect ratios)
 -   Built-in save and load state support, with pictures, that remembers the disc of multi-disc games
 -   Cartridges, a choice between the real and emulated BIOS, and skipping the BIOS intro

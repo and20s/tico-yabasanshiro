@@ -1525,6 +1525,15 @@ int main(int argc, char **argv)
         OverlayUI::ShowToast(std::string("No Saturn BIOS in ") + tico_system_dir() +
                                  ": the emulated BIOS runs (a few games need the real one)",
                              OverlayUI::ToastCorner::TopRight);
+    if (g_vulkan)
+    {
+        // Vulkan does more of the work on the GPU than OpenGL here
+        const std::string key = "yabasanshiro_vulkan_heavier";
+        std::string text = SwitchFrontend::OverlayTranslation::tr(key.c_str());
+        if (text.empty() || text == key)
+            text = "Vulkan is heavier than OpenGL: overclock the Switch for full speed";
+        OverlayUI::ShowToast(text, OverlayUI::ToastCorner::TopRight);
+    }
     YabaRA::Init(cdpath);
 
     LOG_INFO("HOME", "Entering main loop");

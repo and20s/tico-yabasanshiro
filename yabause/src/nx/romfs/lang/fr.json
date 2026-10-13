@@ -243,5 +243,6 @@
   "settings_yabasanshiro_map_up": "Croix haut",
   "settings_yabasanshiro_map_down": "Croix bas",
   "settings_yabasanshiro_map_left": "Croix gauche",
-  "settings_yabasanshiro_map_right": "Croix droite"
+  "settings_yabasanshiro_map_right": "Croix droite",
+  "yabasanshiro_vulkan_heavier": "Vulkan est plus lourd qu’OpenGL : overclockez la Switch pour la pleine vitesse"
 }

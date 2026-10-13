@@ -243,5 +243,6 @@
   "settings_yabasanshiro_map_up": "D-Pad Up",
   "settings_yabasanshiro_map_down": "D-Pad Down",
   "settings_yabasanshiro_map_left": "D-Pad Left",
-  "settings_yabasanshiro_map_right": "D-Pad Right"
+  "settings_yabasanshiro_map_right": "D-Pad Right",
+  "yabasanshiro_vulkan_heavier": "Vulkan is heavier than OpenGL: overclock the Switch for full speed"
 }

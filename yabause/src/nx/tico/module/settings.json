@@ -24,7 +24,7 @@
                   "value": "gl"
                 },
                 {
-                  "label": "Vulkan (NVK)",
+                  "label": "Vulkan (NVK) — heavier, needs overclock",
                   "value": "vulkan"
                 }
               ],

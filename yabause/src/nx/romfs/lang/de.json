@@ -242,5 +242,6 @@
   "settings_yabasanshiro_map_up": "Steuerkreuz oben",
   "settings_yabasanshiro_map_down": "Steuerkreuz unten",
   "settings_yabasanshiro_map_left": "Steuerkreuz links",
-  "settings_yabasanshiro_map_right": "Steuerkreuz rechts"
+  "settings_yabasanshiro_map_right": "Steuerkreuz rechts",
+  "yabasanshiro_vulkan_heavier": "Vulkan ist aufwendiger als OpenGL: Übertakte die Switch für volle Geschwindigkeit"
 }

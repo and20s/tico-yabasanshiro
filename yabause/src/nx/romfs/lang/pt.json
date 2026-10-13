@@ -243,5 +243,6 @@
   "settings_yabasanshiro_map_up": "Direcional para cima",
   "settings_yabasanshiro_map_down": "Direcional para baixo",
   "settings_yabasanshiro_map_left": "Direcional para a esquerda",
-  "settings_yabasanshiro_map_right": "Direcional para a direita"
+  "settings_yabasanshiro_map_right": "Direcional para a direita",
+  "yabasanshiro_vulkan_heavier": "O Vulkan é mais pesado que o OpenGL: faça overclock na Switch para velocidade total"
 }
