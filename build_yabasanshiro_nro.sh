@@ -168,7 +168,10 @@ echo "=== Build Complete ==="
 # This matches how flycast/tico do it: elf2nro with --nacp + --romfsdir
 # ============================================================
 ROMFS_DIR="$YABA_DIR/yabause/src/nx/romfs"
-NRO_OUT="$SCRIPT_DIR/yabasanshiro.nro"
+NRO_OUT="$SCRIPT_DIR/tico-yabasanshiro.nro"
+APP_VERSION="3.0.0"
+# the homebrew menu wants a 256x256 JPEG; another size breaks the NRO
+ICON_FILE="$YABA_DIR/yabause/src/nx/icon.jpg"
 
 # Find the ELF binary (CMake target yabause-nx with OUTPUT_NAME yabasanshiro)
 ELF_FILE=""
@@ -191,11 +194,11 @@ echo "Found ELF: $ELF_FILE"
 
 # Generate NACP metadata (required for proper ASET section)
 NACP_FILE="$BUILD_DIR/yabasanshiro.nacp"
-nacptool --create "YabaSanshiro" "devmiyax/tico" "0.0.1" "$NACP_FILE"
+nacptool --create "tico-yabasanshiro" "devmiyax/ticoverse.com" "$APP_VERSION" "$NACP_FILE"
 echo "Generated NACP: $NACP_FILE"
 
 # Build elf2nro arguments
-ELF2NRO_ARGS="--nacp=$NACP_FILE"
+ELF2NRO_ARGS="--nacp=$NACP_FILE --icon=$ICON_FILE"
 
 # Add romfs if directory exists and has files
 if [ -d "$ROMFS_DIR" ] && [ -n "$(find "$ROMFS_DIR" -type f 2>/dev/null | head -1)" ]; then
