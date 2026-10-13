@@ -178,7 +178,11 @@ target_include_directories(tico_lsfg PRIVATE
     ${TICO_LSFG}/lsfg-vk-backend/src)
 # after the project's -std=gnu++17
 target_compile_options(tico_lsfg PRIVATE -std=gnu++20 -fexceptions -frtti)
-target_compile_definitions(tico_lsfg PRIVATE USE_VULKAN=1 VK_NO_PROTOTYPES=1)
+# LSFG-VK's C++ wrappers live in namespace vk, as Vulkan-Hpp's types do in
+# the renderer: two vk::CommandBuffer classes with LTO merge their code (the
+# renderer's command buffer vectors ran LSFG's destructor and crashed). The
+# bridge's C ABI is all the rest of the program sees.
+target_compile_definitions(tico_lsfg PRIVATE USE_VULKAN=1 VK_NO_PROTOTYPES=1 vk=tico_lsfg_vk)
 # USB drives (libusbhsfs with usbntfs), and libsodium to open the session tico seals
 target_link_libraries(yabause-nx tico_lsfg yabause ${YABAUSE_LIBRARIES} ${PORT_LIBRARIES} ${LIBCHDR_LIBRARIES} curl usbhsfs usbntfs sodium)
 
