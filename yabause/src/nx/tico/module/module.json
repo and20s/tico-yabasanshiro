@@ -24,7 +24,7 @@
       ],
       "disc_based": true,
       "naming": "redump",
-      "games_file": "saturn.json",
+      "games_file": "saturn.dat",
       "retroachievements_id": 39,
       "bios": [
         {
