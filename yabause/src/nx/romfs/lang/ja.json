@@ -247,5 +247,6 @@
   "yabasanshiro_vulkan_heavier": "VulkanはOpenGLより重いです：フルスピードにはSwitchのオーバークロックが必要です",
   "yabasanshiro_fsr_running": "AMD FSR:",
   "yabasanshiro_fsr_failed": "AMD FSRを開始できません:",
-  "yabasanshiro_fsr_native": "AMD FSRには画面より低い内部解像度が必要です（オリジナルまたは2x）"
+  "yabasanshiro_fsr_native": "AMD FSRには画面より低い内部解像度が必要です（オリジナルまたは2x）",
+  "emulator_quick_menu_tip": "{plus}と{minus}を同時に押すとクイックメニューが開きます"
 }

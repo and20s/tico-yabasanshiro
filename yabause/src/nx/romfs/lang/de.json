@@ -246,5 +246,6 @@
   "yabasanshiro_vulkan_heavier": "Vulkan ist aufwendiger als OpenGL: Übertakte die Switch für volle Geschwindigkeit",
   "yabasanshiro_fsr_running": "AMD FSR:",
   "yabasanshiro_fsr_failed": "AMD FSR konnte nicht starten:",
-  "yabasanshiro_fsr_native": "AMD FSR braucht eine interne Auflösung unter der des Bildschirms (Original oder 2x)"
+  "yabasanshiro_fsr_native": "AMD FSR braucht eine interne Auflösung unter der des Bildschirms (Original oder 2x)",
+  "emulator_quick_menu_tip": "Drücke {plus} und {minus} gleichzeitig, um das Schnellmenü zu öffnen"
 }

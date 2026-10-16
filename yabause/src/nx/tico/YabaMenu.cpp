@@ -816,7 +816,11 @@ void OfferResume() {
     if (s.resume_offered || s.library)
         return;
     s.resume_offered = true;
-    if (tico_was_restarted() || !IsFile(StatePath(kAutoSlot)) || YabaRA::Hardcore())
+    const bool restarted = tico_was_restarted();
+    // tico's General > Quick Menu Tip: shown once the game runs smoothly
+    if (!restarted)
+        OverlayUI::ShowQuickMenuTip();
+    if (restarted || !IsFile(StatePath(kAutoSlot)) || YabaRA::Hardcore())
         return;
     const std::string mode = TicoConfig::ResumeOnLaunch();
     if (mode == "never")

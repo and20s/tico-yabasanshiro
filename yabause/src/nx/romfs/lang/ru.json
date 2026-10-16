@@ -246,5 +246,6 @@
   "yabasanshiro_vulkan_heavier": "Vulkan тяжелее OpenGL: для полной скорости разгоните Switch",
   "yabasanshiro_fsr_running": "AMD FSR:",
   "yabasanshiro_fsr_failed": "Не удалось запустить AMD FSR:",
-  "yabasanshiro_fsr_native": "AMD FSR нужно внутреннее разрешение ниже экранного (Original или 2x)"
+  "yabasanshiro_fsr_native": "AMD FSR нужно внутреннее разрешение ниже экранного (Original или 2x)",
+  "emulator_quick_menu_tip": "Нажмите {plus} и {minus} вместе, чтобы открыть быстрое меню"
 }

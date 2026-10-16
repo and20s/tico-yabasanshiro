@@ -52,3 +52,6 @@ aggregation_raw.json
 build_tico/
 .cache/
 yabause/src/nx/romfs/module/
+
+# TicoSecure build secret (shared with tico), never committed
+/yabause/src/nx/tico/TicoSecret.h
