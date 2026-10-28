@@ -32,6 +32,23 @@ jobs:
           ls yabause/src/android/oboe | head -5
           ls yabause/src/retroachievements/rcheevos | head -5
 
+      # Upstream bug: ww_check() is only defined when SH2 cache emulation is on, but it is
+      # called unconditionally, so a normal build fails. Add a no-op version for that case.
+      - name: Apply build fixes
+        run: |
+          python3 - <<'PY'
+          p = 'yabause/src/memory.c'
+          s = open(p, encoding='utf-8', errors='surrogateescape').read()
+          marker = '#if CACHE_ENABLE\nvoid FASTCALL MappedMemoryWriteByte(u32 addr, u8 val, u32 *cycle)'
+          assert s.count(marker) == 1, 'memory.c layout changed, fix needs an update'
+          stub = ('#if !CACHE_ENABLE\n'
+                  '/* Debug write-watch helper only exists in the cache build; no-op here. */\n'
+                  'static inline void ww_check(u32 addr, u32 val, int size) { (void)addr; (void)val; (void)size; }\n'
+                  '#endif\n')
+          open(p, 'w', encoding='utf-8', errors='surrogateescape').write(s.replace(marker, stub + marker))
+          print('memory.c patched')
+          PY
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -55,6 +72,7 @@ jobs:
             -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI="$ABI" \
             -DANDROID_PLATFORM=android-24 \
+            -DCMAKE_ASM-ATT_FLAGS=--target=aarch64-none-linux-android24 \
             -DYAB_PORTS=android \
             -DYAB_WANT_C68K=FALSE \
             -DYAB_WANT_ARM7=TRUE \
