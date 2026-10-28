@@ -42,13 +42,14 @@ jobs:
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
-            "platforms;android-36" "build-tools;36.0.0" "cmake;3.31.6"
+            "platforms;android-36" "build-tools;36.0.0" "cmake;3.31.6" "ndk;27.2.12479018"
 
       # ---- 1) Native emulator core (libyabause_native.so) -------------------
       - name: Build native library
         run: |
           set -e
-          NDK="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+          # NDK 30 (runner default) is stricter than the code expects; use NDK 27.
+          NDK="$ANDROID_HOME/ndk/27.2.12479018"
           echo "Using NDK: $NDK"
           cmake -S yabause -B build-native -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
@@ -59,7 +60,21 @@ jobs:
             -DYAB_WANT_ARM7=TRUE \
             -DYAB_WANT_DYNAREC_DEVMIYAX=TRUE \
             -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-native --target yabause_native -j"$(nproc)"
+          set +e
+          # -k 0: keep compiling after an error so one run reports every failing file
+          cmake --build build-native --target yabause_native -j"$(nproc)" -- -k 0 2>&1 | tee build-native.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            {
+              echo "## Native build errors"
+              echo '```'
+              grep -E "error:|FAILED:|fatal error|undefined reference" build-native.log | sort -u | head -80
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "=== ERRORS (first 80) ==="
+            grep -E "error:|FAILED:|fatal error|undefined reference" build-native.log | sort -u | head -80
+            exit "$status"
+          fi
 
       # The CMake file writes to jniLibs/${ANDROID_NDK_ABI_NAME}, a variable only the
       # old toolchain defined, so locate the .so and put it where Gradle expects it.
@@ -104,6 +119,7 @@ jobs:
         with:
           name: native-build-logs
           path: |
+            build-native.log
             build-native/CMakeFiles/CMakeConfigureLog.yaml
             build-native/CMakeFiles/CMakeError.log
             build-native/CMakeFiles/CMakeOutput.log
