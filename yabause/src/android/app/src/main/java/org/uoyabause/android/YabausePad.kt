@@ -233,7 +233,9 @@ internal class ActionButton(
     ) {
         super.draw(canvas, nomal_back, active_back, front)
         if (isOn()) {
-            canvas.drawCircle(rect.centerX(), rect.centerY(), width * scale * 1.5f, pushPaint)
+            // Pressed highlight fills exactly the button circle (rect is the circle's bounding
+            // square), so it never spills onto the neighbouring buttons.
+            canvas.drawCircle(rect.centerX(), rect.centerY(), rect.width() / 2f, pushPaint)
         } else {
             // canvas.drawCircle(rect.centerX(), rect.centerY(), width * scale, pushPaint)
         }
@@ -698,7 +700,6 @@ class YabausePad :
 
         // Select bitmap resources based on pad style setting
         val padLRes = if (useClassicPadStyle) R.drawable.pad_l else R.drawable.pad_l_new
-        val padRRes = if (useClassicPadStyle) R.drawable.pad_r else R.drawable.pad_r_new
         val padMRes = if (useClassicPadStyle) R.drawable.pad_m else R.drawable.pad_m_new
         val padTopLRes = if (useClassicPadStyle) R.drawable.pad_top_l else R.drawable.pad_top_l_new
         val padTopRRes = if (useClassicPadStyle) R.drawable.pad_top_r else R.drawable.pad_top_r_new
@@ -731,7 +732,8 @@ class YabausePad :
         bitmapPadLeft = DraggableBitmap(bpl, leftX, leftY, -1F, -1F, 1.0f)
         bitmapPadLeftH = DraggableBitmap(bpl, leftXH, leftYH, -1F, -1F, 1.0f)
 
-        val bpr = BitmapFactory.decodeResource(resources, padRRes, options)
+        // Action buttons (A B C X Y Z) are drawn by code: flat, separated circles
+        val bpr = SimplePadRenderer.createRightPad()
         bitmapPadRight = DraggableBitmap(bpr, rightX, rightY, -1f, -1f, 1.0f)
         bitmapPadRightH = DraggableBitmap(bpr, rightXH, rightYH, -1f, -1f, 1.0f)
 
@@ -794,7 +796,6 @@ class YabausePad :
 
             // Select bitmap resources based on pad style setting
             val padLRes = if (useClassicPadStyle) R.drawable.pad_l else R.drawable.pad_l_new
-            val padRRes = if (useClassicPadStyle) R.drawable.pad_r else R.drawable.pad_r_new
             val padMRes = if (useClassicPadStyle) R.drawable.pad_m else R.drawable.pad_m_new
             val padTopLRes = if (useClassicPadStyle) R.drawable.pad_top_l else R.drawable.pad_top_l_new
             val padTopRRes = if (useClassicPadStyle) R.drawable.pad_top_r else R.drawable.pad_top_r_new
@@ -819,7 +820,8 @@ class YabausePad :
                     1.0f,
                 )
 
-            val bpr = BitmapFactory.decodeResource(resources, padRRes, options)
+            // Action buttons (A B C X Y Z) are drawn by code: flat, separated circles
+            val bpr = SimplePadRenderer.createRightPad()
             bitmapPadRight =
                 DraggableBitmap(
                     bpr,
@@ -1670,18 +1672,21 @@ class YabausePad :
             .updateRect(bitmaps!!.get(padMiddle)!!.matrix, 0, 53, 185, 132)
 
         // Right Part
-        buttons[PadEvent.BUTTON_A]!!.updateRect(bitmaps!!.get(padRight)!!.matrix, 59, 801, 59 + 213, 801 + 225)
-        buttons[PadEvent.BUTTON_A]!!.updateScale(scale)
-        buttons[PadEvent.BUTTON_B]!!.updateRect(bitmaps!!.get(padRight)!!.matrix, 268, 672, 268 + 229, 672 + 221)
-        buttons[PadEvent.BUTTON_B]!!.updateScale(scale)
-        buttons[PadEvent.BUTTON_C]!!.updateRect(bitmaps!!.get(padRight)!!.matrix, 507, 577, 507 + 224, 577 + 229)
-        buttons[PadEvent.BUTTON_C]!!.updateScale(scale)
-        buttons[PadEvent.BUTTON_X]!!.updateRect(bitmaps!!.get(padRight)!!.matrix, 15, 602, 15 + 149, 602 + 150)
-        buttons[PadEvent.BUTTON_X]!!.updateScale(scale)
-        buttons[PadEvent.BUTTON_Y]!!.updateRect(bitmaps!!.get(padRight)!!.matrix, 202, 481, 202 + 149, 481 + 148)
-        buttons[PadEvent.BUTTON_Y]!!.updateScale(scale)
-        buttons[PadEvent.BUTTON_Z]!!.updateRect(bitmaps!!.get(padRight)!!.matrix, 397, 409, 397 + 151, 409 + 152)
-        buttons[PadEvent.BUTTON_Z]!!.updateScale(scale)
+        // Touch rects follow the circles drawn by SimplePadRenderer (same bitmap coordinates)
+        val padRightMatrix = bitmaps!!.get(padRight)!!.matrix
+        val actionButtons =
+            listOf(
+                PadEvent.BUTTON_A to SimplePadRenderer.A,
+                PadEvent.BUTTON_B to SimplePadRenderer.B,
+                PadEvent.BUTTON_C to SimplePadRenderer.C,
+                PadEvent.BUTTON_X to SimplePadRenderer.X,
+                PadEvent.BUTTON_Y to SimplePadRenderer.Y,
+                PadEvent.BUTTON_Z to SimplePadRenderer.Z,
+            )
+        for ((buttonId, spec) in actionButtons) {
+            buttons[buttonId]!!.updateRect(padRightMatrix, spec.left, spec.top, spec.right, spec.bottom)
+            buttons[buttonId]!!.updateScale(scale)
+        }
 
         buttons[PadEvent.BUTTON_LEFT_TRIGGER]!!.updateRect(
             bitmaps!!.get(padTopLeft)!!.matrix,
