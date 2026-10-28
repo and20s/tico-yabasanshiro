@@ -18,13 +18,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Only the submodules the Android build needs (not the retro_arena/eigen one).
-      - name: Fetch required submodules
+      # Only `rcheevos` is a real submodule in this repo. oboe and the second copy of
+      # rcheevos are listed in .gitmodules but not tracked, so fetch them by hand.
+      - name: Fetch dependencies
         run: |
-          git submodule update --init --depth 1 \
-            yabause/src/android/oboe \
-            rcheevos \
-            yabause/src/retroachievements/rcheevos
+          set -e
+          git submodule update --init rcheevos
+          rm -rf yabause/src/retroachievements/rcheevos
+          cp -r rcheevos yabause/src/retroachievements/rcheevos
+          rm -rf yabause/src/retroachievements/rcheevos/.git
+          rm -rf yabause/src/android/oboe
+          git clone --depth 1 --branch 1.9.3 https://github.com/google/oboe yabause/src/android/oboe
+          ls yabause/src/android/oboe | head -5
+          ls yabause/src/retroachievements/rcheevos | head -5
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
