@@ -180,6 +180,8 @@ jobs:
       - name: Build debug APK
         working-directory: ${{ env.ANDROID_DIR }}
         run: |
+          # gradlew is checked in with Windows (CRLF) line endings, which breaks its shebang on Linux.
+          sed -i 's/\r$//' gradlew
           chmod +x gradlew
           set +e
           ./gradlew --no-daemon assembleDebug --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/gradle-build.log"
