@@ -32,21 +32,74 @@ jobs:
           ls yabause/src/android/oboe | head -5
           ls yabause/src/retroachievements/rcheevos | head -5
 
-      # Upstream bug: ww_check() is only defined when SH2 cache emulation is on, but it is
-      # called unconditionally, so a normal build fails. Add a no-op version for that case.
+      # The public source does not build for Android as-is. These small patches are applied at
+      # build time (each one asserts its target text, so the build stops if upstream changes).
+      #  1. memory.c: ww_check() only exists in the SH2-cache build but is always called.
+      #  2. thr-linux.cpp: YabThreadIsLockedByCurrentThread() exists only in the Switch port.
+      #  3. CMakeLists.txt: PlayRecorder.cpp is commented out but the Android code uses it.
       - name: Apply build fixes
         run: |
           python3 - <<'PY'
+          import re
+
+          def read(path):
+              return open(path, encoding='utf-8', errors='surrogateescape', newline='').read()
+
+          def write(path, text):
+              open(path, 'w', encoding='utf-8', errors='surrogateescape', newline='').write(text)
+
+          def replace_once(text, old, new, what):
+              assert text.count(old) == 1, 'patch target not found exactly once: ' + what
+              return text.replace(old, new)
+
+          # 1) memory.c
           p = 'yabause/src/memory.c'
-          s = open(p, encoding='utf-8', errors='surrogateescape').read()
-          marker = '#if CACHE_ENABLE\nvoid FASTCALL MappedMemoryWriteByte(u32 addr, u8 val, u32 *cycle)'
-          assert s.count(marker) == 1, 'memory.c layout changed, fix needs an update'
-          stub = ('#if !CACHE_ENABLE\n'
-                  '/* Debug write-watch helper only exists in the cache build; no-op here. */\n'
-                  'static inline void ww_check(u32 addr, u32 val, int size) { (void)addr; (void)val; (void)size; }\n'
-                  '#endif\n')
-          open(p, 'w', encoding='utf-8', errors='surrogateescape').write(s.replace(marker, stub + marker))
-          print('memory.c patched')
+          s = read(p)
+          nl = '\r\n' if '\r\n' in s else '\n'
+          marker = '#if CACHE_ENABLE' + nl + 'void FASTCALL MappedMemoryWriteByte(u32 addr, u8 val, u32 *cycle)'
+          stub = nl.join([
+              '#if !CACHE_ENABLE',
+              '/* Debug write-watch helper only exists in the cache build; no-op here. */',
+              'static inline void ww_check(u32 addr, u32 val, int size) { (void)addr; (void)val; (void)size; }',
+              '#endif', ''])
+          write(p, replace_once(s, marker, stub + marker, 'memory.c'))
+
+          # 2) thr-linux.cpp (file uses CRLF line endings)
+          p = 'yabause/src/thr-linux.cpp'
+          s = read(p)
+          nl = '\r\n' if '\r\n' in s else '\n'
+          def L(t):
+              return t.replace('\n', nl)
+          s = replace_once(s,
+              L('  pthread_mutex_t mutex;\n} YabMutex_pthread;'),
+              L('  pthread_mutex_t mutex;\n  pthread_t owner;\n  volatile int has_owner;\n} YabMutex_pthread;'),
+              'YabMutex_pthread struct')
+          s = replace_once(s,
+              L('    pmtx = (YabMutex_pthread *)mtx;\n    pthread_mutex_lock(&pmtx->mutex);\n}'),
+              L('    pmtx = (YabMutex_pthread *)mtx;\n    pthread_mutex_lock(&pmtx->mutex);\n    pmtx->owner = pthread_self();\n    pmtx->has_owner = 1;\n}'),
+              'YabThreadLock')
+          s = replace_once(s,
+              L('    pmtx = (YabMutex_pthread *)mtx;\n    pthread_mutex_unlock(&pmtx->mutex);\n}'),
+              L('    pmtx = (YabMutex_pthread *)mtx;\n    pmtx->has_owner = 0;\n    pthread_mutex_unlock(&pmtx->mutex);\n}\n\n'
+                'int YabThreadIsLockedByCurrentThread( YabMutex * mtx ){\n'
+                '    YabMutex_pthread * pmtx;\n'
+                '    if( mtx == NULL ) return 0;\n'
+                '    pmtx = (YabMutex_pthread *)mtx;\n'
+                '    return ( pmtx->has_owner && pthread_equal(pmtx->owner, pthread_self()) ) ? 1 : 0;\n}'),
+              'YabThreadUnLock')
+          s = replace_once(s,
+              L('    pthread_mutex_init( &mtx->mutex,NULL);\n    return (YabMutex *)mtx;'),
+              L('    pthread_mutex_init( &mtx->mutex,NULL);\n    mtx->has_owner = 0;\n    return (YabMutex *)mtx;'),
+              'YabThreadCreateMutex')
+          write(p, s)
+
+          # 3) CMakeLists.txt: enable PlayRecorder.cpp (a commented-out source line)
+          p = 'yabause/src/CMakeLists.txt'
+          s = read(p)
+          s, n = re.subn(r'(?m)^(\t)#+PlayRecorder\.cpp[ \t]*(\r?)$', r'\1PlayRecorder.cpp\2', s)
+          assert n == 1, 'PlayRecorder.cpp line not found exactly once'
+          write(p, s)
+          print('build fixes applied')
           PY
 
       - name: Set up JDK 17
@@ -75,6 +128,7 @@ jobs:
             -DANDROID_PLATFORM=android-24 \
             -DCMAKE_ASM-ATT_COMPILER="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" \
             -DCMAKE_ASM-ATT_FLAGS="--target=aarch64-none-linux-android24 -c" \
+            -DSH2_DYNAREC=OFF \
             -DYAB_PORTS=android \
             -DYAB_WANT_C68K=FALSE \
             -DYAB_WANT_ARM7=TRUE \
