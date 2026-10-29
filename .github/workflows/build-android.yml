@@ -151,17 +151,20 @@ jobs:
             exit "$status"
           fi
 
-      # The CMake file writes to jniLibs/${ANDROID_NDK_ABI_NAME}, a variable only the
-      # old toolchain defined, so locate the .so and put it where Gradle expects it.
+      # CMake writes the library straight into jniLibs/<abi>; only copy if it ended up elsewhere.
       - name: Place native library for Gradle
         run: |
           set -e
-          SO=$(find . -name 'libyabause_native.so' -not -path './build-native/CMakeFiles/*' | head -n 1)
-          test -n "$SO" || { echo "libyabause_native.so not found"; exit 1; }
-          echo "Found: $SO"
           DEST="$ANDROID_DIR/app/src/main/jniLibs/$ABI"
-          mkdir -p "$DEST"
-          cp "$SO" "$DEST/libyabause_native.so"
+          if [ -f "$DEST/libyabause_native.so" ]; then
+            echo "Native library already in place"
+          else
+            SO=$(find . -name 'libyabause_native.so' -not -path './build-native/CMakeFiles/*' | head -n 1)
+            test -n "$SO" || { echo "libyabause_native.so not found"; exit 1; }
+            echo "Found: $SO"
+            mkdir -p "$DEST"
+            cp "$SO" "$DEST/libyabause_native.so"
+          fi
           ls -la "$DEST"
 
       # ---- 2) Android app ---------------------------------------------------
@@ -178,7 +181,21 @@ jobs:
         working-directory: ${{ env.ANDROID_DIR }}
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon assembleDebug
+          set +e
+          ./gradlew --no-daemon assembleDebug --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/gradle-build.log"
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            summarize() {
+              echo "--- What went wrong ---"
+              awk '/^\* What went wrong:/{p=1} /^\* Try:/{p=0} p' "$GITHUB_WORKSPACE/gradle-build.log" | head -60
+              echo "--- Compiler errors ---"
+              grep -E "^e: |error:" "$GITHUB_WORKSPACE/gradle-build.log" | sort -u | head -40 | cut -c1-300
+            }
+            { echo "## Gradle build errors"; echo '```'; summarize; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+            echo "=== GRADLE ERROR SUMMARY ==="
+            summarize
+            exit "$status"
+          fi
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -188,13 +205,14 @@ jobs:
           if-no-files-found: error
 
       # Build logs help a lot when the first run fails.
-      - name: Upload native build log on failure
+      - name: Upload build logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: native-build-logs
+          name: build-logs
           path: |
             build-native.log
+            gradle-build.log
             build-native/CMakeFiles/CMakeConfigureLog.yaml
             build-native/CMakeFiles/CMakeError.log
             build-native/CMakeFiles/CMakeOutput.log
