@@ -72,6 +72,7 @@ jobs:
             -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI="$ABI" \
             -DANDROID_PLATFORM=android-24 \
+            -DCMAKE_ASM-ATT_COMPILER="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" \
             -DCMAKE_ASM-ATT_FLAGS=--target=aarch64-none-linux-android24 \
             -DYAB_PORTS=android \
             -DYAB_WANT_C68K=FALSE \
@@ -86,11 +87,12 @@ jobs:
             {
               echo "## Native build errors"
               echo '```'
-              grep -E "error:|FAILED:|fatal error|undefined reference" build-native.log | sort -u | head -80
+              # ninja prints "FAILED: ..." then the command and its output
+              awk '/^FAILED:/{c=16} c>0{print; c--}' build-native.log | cut -c1-300 | head -120
               echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
-            echo "=== ERRORS (first 80) ==="
-            grep -E "error:|FAILED:|fatal error|undefined reference" build-native.log | sort -u | head -80
+            echo "=== FAILED STEPS (command + output) ==="
+            awk '/^FAILED:/{c=16} c>0{print; c--}' build-native.log | cut -c1-300 | head -120
             exit "$status"
           fi
 
