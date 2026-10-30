@@ -237,6 +237,42 @@ jobs:
               s = s.replace('\n', '\r\n')
           open(p, 'w', encoding='utf-8', errors='surrogateescape', newline='').write(s)
           print('swipe aim applied')
+          # 7) Game screen always landscape (and remove the lock-landscape option)
+          def _edit(path, fn):
+              raw = open(path, encoding='utf-8', errors='surrogateescape', newline='').read()
+              crlf = '\r\n' in raw
+              s = fn(raw.replace('\r\n', '\n'))
+              if crlf:
+                  s = s.replace('\n', '\r\n')
+              open(path, 'w', encoding='utf-8', errors='surrogateescape', newline='').write(s)
+
+          base = 'yabause/src/android/app/src/main/'
+
+          def _kt(s):
+              old = ('        val lockLandscape = sharedPref.getBoolean("pref_landscape", false)\n'
+                     '        requestedOrientation =\n'
+                     '            if (lockLandscape == true) {\n'
+                     '                ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE\n')
+              assert s.count(old) == 1, 'Yabause.kt orientation block'
+              return s.replace(old, '        val lockLandscape = true\n'
+                     '        requestedOrientation =\n'
+                     '            if (lockLandscape == true) {\n'
+                     '                ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE\n')
+          _edit(base + 'java/org/uoyabause/android/Yabause.kt', _kt)
+
+          def _xml(s):
+              import re
+              s2, n = re.subn(r'\n        <SwitchPreferenceCompat\n            android:key="pref_landscape"\n(?:            [^\n]*\n)*?            android:defaultValue="false" />\n', '\n', s)
+              assert n == 1, 'pref_landscape preference block'
+              return s2
+          _edit(base + 'res/xml/preferences.xml', _xml)
+
+          def _man(s):
+              old = '            android:name="org.uoyabause.android.Yabause"\n            android:configChanges="orientation|keyboardHidden|screenSize|keyboard"\n'
+              assert s.count(old) == 1, 'Yabause manifest entry'
+              return s.replace(old, old + '            android:screenOrientation="sensorLandscape"\n')
+          _edit(base + 'AndroidManifest.xml', _man)
+          print('yaba landscape applied')
           print('swipe aim step done')
           print('build fixes applied')
           PY
@@ -310,11 +346,8 @@ jobs:
       # build.gradle expects this keystore but it is not in the repo.
       - name: Create debug keystore
         run: |
-          keytool -genkeypair -v \
-            -keystore "$ANDROID_DIR/debug-yabara.keystore" \
-            -storepass android -keypass android -alias androiddebugkey \
-            -keyalg RSA -keysize 2048 -validity 10000 \
-            -dname "CN=Android Debug,O=Android,C=US"
+          # Fixed debug signing key: every build has the same signature, so a new APK installs over the old one.
+          echo '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' | base64 -d > "$ANDROID_DIR/debug-yabara.keystore"
 
       - name: Build debug APK
         working-directory: ${{ env.ANDROID_DIR }}
