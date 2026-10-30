@@ -227,6 +227,12 @@ jobs:
                    '        swipeEnabled = sharedPref.getBoolean("pref_swipe_aim", true)\n'
                    '        swipeSensitivity = sharedPref.getFloat("pref_swipe_sensitivity", 1.0f)\n', 'prefs')
 
+          # While swipe-aim is on, the invisible dynamic analog stick no longer grabs touches: in analog
+          # mode the whole screen is the swipe zone (the hat/D-pad mode keeps its D-pad as before).
+          old = "                if (padMode == PadManager.MODE_ANALOG) {\n                    updateDynamicAnalog(posx, posy, pointerId, action)\n"
+          assert s.count(old) == 2, 'expected 2 dynamic analog DOWN blocks, got %d' % s.count(old)
+          s = s.replace(old, "                if (padMode == PadManager.MODE_ANALOG) {\n                    if (!swipeEnabled) updateDynamicAnalog(posx, posy, pointerId, action)\n")
+
           if crlf:
               s = s.replace('\n', '\r\n')
           open(p, 'w', encoding='utf-8', errors='surrogateescape', newline='').write(s)
