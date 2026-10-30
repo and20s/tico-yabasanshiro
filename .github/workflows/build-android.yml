@@ -99,6 +99,25 @@ jobs:
           s, n = re.subn(r'(?m)^(\t)#+PlayRecorder\.cpp[ \t]*(\r?)$', r'\1PlayRecorder.cpp\2', s)
           assert n == 1, 'PlayRecorder.cpp line not found exactly once'
           write(p, s)
+          # 4) Placeholder AdMob ids crash the app on launch: use Google's official test ids
+          p = 'yabause/src/android/app/src/main/res/values/local_security.xml'
+          s = read(p)
+          for name, val in [
+              ('ad_app_id', 'ca-app-pub-3940256099942544~3347511713'),
+              ('banner_ad_unit_id', 'ca-app-pub-3940256099942544/6300978111'),
+              ('banner_ad_unit_id2', 'ca-app-pub-3940256099942544/6300978111'),
+              ('game_id', '000000000000'),
+          ]:
+              s, n = re.subn(r'(<string name="%s"[^>]*>)[^<]*(</string>)' % name, r'\g<1>%s\g<2>' % val, s)
+              assert n == 1, 'string not found: ' + name
+          write(p, s)
+
+          # 5) No jacoco instrumentation in debug builds
+          p = 'yabause/src/android/app/build.gradle'
+          s = read(p)
+          s, n = re.subn(r'testCoverageEnabled true', 'testCoverageEnabled false', s)
+          assert n == 1, 'testCoverageEnabled not found'
+          write(p, s)
           print('build fixes applied')
           PY
 
