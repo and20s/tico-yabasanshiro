@@ -118,6 +118,120 @@ jobs:
           s, n = re.subn(r'testCoverageEnabled true', 'testCoverageEnabled false', s)
           assert n == 1, 'testCoverageEnabled not found'
           write(p, s)
+          # 6) Swipe to aim (HotD1): a free finger moves the aim like the stick/D-pad
+          p = 'yabause/src/android/app/src/main/java/org/uoyabause/android/YabausePad.kt'
+          raw = open(p, encoding='utf-8', errors='surrogateescape', newline='').read()
+          crlf = '\r\n' in raw
+          s = raw.replace('\r\n', '\n')
+          assert 'handleSwipeAim' not in s, 'swipe patch already applied'
+
+          def once(text, old, new, what):
+              assert text.count(old) == 1, 'anchor not found exactly once: ' + what
+              return text.replace(old, new)
+
+          s = once(s, 'import android.os.Build\n',
+                   'import android.os.Build\nimport android.os.Handler\nimport android.os.Looper\n', 'imports')
+
+          fields = '''    private var dynamicAnalog: DynamicAnalogStick? = null
+
+              // ---- Swipe to aim: a finger that starts on a free part of the screen moves the aim ----
+              private var swipePointerId = -1
+              private var swipeLastX = 0f
+              private var swipeLastY = 0f
+              private var swipeEnabled = true
+              private var swipeSensitivity = 1.0f
+              private val swipeHandler = Handler(Looper.getMainLooper())
+              private val swipeIdle = Runnable { swipeSend(0f, 0f) }
+
+              private fun controlOwnsPointer(id: Int): Boolean {
+                  if (dpad.isOn(id)) return true
+                  if (dynamicAnalog?.isTrackingPointer(id) == true) return true
+                  if (analogPad?.isOn(id) == true) return true
+                  for (i in 4 until PadEvent.BUTTON_LAST) {
+                      if (buttons[i]?.hasPointer(id) == true) return true
+                  }
+                  return false
+              }
+
+              private fun swipeSend(
+                  dx: Float,
+                  dy: Float,
+              ) {
+                  if (padMode == PadManager.MODE_ANALOG) {
+                      if (dynamicAnalog?.isActive() == true) return
+                      val gain = 14f * swipeSensitivity
+                      axiX = (128f + dx * gain).coerceIn(0f, 255f).toInt()
+                      axiY = (128f + dy * gain).coerceIn(0f, 255f).toInt()
+                      YabauseRunnable.axisWithDebug(PadEvent.PERANALOG_AXIS_X, 0, axiX)
+                      YabauseRunnable.axisWithDebug(PadEvent.PERANALOG_AXIS_Y, 0, axiY)
+                  } else {
+                      if (dpad.isOn()) return
+                      val thr = 1.5f / swipeSensitivity
+                      actionDpadState(DpadState(dx < -thr, dx > thr, dy < -thr, dy > thr))
+                  }
+              }
+
+              private fun handleSwipeAim(event: MotionEvent) {
+                  if (!swipeEnabled || padTestestMode) return
+                  val action = event.actionMasked
+                  when (action) {
+                      MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+                          val idx = event.actionIndex
+                          val id = event.getPointerId(idx)
+                          if (swipePointerId == -1 && !controlOwnsPointer(id)) {
+                              swipePointerId = id
+                              swipeLastX = event.getX(idx)
+                              swipeLastY = event.getY(idx)
+                          }
+                      }
+                      MotionEvent.ACTION_MOVE -> {
+                          if (swipePointerId != -1) {
+                              val idx = event.findPointerIndex(swipePointerId)
+                              if (idx >= 0) {
+                                  val x = event.getX(idx)
+                                  val y = event.getY(idx)
+                                  val dx = x - swipeLastX
+                                  val dy = y - swipeLastY
+                                  swipeLastX = x
+                                  swipeLastY = y
+                                  swipeHandler.removeCallbacks(swipeIdle)
+                                  swipeSend(dx, dy)
+                                  swipeHandler.postDelayed(swipeIdle, 45)
+                              }
+                          }
+                      }
+                      MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_CANCEL -> {
+                          val id = event.getPointerId(event.actionIndex)
+                          if (swipePointerId != -1 && (action == MotionEvent.ACTION_CANCEL || id == swipePointerId)) {
+                              swipeHandler.removeCallbacks(swipeIdle)
+                              swipeSend(0f, 0f)
+                              swipePointerId = -1
+                          }
+                      }
+                  }
+              }
+          '''
+          s = once(s, '    private var dynamicAnalog: DynamicAnalogStick? = null\n', fields, 'dynamicAnalog field')
+
+          s = once(s, '        if (!padTestestMode) {\n            if (padMode == 0) {\n',
+                   '        handleSwipeAim(event)\n        if (!padTestestMode) {\n            if (padMode == 0) {\n', 'onTouch tail')
+
+          s = once(s, '    private fun handleButtonMove(\n        hittest: RectF,\n        pointerId: Int,\n    ) {\n',
+                   '    private fun handleButtonMove(\n        hittest: RectF,\n        pointerId: Int,\n    ) {\n        if (pointerId == swipePointerId) return\n', 'handleButtonMove')
+
+          s = once(s, '    private fun updateDPad(\n        hittest: RectF,\n        posx: Int,\n        posy: Int,\n        pointerId: Int,\n    ) {\n',
+                   '    private fun updateDPad(\n        hittest: RectF,\n        posx: Int,\n        posy: Int,\n        pointerId: Int,\n    ) {\n        if (pointerId == swipePointerId) return\n', 'updateDPad')
+
+          s = once(s, '        forceFeedback = sharedPref.getBoolean("pref_force_feedback", true)\n',
+                   '        forceFeedback = sharedPref.getBoolean("pref_force_feedback", true)\n'
+                   '        swipeEnabled = sharedPref.getBoolean("pref_swipe_aim", true)\n'
+                   '        swipeSensitivity = sharedPref.getFloat("pref_swipe_sensitivity", 1.0f)\n', 'prefs')
+
+          if crlf:
+              s = s.replace('\n', '\r\n')
+          open(p, 'w', encoding='utf-8', errors='surrogateescape', newline='').write(s)
+          print('swipe aim applied')
+          print('swipe aim step done')
           print('build fixes applied')
           PY
 
