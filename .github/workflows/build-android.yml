@@ -273,6 +273,43 @@ jobs:
               return s.replace(old, old + '            android:screenOrientation="sensorLandscape"\n')
           _edit(base + 'AndroidManifest.xml', _man)
           print('yaba landscape applied')
+          # 8) Local "test codes" box in the settings (Action Replay codes without signing in).
+          def _edit2(path, fn):
+              raw = open(path, encoding='utf-8', errors='surrogateescape', newline='').read()
+              crlf = '\r\n' in raw
+              s = fn(raw.replace('\r\n', '\n'))
+              if crlf:
+                  s = s.replace('\n', '\r\n')
+              open(path, 'w', encoding='utf-8', errors='surrogateescape', newline='').write(s)
+
+          base2 = 'yabause/src/android/app/src/main/'
+
+          def _prefs(s):
+              anchor = '        <SwitchPreferenceCompat\n            android:key="pref_rotate_screen"\n'
+              assert s.count(anchor) == 1, 'pref_rotate_screen anchor'
+              new = ('        <EditTextPreference\n'
+                     '            android:key="pref_test_cheats"\n'
+                     '            android:title="Codigos de prueba (HotD)"\n'
+                     '            android:summary="Codigos Action Replay, uno por linea o separados por punto y coma. Ej: 160B1076 0050. Se aplican 5 s despues de abrir el juego."\n'
+                     '            android:defaultValue="" />\n\n')
+              return s.replace(anchor, new + anchor)
+          _edit2(base2 + 'res/xml/preferences.xml', _prefs)
+
+          def _yab(s):
+              anchor = '    public override fun onResume() {\n        super.onResume()\n'
+              assert s.count(anchor) == 1, 'Yabause onResume anchor'
+              func = r'''    private fun applyTestCheats() {
+                  val text = PreferenceManager.getDefaultSharedPreferences(this).getString("pref_test_cheats", "") ?: ""
+                  if (text.isBlank()) return
+                  val codes = text.split(Regex("[\\n;]+")).map { it.trim() }.filter { it.isNotEmpty() }
+                  if (codes.isEmpty()) return
+                  window.decorView.postDelayed({ updateCheatCode(arrayOf<String?>(codes.joinToString("\n"))) }, 5000)
+              }
+
+          '''
+              return s.replace(anchor, func + anchor + '        applyTestCheats()\n')
+          _edit2(base2 + 'java/org/uoyabause/android/Yabause.kt', _yab)
+          print('test cheats box applied')
           print('swipe aim step done')
           print('build fixes applied')
           PY
