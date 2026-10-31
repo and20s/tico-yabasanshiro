@@ -312,6 +312,129 @@ jobs:
           print('test cheats box applied')
           print('swipe aim step done')
           print('build fixes applied')
+          # 9) Absolute aim for HotD1 (reads/writes the reticle position in game RAM)
+          # Absolute aim for House of the Dead 1 (Saturn, MK-81802): swipes write the reticle position
+          # straight into the game's RAM (player 1 struct at 0x060B1038: +0x4C/+0x50 screen x/y,
+          # +0x54/+0x58 the same <<8, +0x44/+0x48 = x-176 / 120-y). Anything that does not look like the
+          # game falls back to the normal pad-based swipe.
+          def load(p):
+              raw = open(p, encoding='utf-8', errors='surrogateescape', newline='').read()
+              return raw, '\r\n' in raw, raw.replace('\r\n', '\n')
+
+          def save(p, s, crlf):
+              if crlf:
+                  s = s.replace('\n', '\r\n')
+              open(p, 'w', encoding='utf-8', errors='surrogateescape', newline='').write(s)
+
+          def once(text, old, new, what):
+              assert text.count(old) == 1, 'anchor not found exactly once: ' + what
+              return text.replace(old, new)
+
+          # ---------- native ----------
+          p = 'yabause/src/android/jni/yui.cpp'
+          raw, crlf, s = load(p)
+          assert 'aimRead' not in s
+          s = once(s, '#include "cheat.h"\n', '#include "cheat.h"\n#include "memory.h"\n', 'include memory.h')
+          native = '''    static bool hotd1AimValid()
+              {
+                  if (HighWram == NULL) return false;
+                  // first bytes of the game's main program (loaded at 0x06010000)
+                  if (T2ReadLong(HighWram, 0x10000) != 0xdf12d113) return false;
+                  const u32 B = 0xB1038;
+                  u32 ix = T2ReadLong(HighWram, B + 0x4C), iy = T2ReadLong(HighWram, B + 0x50);
+                  u32 fx = T2ReadLong(HighWram, B + 0x54), fy = T2ReadLong(HighWram, B + 0x58);
+                  if (ix > 351 || iy > 239) return false;
+                  if ((fx >> 8) != ix || (fy >> 8) != iy) return false;
+                  return true;
+              }
+
+              jint
+              Java_org_uoyabause_android_YabauseRunnable_aimRead(JNIEnv *env, jobject obj, jint axis)
+              {
+                  if (!hotd1AimValid()) return -1;
+                  return (jint)T2ReadLong(HighWram, 0xB1038 + (axis == 0 ? 0x54 : 0x58));
+              }
+
+              void
+              Java_org_uoyabause_android_YabauseRunnable_aimWrite(JNIEnv *env, jobject obj, jint fx, jint fy)
+              {
+                  if (!hotd1AimValid()) return;
+                  if (fx < 0) fx = 0;
+                  if (fx > 0x15FFF) fx = 0x15FFF;
+                  if (fy < 0) fy = 0;
+                  if (fy > 0xEFFF) fy = 0xEFFF;
+                  const u32 B = 0xB1038;
+                  u32 ix = (u32)fx >> 8, iy = (u32)fy >> 8;
+                  T2WriteLong(HighWram, B + 0x54, (u32)fx);
+                  T2WriteLong(HighWram, B + 0x58, (u32)fy);
+                  T2WriteLong(HighWram, B + 0x4C, ix);
+                  T2WriteLong(HighWram, B + 0x50, iy);
+                  T2WriteLong(HighWram, B + 0x44, ix - 176);
+                  T2WriteLong(HighWram, B + 0x48, 120 - iy);
+              }
+
+          '''
+          s = once(s, '    void\n    Java_org_uoyabause_android_YabauseRunnable_enableFPS(', native +
+                   '    void\n    Java_org_uoyabause_android_YabauseRunnable_enableFPS(', 'native insert')
+          save(p, s, crlf)
+
+          # ---------- JNI declarations ----------
+          p = 'yabause/src/android/app/src/main/java/org/uoyabause/android/YabauseRunnable.kt'
+          raw, crlf, s = load(p)
+          s = once(s, '        @JvmStatic\n        external fun enableFPS(enable: Int)\n',
+                   '        @JvmStatic\n        external fun enableFPS(enable: Int)\n\n'
+                   '        @JvmStatic\n        external fun aimRead(axis: Int): Int\n\n'
+                   '        @JvmStatic\n        external fun aimWrite(fx: Int, fy: Int)\n', 'kt decl')
+          save(p, s, crlf)
+
+          # ---------- pad ----------
+          p = 'yabause/src/android/app/src/main/java/org/uoyabause/android/YabausePad.kt'
+          raw, crlf, s = load(p)
+          assert 'handleSwipeAim' in s, 'swipe patch must be applied first'
+          s = once(s, '    private val swipeIdle = Runnable { swipeSend(0f, 0f) }\n',
+          '''    private val swipeIdle = Runnable { swipeSend(0f, 0f) }
+
+              // Absolute aim (HotD 1): the swipe moves the reticle by writing its position into game RAM
+              private var absAimActive = false
+              private var absAimX = 176f
+              private var absAimY = 120f
+
+              private fun absAimSync(): Boolean {
+                  val fx = YabauseRunnable.aimRead(0)
+                  val fy = YabauseRunnable.aimRead(1)
+                  if (fx < 0 || fy < 0) return false
+                  absAimX = fx / 256f
+                  absAimY = fy / 256f
+                  return true
+              }
+
+              private fun absAimMove(
+                  dx: Float,
+                  dy: Float,
+              ) {
+                  val h = if (height > 0) height.toFloat() else 1080f
+                  val scale = 240f / h * swipeSensitivity
+                  absAimX = (absAimX + dx * scale).coerceIn(0f, 351f)
+                  absAimY = (absAimY + dy * scale).coerceIn(0f, 239f)
+                  YabauseRunnable.aimWrite((absAimX * 256f).toInt(), (absAimY * 256f).toInt())
+              }
+          ''', 'fields')
+          s = once(s, '                    swipeLastX = event.getX(idx)\n                    swipeLastY = event.getY(idx)\n',
+                   '                    swipeLastX = event.getX(idx)\n                    swipeLastY = event.getY(idx)\n'
+                   '                    absAimActive = absAimSync()\n', 'down')
+          s = once(s, '                        swipeHandler.removeCallbacks(swipeIdle)\n                        swipeSend(dx, dy)\n                        swipeHandler.postDelayed(swipeIdle, 45)\n',
+          '''                        if (absAimActive) {
+                                      absAimMove(dx, dy)
+                                  } else {
+                                      swipeHandler.removeCallbacks(swipeIdle)
+                                      swipeSend(dx, dy)
+                                      swipeHandler.postDelayed(swipeIdle, 45)
+                                  }
+          ''', 'move')
+          s = once(s, '                    swipeHandler.removeCallbacks(swipeIdle)\n                    swipeSend(0f, 0f)\n                    swipePointerId = -1\n',
+                   '                    swipeHandler.removeCallbacks(swipeIdle)\n                    if (!absAimActive) swipeSend(0f, 0f)\n                    absAimActive = false\n                    swipePointerId = -1\n', 'up')
+          save(p, s, crlf)
+          print('absolute aim applied')
           PY
 
       - name: Set up JDK 17
