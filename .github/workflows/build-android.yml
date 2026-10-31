@@ -345,6 +345,8 @@ jobs:
                   u32 fx = T2ReadLong(HighWram, B + 0x54), fy = T2ReadLong(HighWram, B + 0x58);
                   if (ix > 351 || iy > 239) return false;
                   if ((fx >> 8) != ix || (fy >> 8) != iy) return false;
+                  // live reticle only: derived offsets must match (all zero in menus)
+                  if (T2ReadLong(HighWram, B + 0x44) != ix - 176 || T2ReadLong(HighWram, B + 0x48) != 120 - iy) return false;
                   return true;
               }
 
